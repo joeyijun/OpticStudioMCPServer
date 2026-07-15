@@ -43,7 +43,7 @@ public class HuygensPsfTool
         [Description("Pupil sampling enum value (e.g., 'S_64x64', 'S_128x128', 'S_256x256')")]
         string pupilSampleSize = "S_128x128",
         [Description("Image sampling enum value")] string imageSampleSize = "S_64x64",
-        [Description("Output type: 'Linear', 'Logarithmic'")] string type = "Linear",
+        [Description("Output type (HuygensPsfTypes): 'Linear', 'Log_Minus_1'..'Log_Minus_5', 'Real', 'Imaginary' (default Linear)")] string type = "Linear",
         [Description("Image plane pixel size in micrometers (0 = auto)")] double imageDelta = 0.0,
         [Description("Normalize PSF (true)")] bool normalize = true,
         [Description("Use centroid as reference (true)")] bool useCentroid = true,

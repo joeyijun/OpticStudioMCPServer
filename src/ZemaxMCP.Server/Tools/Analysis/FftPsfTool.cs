@@ -44,7 +44,7 @@ public class FftPsfTool
         string sampleSize = "PsfS_128x128",
         [Description("Output sampling: same enum (default 'PsfS_64x64')")]
         string outputSize = "PsfS_64x64",
-        [Description("Output type: 'Linear', 'Logarithmic', 'PhaseInRadians', 'PhaseInWavelengths', 'RealPart', 'ImaginaryPart' (default Linear)")]
+        [Description("Output type (FftPsfType): 'Linear', 'Log', 'Phase', 'Real', 'Imaginary' (default Linear)")]
         string type = "Linear",
         [Description("Image plane pixel size in micrometers (0 = auto)")] double imageDelta = 0.0,
         [Description("Normalize the PSF (true)")] bool normalize = true,
