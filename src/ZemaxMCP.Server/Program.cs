@@ -87,6 +87,8 @@ try
     .WithTools<ZemaxMCP.Server.Tools.Analysis.ExportAnalysisTool>()
     .WithTools<ZemaxMCP.Server.Tools.Analysis.GeometricImageAnalysisTool>()
     .WithTools<ZemaxMCP.Server.Tools.Analysis.PopTool>()
+    .WithTools<ZemaxMCP.Server.Tools.Analysis.FftPsfTool>()
+    .WithTools<ZemaxMCP.Server.Tools.Analysis.HuygensPsfTool>()
     // Optimization Tools
     .WithTools<ZemaxMCP.Server.Tools.Optimization.GetMeritFunctionTool>()
     .WithTools<ZemaxMCP.Server.Tools.Optimization.AddOperandTool>()
