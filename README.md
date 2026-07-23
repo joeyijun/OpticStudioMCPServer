@@ -69,6 +69,21 @@ This fork additionally includes the following acceptance and validation tools:
 | `zemax_aperture_throughput` | Sample pupil throughput and identify vignette surfaces. |
 | `zemax_ray_trace_extended` | Trace a real ray with intercept, direction, intensity, error, and vignette data. |
 
+### Current release additions
+
+The current Windows release also adds the following practical inspection and system-setting tools. They are registered and verified by the release build; clients should still use `tools/list` as the authoritative schema source for the installed OpticStudio version.
+
+| Tool | Purpose |
+|---|---|
+| `zemax_get_nsc_objects` | List NSC objects with type, material, hierarchy, activity, and position data. |
+| `zemax_get_nsc_detector` | Inspect an NSC detector's dimensions and display mode. |
+| `zemax_get_nsc_object_parameters` | Read type-specific parameters for an NSC object. |
+| `zemax_get_tolerances` | Read Tolerance Data Editor operands safely, including unset bounds. |
+| `zemax_set_number_of_fields` / `zemax_set_number_of_wavelengths` | Resize the system field or wavelength lists. |
+| `zemax_get_apodization` / `zemax_set_apodization` | Inspect or set pupil apodization type and factor. |
+| `zemax_get_clear_semi_diameter_margin` / `zemax_set_clear_semi_diameter_margin` | Inspect or set Clear Semi-Diameter Margin in millimetres and percent. Availability depends on the installed ZOS-API version. |
+| `zemax_get_mtf_units` / `zemax_set_mtf_units` | Inspect or set MTF units in cycles per millimetre or milliradian. |
+
 The server also provides MCP resources for the current system, merit function, and operand documentation, plus prompt templates for design, optimisation, analysis, and design troubleshooting.
 
 ## Fork and attribution
