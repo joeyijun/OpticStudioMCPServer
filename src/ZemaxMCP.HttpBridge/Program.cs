@@ -185,9 +185,7 @@ internal sealed class StdioMcpBridge : IDisposable
                 return;
             }
 
-            string request;
-            using (var reader = new StreamReader(context.Request.InputStream, context.Request.ContentEncoding))
-                request = await reader.ReadToEndAsync().ConfigureAwait(false);
+            var request = await ReadRequestAsync(context.Request).ConfigureAwait(false);
             var json = JObject.Parse(request);
             _lastRequestAt = DateTimeOffset.Now;
             if (string.Equals(json["method"]?.ToString(), "initialize", StringComparison.OrdinalIgnoreCase))
@@ -230,6 +228,26 @@ internal sealed class StdioMcpBridge : IDisposable
             await context.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
             context.Response.Close();
         }
+        catch (RequestTooLargeException ex)
+        {
+            Log.Warning(ex, "Rejected an oversized MCP request");
+            await WriteJsonAsync(context, new JObject
+            {
+                ["jsonrpc"] = "2.0",
+                ["error"] = new JObject { ["code"] = -32600, ["message"] = "MCP request exceeds the 1 MiB bridge limit." },
+                ["id"] = null
+            }, HttpStatusCode.RequestEntityTooLarge).ConfigureAwait(false);
+        }
+        catch (Newtonsoft.Json.JsonReaderException ex)
+        {
+            Log.Warning(ex, "Rejected malformed MCP JSON");
+            await WriteJsonAsync(context, new JObject
+            {
+                ["jsonrpc"] = "2.0",
+                ["error"] = new JObject { ["code"] = -32700, ["message"] = "Malformed JSON-RPC request." },
+                ["id"] = null
+            }, HttpStatusCode.BadRequest).ConfigureAwait(false);
+        }
         catch (Exception ex)
         {
             Log.Error(ex, "HTTP request failed");
@@ -252,6 +270,23 @@ internal sealed class StdioMcpBridge : IDisposable
         context.Response.Close();
     }
 
+    private static async Task<string> ReadRequestAsync(HttpListenerRequest request)
+    {
+        using (var body = new MemoryStream())
+        {
+            var buffer = new byte[8192];
+            while (true)
+            {
+                var read = await request.InputStream.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
+                if (read == 0) break;
+                if (body.Length + read > MaxRequestBytes)
+                    throw new RequestTooLargeException();
+                await body.WriteAsync(buffer, 0, read).ConfigureAwait(false);
+            }
+            return request.ContentEncoding.GetString(body.ToArray());
+        }
+    }
+
     private async Task<string> ReadResponseAsync(JToken id)
     {
         while (true)
@@ -271,4 +306,9 @@ internal sealed class StdioMcpBridge : IDisposable
         _server?.Dispose();
         _requestLock.Dispose();
     }
+}
+
+internal sealed class RequestTooLargeException : Exception
+{
+    public RequestTooLargeException() : base("MCP request exceeds the 1 MiB bridge limit.") { }
 }
