@@ -60,7 +60,8 @@ internal sealed class BridgeOptions
     public static BridgeOptions Parse(string[] args)
     {
         var result = new BridgeOptions();
-        for (var i = 0; i < args.Length - 1; i += 2)
+        if (args.Length % 2 != 0) throw new ArgumentException("Bridge arguments must be supplied as --option value pairs.");
+        for (var i = 0; i < args.Length; i += 2)
         {
             var value = args[i + 1];
             switch (args[i].ToLowerInvariant())
@@ -68,11 +69,18 @@ internal sealed class BridgeOptions
                 case "--server": result.ServerPath = value; break;
                 case "--zemax-root": result.ZemaxRoot = value; break;
                 case "--host": result.Host = value; break;
-                case "--port": result.Port = int.Parse(value); break;
+                case "--port":
+                    if (!int.TryParse(value, out var port) || port < 1 || port > 65535)
+                        throw new ArgumentException("--port must be a number from 1 to 65535.");
+                    result.Port = port;
+                    break;
                 case "--path": result.Path = value.TrimEnd('/') + "/"; break;
                 case "--log-dir": result.LogDirectory = value; break;
+                default: throw new ArgumentException("Unknown bridge option: " + args[i]);
             }
         }
+        if (string.IsNullOrWhiteSpace(result.ServerPath)) throw new ArgumentException("--server cannot be empty.");
+        if (string.IsNullOrWhiteSpace(result.Host)) throw new ArgumentException("--host cannot be empty.");
         return result;
     }
 }
