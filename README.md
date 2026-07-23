@@ -13,6 +13,18 @@ The launcher refreshes status every 10 seconds. No Node.js, Supergateway, comman
 
 For the complete one- and two-computer guide, see [Windows Quick Start](docs/QUICKSTART_WINDOWS.md).
 
+## How it works
+
+```mermaid
+flowchart LR
+  A["OpticStudio computer\nInstall.exe → Start-Zemax-MCP.exe"] --> B["Built-in HTTP MCP bridge\n/mcp"]
+  B --> C["ZOS-API + licensed\nOpticStudio"]
+  D["Codex / Claude Desktop / Cursor\nlocal or trusted LAN computer"] -->|"HTTP MCP"| B
+  B --> E["Live dashboard\nMCP · ZOS-API · AI activity"]
+```
+
+For a single computer, the AI client uses the local MCP address. For two computers, enable **Share with a trusted LAN computer** on the OpticStudio computer, copy its address, and paste it into **Remote MCP address** on the AI-client computer.
+
 ## Highlights
 
 - **Graphical install and update** — `Install.exe` installs or updates the per-user application. `Portable-Install.cmd` is available where an organisation blocks the installer executable.
