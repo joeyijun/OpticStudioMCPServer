@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using Forms = System.Windows.Forms;
 using Newtonsoft.Json.Linq;
@@ -22,7 +23,9 @@ public partial class MainWindow : Window
     private bool _stoppingBridge;
     private bool _exitRequested;
     private bool _clientSetupPrompted;
+    private bool _refreshingStatus;
     private readonly Forms.NotifyIcon _trayIcon;
+    private readonly DispatcherTimer _statusTimer;
     public MainWindow()
     {
         InitializeComponent();
@@ -32,6 +35,8 @@ public partial class MainWindow : Window
         menu.Items.Add("Open Zemax MCP", null, (_, _) => RestoreWindow());
         menu.Items.Add("Exit", null, (_, _) => ExitApplication());
         _trayIcon.ContextMenuStrip = menu;
+        _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
+        _statusTimer.Tick += async (_, _) => await RefreshStatusAsync();
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -47,11 +52,13 @@ public partial class MainWindow : Window
             : "Starting local MCP endpoint automatically…");
         RefreshEndpoint();
         if (installs.Count > 0) StartBridge();
+        SetIndicatorsChecking();
+        _statusTimer.Start();
         OfferFirstRunClientSetup();
     }
     private void ZemaxVersions_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) { RefreshEndpoint(); SaveSettings(); }
     private string HostName => ShareOnLan.IsChecked == true ? "0.0.0.0" : "127.0.0.1";
-    private void RefreshEndpoint() => Endpoint.Text = "MCP endpoint: " + Url;
+    private void RefreshEndpoint() => Endpoint.Text = Url;
     private ZemaxInstallation? Installation => ZemaxVersions.SelectedItem as ZemaxInstallation;
     private string Url => "http://" + (ShareOnLan.IsChecked == true ? GetLanAddress() : "127.0.0.1") + ":" + Port.Text + "/mcp";
     private string McpUrl => Uri.TryCreate(RemoteEndpoint.Text, UriKind.Absolute, out var remote) &&
@@ -98,38 +105,89 @@ public partial class MainWindow : Window
         }
         Report("HTTP MCP started: " + Url + Environment.NewLine + "Logs: " + Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs") +
             (firewallReady ? "" : Environment.NewLine + "Firewall permission was not granted; another PC may not reach this endpoint."));
+        ScheduleStatusRefresh();
     }
-    private void Stop_Click(object sender, RoutedEventArgs e) { StopBridge(); Report("HTTP MCP stopped."); }
+    private void Stop_Click(object sender, RoutedEventArgs e) { StopBridge(); Report("HTTP MCP stopped."); SetIndicator(McpStateDot, McpState, "Stopped", System.Windows.Media.Brushes.IndianRed); SetIndicator(AiStateDot, AiState, "No client activity while stopped", System.Windows.Media.Brushes.SlateGray); }
     private async void RefreshStatus_Click(object sender, RoutedEventArgs e) => await RefreshStatusAsync();
     private async Task RefreshStatusAsync()
     {
+        if (_refreshingStatus) return;
+        _refreshingStatus = true;
         var root = Installation?.Root;
         var endpoint = McpUrl;
         var apiFiles = root != null && new[] { "ZOSAPI.dll", "ZOSAPI_Interfaces.dll", "ZOSAPI_NetHelper.dll" }.All(x => File.Exists(Path.Combine(root, x)));
         var localBridge = _bridge != null && !_bridge.HasExited;
         ConnectionSummary.Text = "Checking " + endpoint + "…";
+        SetIndicatorsChecking();
         try
         {
             var health = await Task.Run(() => GetHealth(endpoint));
             var lastRequest = health["lastRequestAt"]?.ToString();
             var apiLoaded = health["zosApiLoaded"]?.Value<bool>() == true;
             var apiConnected = health["zosApiConnected"]?.Value<bool>() == true;
+            var bridgeRunning = health["bridgeRunning"]?.Value<bool>() == true;
+            var serverRunning = health["mcpServerRunning"]?.Value<bool>() == true;
+            var client = health["lastClient"]?.ToString() ?? "";
             ConnectionSummary.Text = "MCP endpoint: reachable\n" +
-                "Bridge: " + (health["bridgeRunning"]?.Value<bool>() == true ? "running" : "not running") +
-                "; MCP server: " + (health["mcpServerRunning"]?.Value<bool>() == true ? "running" : "not running") + "\n" +
+                "Bridge: " + (bridgeRunning ? "running" : "not running") +
+                "; MCP server: " + (serverRunning ? "running" : "not running") + "\n" +
                 "ZOS-API files: " + (apiFiles ? "found" : root == null ? "remote endpoint" : "missing") +
                 "; loaded: " + (apiLoaded ? "yes" : "not yet") +
                 "; OpticStudio connected: " + (apiConnected ? "yes" : "not yet") + "\n" +
-                "Last MCP client: " + (health["lastClient"]?.ToString() ?? "unknown") +
+                "Last MCP client: " + (string.IsNullOrWhiteSpace(client) ? "none" : client) +
                 "; last request: " + (string.IsNullOrWhiteSpace(lastRequest) ? "none" : lastRequest) +
                 (localBridge ? "\nLocal launcher bridge process: running" : "");
+            if (bridgeRunning && serverRunning) SetIndicator(McpStateDot, McpState, "Online — MCP server is accepting connections", System.Windows.Media.Brushes.SeaGreen);
+            else SetIndicator(McpStateDot, McpState, "Endpoint reachable, but a service is not running", System.Windows.Media.Brushes.DarkOrange);
+            if (apiConnected) SetIndicator(ZosStateDot, ZosState, "Connected to OpticStudio", System.Windows.Media.Brushes.SeaGreen);
+            else if (apiLoaded) SetIndicator(ZosStateDot, ZosState, "ZOS-API loaded — waiting for OpticStudio", System.Windows.Media.Brushes.DarkOrange);
+            else if (root == null) SetIndicator(ZosStateDot, ZosState, "Checked on the remote Zemax computer", System.Windows.Media.Brushes.SlateGray);
+            else if (apiFiles) SetIndicator(ZosStateDot, ZosState, "Files found — not loaded yet", System.Windows.Media.Brushes.DarkOrange);
+            else SetIndicator(ZosStateDot, ZosState, "ZOS-API files are missing", System.Windows.Media.Brushes.IndianRed);
+            SetAiIndicator(client, lastRequest);
+            LastStatusCheck.Text = "Updated " + DateTime.Now.ToString("HH:mm:ss") + " · automatic refresh every 10 seconds";
         }
         catch (Exception ex)
         {
             ConnectionSummary.Text = "MCP endpoint: not reachable\n" +
                 "ZOS-API files: " + (apiFiles ? "found" : root == null ? "remote endpoint" : "missing") +
                 (localBridge ? "\nLocal launcher bridge process is running, but the HTTP health check failed: " + ex.Message : "\n" + ex.Message);
+            SetIndicator(McpStateDot, McpState, "Offline — endpoint cannot be reached", System.Windows.Media.Brushes.IndianRed);
+            if (root == null) SetIndicator(ZosStateDot, ZosState, "Status is available only from the Zemax computer", System.Windows.Media.Brushes.SlateGray);
+            else if (apiFiles) SetIndicator(ZosStateDot, ZosState, "Files found — service is unavailable", System.Windows.Media.Brushes.DarkOrange);
+            else SetIndicator(ZosStateDot, ZosState, "ZOS-API files are missing", System.Windows.Media.Brushes.IndianRed);
+            SetIndicator(AiStateDot, AiState, "Unknown until the MCP service responds", System.Windows.Media.Brushes.SlateGray);
+            LastStatusCheck.Text = "Last checked " + DateTime.Now.ToString("HH:mm:ss") + " · endpoint unavailable; retrying automatically";
         }
+        finally { _refreshingStatus = false; }
+    }
+    private void SetIndicatorsChecking()
+    {
+        SetIndicator(McpStateDot, McpState, "Checking service…", System.Windows.Media.Brushes.DarkOrange);
+        SetIndicator(ZosStateDot, ZosState, "Checking OpticStudio…", System.Windows.Media.Brushes.DarkOrange);
+        SetIndicator(AiStateDot, AiState, "Checking recent MCP activity…", System.Windows.Media.Brushes.DarkOrange);
+    }
+    private static void SetIndicator(System.Windows.Shapes.Ellipse dot, System.Windows.Controls.TextBlock label, string text, System.Windows.Media.Brush brush)
+    {
+        dot.Fill = brush;
+        label.Text = text;
+        label.Foreground = brush;
+    }
+    private void SetAiIndicator(string client, string? lastRequest)
+    {
+        if (string.IsNullOrWhiteSpace(client) || client.Equals("None yet", StringComparison.OrdinalIgnoreCase))
+        {
+            SetIndicator(AiStateDot, AiState, "No AI client call recorded yet", System.Windows.Media.Brushes.SlateGray);
+            return;
+        }
+        if (client.Equals("zemax-mcp-launcher", StringComparison.OrdinalIgnoreCase))
+        {
+            SetIndicator(AiStateDot, AiState, "Launcher test succeeded; no AI call yet", System.Windows.Media.Brushes.DarkOrange);
+            return;
+        }
+        var when = DateTime.TryParse(lastRequest, out var parsed) ? parsed : DateTime.MinValue;
+        var recent = when != DateTime.MinValue && DateTime.Now - when < TimeSpan.FromMinutes(5);
+        SetIndicator(AiStateDot, AiState, (recent ? "Active" : "Last seen") + ": " + client + (string.IsNullOrWhiteSpace(lastRequest) ? "" : " — " + lastRequest), recent ? System.Windows.Media.Brushes.SeaGreen : System.Windows.Media.Brushes.SteelBlue);
     }
     private static JObject GetHealth(string endpoint)
     {
@@ -139,6 +197,11 @@ public partial class MainWindow : Window
         using var response = (HttpWebResponse)request.GetResponse();
         using var reader = new StreamReader(response.GetResponseStream());
         return JObject.Parse(reader.ReadToEnd());
+    }
+    private async void ScheduleStatusRefresh()
+    {
+        await Task.Delay(900);
+        await RefreshStatusAsync();
     }
     private void Exit_Click(object sender, RoutedEventArgs e) => ExitApplication();
     private void ExitApplication()
@@ -212,6 +275,11 @@ public partial class MainWindow : Window
     {
         var configured = ConfigureDetectedClients();
         Report(configured.Count == 0 ? "No supported AI client was detected. Use the individual configuration buttons after installing one." : "Configured: " + string.Join(", ", configured) + ". Restart the client to connect.");
+    }
+    private void AiConfigMenu_Click(object sender, RoutedEventArgs e)
+    {
+        AiConfigButton.ContextMenu.PlacementTarget = AiConfigButton;
+        AiConfigButton.ContextMenu.IsOpen = true;
     }
     private List<string> ConfigureDetectedClients()
     {
@@ -329,6 +397,7 @@ public partial class MainWindow : Window
     }
     protected override void OnClosed(EventArgs e)
     {
+        _statusTimer.Stop();
         StopBridge();
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
