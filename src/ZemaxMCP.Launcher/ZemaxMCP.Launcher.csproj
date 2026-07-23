@@ -3,7 +3,8 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net48</TargetFramework>
     <UseWPF>true</UseWPF>
-    <AssemblyName>Zemax MCP Setup</AssemblyName>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>Start-Zemax-MCP</AssemblyName>
     <RootNamespace>ZemaxMCP.Launcher</RootNamespace>
   </PropertyGroup>
   <ItemGroup>

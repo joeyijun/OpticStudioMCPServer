@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Server;
 using Serilog;
+using System.Reflection;
 using ZemaxMCP.Core.Logging;
 using ZemaxMCP.Core.Services.ConstrainedOptimization;
 using ZemaxMCP.Core.Session;
@@ -16,9 +17,23 @@ Console.SetOut(TextWriter.Null);
 // The launcher sets ZEMAX_ROOT after detecting the selected OpticStudio version.
 // Keeping the implicit lookup as a fallback preserves the existing stdio workflow.
 var zemaxRoot = Environment.GetEnvironmentVariable("ZEMAX_ROOT");
+if (!string.IsNullOrWhiteSpace(zemaxRoot))
+{
+    // ZOS-API is supplied by the user's licensed OpticStudio installation.
+    // Never copy or redistribute those assemblies with this application.
+    AppDomain.CurrentDomain.AssemblyResolve += (_, args) =>
+    {
+        var name = new AssemblyName(args.Name).Name;
+        if (string.IsNullOrWhiteSpace(name) || !name.StartsWith("ZOSAPI", StringComparison.OrdinalIgnoreCase)) return null;
+        var candidate = Path.Combine(zemaxRoot, name + ".dll");
+        return File.Exists(candidate) ? Assembly.LoadFrom(candidate) : null;
+    };
+}
 var initialized = string.IsNullOrWhiteSpace(zemaxRoot)
     ? ZOSAPI_NetHelper.ZOSAPI_Initializer.Initialize()
     : ZOSAPI_NetHelper.ZOSAPI_Initializer.Initialize(zemaxRoot);
+
+if (initialized) Console.Error.WriteLine("ZEMAX_MCP_STATUS:ZOS_API_LOADED");
 
 if (!initialized)
 {
@@ -98,6 +113,8 @@ try
     .WithTools<ZemaxMCP.Server.Tools.Analysis.ExportAnalysisTool>()
     .WithTools<ZemaxMCP.Server.Tools.Analysis.GeometricImageAnalysisTool>()
     .WithTools<ZemaxMCP.Server.Tools.Analysis.PopTool>()
+    .WithTools<ZemaxMCP.Server.Tools.Analysis.RayTraceExtendedTool>()
+    .WithTools<ZemaxMCP.Server.Tools.Analysis.ApertureThroughputTool>()
     .WithTools<ZemaxMCP.Server.Tools.Analysis.FftPsfTool>()
     .WithTools<ZemaxMCP.Server.Tools.Analysis.HuygensPsfTool>()
     // Optimization Tools
@@ -137,6 +154,9 @@ try
     .WithTools<ZemaxMCP.Server.Tools.LensData.ListSurfaceTypesTool>()
     .WithTools<ZemaxMCP.Server.Tools.LensData.GetExtraDataTool>()
     .WithTools<ZemaxMCP.Server.Tools.LensData.SetExtraDataTool>()
+    .WithTools<ZemaxMCP.Server.Tools.LensData.SurfaceApertureTool>()
+    .WithTools<ZemaxMCP.Server.Tools.LensData.OffAxisConicFreeformTool>()
+    .WithTools<ZemaxMCP.Server.Tools.LensData.GetGlobalMatrixTool>()
     // Configuration Tools
     .WithTools<ZemaxMCP.Server.Tools.Configuration.GetConfigurationTool>()
     .WithTools<ZemaxMCP.Server.Tools.Configuration.SetNumberOfConfigurationsTool>()

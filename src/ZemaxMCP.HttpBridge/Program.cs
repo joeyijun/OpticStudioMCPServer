@@ -81,8 +81,13 @@ internal sealed class StdioMcpBridge : IDisposable
 {
     private readonly BridgeOptions _options;
     private readonly SemaphoreSlim _requestLock = new SemaphoreSlim(1, 1);
+    private readonly string _sessionId = Guid.NewGuid().ToString("N");
     private Process? _server;
     private HttpListener? _listener;
+    private DateTimeOffset? _lastRequestAt;
+    private string _lastClient = "None yet";
+    private bool _zosApiLoaded;
+    private bool _zosApiConnected;
 
     public StdioMcpBridge(BridgeOptions options) => _options = options;
 
@@ -90,7 +95,10 @@ internal sealed class StdioMcpBridge : IDisposable
     {
         StartServer();
         _listener = new HttpListener();
-        _listener.Prefixes.Add($"http://{_options.Host}:{_options.Port}{_options.Path}");
+        // HTTP.SYS uses '+' as the all-interface prefix.  The launcher creates
+        // its URL ACL only when the user explicitly enables LAN sharing.
+        var listenerHost = _options.Host == "0.0.0.0" ? "+" : _options.Host;
+        _listener.Prefixes.Add($"http://{listenerHost}:{_options.Port}{_options.Path}");
         _listener.Start();
         Log.Information("Zemax MCP HTTP endpoint listening at {Url}", _listener.Prefixes.FirstOrDefault());
 
@@ -114,15 +122,37 @@ internal sealed class StdioMcpBridge : IDisposable
         };
         if (!string.IsNullOrWhiteSpace(_options.ZemaxRoot)) psi.EnvironmentVariables["ZEMAX_ROOT"] = _options.ZemaxRoot;
         _server = Process.Start(psi) ?? throw new InvalidOperationException("Unable to launch ZemaxMCP.Server.exe");
-        _server.ErrorDataReceived += (_, e) => { if (!string.IsNullOrEmpty(e.Data)) Log.Warning("Server: {Message}", e.Data); };
+        _server.ErrorDataReceived += (_, e) => HandleServerStatus(e.Data);
         _server.BeginErrorReadLine();
         Log.Information("Started MCP stdio server with PID {Pid}", _server.Id);
+    }
+
+    private void HandleServerStatus(string? message)
+    {
+        if (string.IsNullOrEmpty(message)) return;
+        if (message == "ZEMAX_MCP_STATUS:ZOS_API_LOADED") { _zosApiLoaded = true; Log.Information("ZOS-API assemblies loaded from the local OpticStudio installation."); return; }
+        if (message == "ZEMAX_MCP_STATUS:ZOS_API_CONNECTED") { _zosApiConnected = true; Log.Information("Connected to OpticStudio through ZOS-API."); return; }
+        Log.Warning("Server: {Message}", message);
     }
 
     private async Task HandleAsync(HttpListenerContext context)
     {
         try
         {
+            if (context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
+                context.Request.Url?.AbsolutePath.TrimEnd('/').EndsWith("/health", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                await WriteJsonAsync(context, new JObject
+                {
+                    ["bridgeRunning"] = true,
+                    ["mcpServerRunning"] = _server != null && !_server.HasExited,
+                    ["zosApiLoaded"] = _zosApiLoaded,
+                    ["zosApiConnected"] = _zosApiConnected,
+                    ["lastRequestAt"] = _lastRequestAt?.ToString("O"),
+                    ["lastClient"] = _lastClient
+                }).ConfigureAwait(false);
+                return;
+            }
             if (context.Request.HttpMethod.Equals("OPTIONS", StringComparison.OrdinalIgnoreCase))
             {
                 context.Response.StatusCode = (int)HttpStatusCode.NoContent;
@@ -140,7 +170,17 @@ internal sealed class StdioMcpBridge : IDisposable
             using (var reader = new StreamReader(context.Request.InputStream, context.Request.ContentEncoding))
                 request = await reader.ReadToEndAsync().ConfigureAwait(false);
             var json = JObject.Parse(request);
+            _lastRequestAt = DateTimeOffset.Now;
+            if (string.Equals(json["method"]?.ToString(), "initialize", StringComparison.OrdinalIgnoreCase))
+                _lastClient = json["params"]?["clientInfo"]?["name"]?.ToString() ?? "MCP client";
             var id = json["id"];
+            var requestedSession = context.Request.Headers["Mcp-Session-Id"];
+            if (!string.IsNullOrWhiteSpace(requestedSession) && !string.Equals(requestedSession, _sessionId, StringComparison.Ordinal))
+            {
+                context.Response.StatusCode = (int)HttpStatusCode.NotFound;
+                context.Response.Close();
+                return;
+            }
 
             await _requestLock.WaitAsync().ConfigureAwait(false);
             string? response;
@@ -162,6 +202,11 @@ internal sealed class StdioMcpBridge : IDisposable
             var bytes = Encoding.UTF8.GetBytes(response);
             context.Response.StatusCode = (int)HttpStatusCode.OK;
             context.Response.ContentType = "application/json; charset=utf-8";
+            // Streamable HTTP clients establish a session during initialize and
+            // return this value on subsequent requests. The underlying stdio
+            // server is intentionally stateful, so one bridge owns one session.
+            if (string.Equals(json["method"]?.ToString(), "initialize", StringComparison.Ordinal))
+                context.Response.Headers["Mcp-Session-Id"] = _sessionId;
             context.Response.ContentLength64 = bytes.Length;
             await context.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
             context.Response.Close();
@@ -176,6 +221,16 @@ internal sealed class StdioMcpBridge : IDisposable
             await context.Response.OutputStream.WriteAsync(payload, 0, payload.Length).ConfigureAwait(false);
             context.Response.Close();
         }
+    }
+
+    private static async Task WriteJsonAsync(HttpListenerContext context, JObject payload)
+    {
+        var bytes = Encoding.UTF8.GetBytes(payload.ToString(Newtonsoft.Json.Formatting.None));
+        context.Response.StatusCode = (int)HttpStatusCode.OK;
+        context.Response.ContentType = "application/json; charset=utf-8";
+        context.Response.ContentLength64 = bytes.Length;
+        await context.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
+        context.Response.Close();
     }
 
     private async Task<string> ReadResponseAsync(JToken id)
