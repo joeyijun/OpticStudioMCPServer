@@ -7,7 +7,6 @@ using ZemaxMCP.Core.Logging;
 using ZemaxMCP.Core.Services.ConstrainedOptimization;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Documentation;
-using ZemaxMCP.Server.Hosting;
 
 // Redirect Console.Out to prevent ZOSAPI (or any library) from polluting stdout.
 // MCP stdio transport uses the raw process stdout stream, not Console.Out.
