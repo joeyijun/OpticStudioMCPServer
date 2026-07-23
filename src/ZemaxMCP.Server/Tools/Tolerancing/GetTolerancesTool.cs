@@ -21,11 +21,11 @@ public sealed class GetTolerancesTool
         int Parameter2,
         int Parameter3,
         bool UsesNominal,
-        double Nominal,
+        double? Nominal,
         bool UsesMinimum,
-        double Minimum,
+        double? Minimum,
         bool UsesMaximum,
-        double Maximum,
+        double? Maximum,
         bool IgnoreDuringTolerancing,
         bool DoNotAdjustDuringInverseTolerancing);
 
@@ -67,11 +67,11 @@ public sealed class GetTolerancesTool
                         row.Param2,
                         row.Param3,
                         row.IsNominalUsed,
-                        row.Nominal,
+                        ToFiniteOrNull(row.Nominal),
                         row.IsMinUsed,
-                        row.Min,
+                        ToFiniteOrNull(row.Min),
                         row.IsMaxUsed,
-                        row.Max,
+                        ToFiniteOrNull(row.Max),
                         row.IgnoreThisOperandDuringTolerancing,
                         row.DoNotAdjustDuringInverseTolerancing));
                 }
@@ -84,4 +84,11 @@ public sealed class GetTolerancesTool
             return new Result(false, ex.Message, 0, Array.Empty<ToleranceOperand>());
         }
     }
+
+    // OpticStudio represents an unused tolerance bound as ±Infinity in some
+    // versions. JSON has no portable numeric representation for that value;
+    // null preserves the distinction while the corresponding Uses* flag tells
+    // an MCP client whether the field participates in tolerancing.
+    private static double? ToFiniteOrNull(double value) =>
+        double.IsNaN(value) || double.IsInfinity(value) ? null : value;
 }
