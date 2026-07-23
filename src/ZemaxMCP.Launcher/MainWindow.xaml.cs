@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -7,7 +8,10 @@ using System.Linq;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using System.Windows;
+using Microsoft.Win32;
+using Forms = System.Windows.Forms;
 using Newtonsoft.Json.Linq;
 
 namespace ZemaxMCP.Launcher;
@@ -15,36 +19,233 @@ namespace ZemaxMCP.Launcher;
 public partial class MainWindow : Window
 {
     private Process? _bridge;
-    public MainWindow() => InitializeComponent();
+    private bool _stoppingBridge;
+    private bool _exitRequested;
+    private bool _clientSetupPrompted;
+    private readonly Forms.NotifyIcon _trayIcon;
+    public MainWindow()
+    {
+        InitializeComponent();
+        _trayIcon = new Forms.NotifyIcon { Icon = System.Drawing.SystemIcons.Application, Text = "Zemax MCP", Visible = true };
+        _trayIcon.DoubleClick += (_, _) => RestoreWindow();
+        var menu = new Forms.ContextMenuStrip();
+        menu.Items.Add("Open Zemax MCP", null, (_, _) => RestoreWindow());
+        menu.Items.Add("Exit", null, (_, _) => ExitApplication());
+        _trayIcon.ContextMenuStrip = menu;
+    }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
+        LoadSettings();
         var installs = ZemaxInstallation.FindAll();
         ZemaxVersions.ItemsSource = installs;
-        ZemaxVersions.SelectedIndex = installs.Count > 0 ? 0 : -1;
-        Report(installs.Count == 0 ? "No OpticStudio installation detected. Install OpticStudio or select a supported installation before starting." : "Select an OpticStudio version, then start the HTTP MCP endpoint.");
+        var savedRoot = ReadSetting("zemaxRoot");
+        ZemaxVersions.SelectedItem = installs.FirstOrDefault(x => x.Root.Equals(savedRoot, StringComparison.OrdinalIgnoreCase));
+        if (ZemaxVersions.SelectedItem == null) ZemaxVersions.SelectedIndex = installs.Count > 0 ? 0 : -1;
+        Report(installs.Count == 0
+            ? "No local OpticStudio installation detected. To use this computer as an AI client, paste the MCP address from the OpticStudio computer, then click Test MCP connection and Configure installed AI clients."
+            : "Starting local MCP endpoint automatically…");
         RefreshEndpoint();
+        if (installs.Count > 0) StartBridge();
+        OfferFirstRunClientSetup();
     }
-    private void ZemaxVersions_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) => RefreshEndpoint();
-    private void RefreshEndpoint() => Endpoint.Text = "MCP endpoint: http://" + (Host?.Text == "0.0.0.0" ? "<this-PC-IP>" : Host?.Text) + ":" + Port?.Text + "/mcp";
+    private void ZemaxVersions_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) { RefreshEndpoint(); SaveSettings(); }
+    private string HostName => ShareOnLan.IsChecked == true ? "0.0.0.0" : "127.0.0.1";
+    private void RefreshEndpoint() => Endpoint.Text = "MCP endpoint: " + Url;
     private ZemaxInstallation? Installation => ZemaxVersions.SelectedItem as ZemaxInstallation;
-    private string Url => "http://" + (Host.Text == "0.0.0.0" ? GetLanAddress() : Host.Text) + ":" + Port.Text + "/mcp";
+    private string Url => "http://" + (ShareOnLan.IsChecked == true ? GetLanAddress() : "127.0.0.1") + ":" + Port.Text + "/mcp";
+    private string McpUrl => Uri.TryCreate(RemoteEndpoint.Text, UriKind.Absolute, out var remote) &&
+        (remote.Scheme == Uri.UriSchemeHttp || remote.Scheme == Uri.UriSchemeHttps) ? remote.ToString().TrimEnd('/') : Url;
 
-    private void Start_Click(object sender, RoutedEventArgs e)
+    private void ShareOnLan_Changed(object sender, RoutedEventArgs e) { RefreshEndpoint(); SaveSettings(); StopBridge(); if (Installation != null) StartBridge(); }
+    private void StartOnLogin_Changed(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            using var run = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");
+            if (StartOnLogin.IsChecked == true) run?.SetValue("ZemaxMCP", "\"" + Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Start-Zemax-MCP.exe") + "\"");
+            else run?.DeleteValue("ZemaxMCP", false);
+            SaveSettings();
+        }
+        catch (Exception ex) { Report("Could not change sign-in startup: " + ex.Message); }
+    }
+
+    private void Start_Click(object sender, RoutedEventArgs e) => StartBridge();
+    private void StartBridge()
     {
         if (Installation == null) { Report("Choose a detected OpticStudio installation first."); return; }
+        if (!int.TryParse(Port.Text, out var port) || port < 1 || port > 65535)
+        {
+            Report("Port must be a number from 1 to 65535.");
+            return;
+        }
         StopBridge();
+        SaveSettings();
         var bridge = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZemaxMCP.HttpBridge.exe");
         var server = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZemaxMCP.Server.exe");
         if (!File.Exists(bridge) || !File.Exists(server)) { Report("Release package is incomplete: ZemaxMCP.HttpBridge.exe and ZemaxMCP.Server.exe must be beside this launcher."); return; }
-        _bridge = Process.Start(new ProcessStartInfo(bridge, $"--server \"{server}\" --zemax-root \"{Installation.Root}\" --host {Host.Text} --port {Port.Text}") { UseShellExecute = false, CreateNoWindow = true });
-        Report("HTTP MCP started: " + Url + Environment.NewLine + "Logs: " + Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs"));
+        if (!EnsureZosApiBootstrap(Installation.Root)) return;
+        var firewallReady = ShareOnLan.IsChecked != true || FirewallRule.TryEnsure(port);
+        _bridge = Process.Start(new ProcessStartInfo(bridge, $"--server \"{server}\" --zemax-root \"{Installation.Root}\" --host {HostName} --port {port}") { UseShellExecute = false, CreateNoWindow = true });
+        if (_bridge != null)
+        {
+            _bridge.EnableRaisingEvents = true;
+            _bridge.Exited += (_, _) =>
+            {
+                if (_stoppingBridge) { _stoppingBridge = false; return; }
+                Dispatcher.BeginInvoke(new Action(() => Report("MCP bridge stopped unexpectedly. Use Open logs to see why (common causes: port in use, firewall/URL permission, or OpticStudio initialization).")));
+            };
+        }
+        Report("HTTP MCP started: " + Url + Environment.NewLine + "Logs: " + Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs") +
+            (firewallReady ? "" : Environment.NewLine + "Firewall permission was not granted; another PC may not reach this endpoint."));
     }
     private void Stop_Click(object sender, RoutedEventArgs e) { StopBridge(); Report("HTTP MCP stopped."); }
-    private void StopBridge() { try { if (_bridge != null && !_bridge.HasExited) _bridge.Kill(); } catch { } _bridge = null; }
-    private void Codex_Click(object sender, RoutedEventArgs e) { Configurator.ConfigureCodex(Url); Report("Codex configured for " + Url); }
-    private void Claude_Click(object sender, RoutedEventArgs e) { Configurator.ConfigureJson(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Claude", "claude_desktop_config.json"), "mcpServers", Url); Report("Claude Desktop configured for " + Url); }
-    private void Cursor_Click(object sender, RoutedEventArgs e) { Configurator.ConfigureJson(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Cursor", "User", "mcp.json"), "mcpServers", Url); Report("Cursor configured for " + Url); }
+    private async void RefreshStatus_Click(object sender, RoutedEventArgs e) => await RefreshStatusAsync();
+    private async Task RefreshStatusAsync()
+    {
+        var root = Installation?.Root;
+        var endpoint = McpUrl;
+        var apiFiles = root != null && new[] { "ZOSAPI.dll", "ZOSAPI_Interfaces.dll", "ZOSAPI_NetHelper.dll" }.All(x => File.Exists(Path.Combine(root, x)));
+        var localBridge = _bridge != null && !_bridge.HasExited;
+        ConnectionSummary.Text = "Checking " + endpoint + "…";
+        try
+        {
+            var health = await Task.Run(() => GetHealth(endpoint));
+            var lastRequest = health["lastRequestAt"]?.ToString();
+            var apiLoaded = health["zosApiLoaded"]?.Value<bool>() == true;
+            var apiConnected = health["zosApiConnected"]?.Value<bool>() == true;
+            ConnectionSummary.Text = "MCP endpoint: reachable\n" +
+                "Bridge: " + (health["bridgeRunning"]?.Value<bool>() == true ? "running" : "not running") +
+                "; MCP server: " + (health["mcpServerRunning"]?.Value<bool>() == true ? "running" : "not running") + "\n" +
+                "ZOS-API files: " + (apiFiles ? "found" : root == null ? "remote endpoint" : "missing") +
+                "; loaded: " + (apiLoaded ? "yes" : "not yet") +
+                "; OpticStudio connected: " + (apiConnected ? "yes" : "not yet") + "\n" +
+                "Last MCP client: " + (health["lastClient"]?.ToString() ?? "unknown") +
+                "; last request: " + (string.IsNullOrWhiteSpace(lastRequest) ? "none" : lastRequest) +
+                (localBridge ? "\nLocal launcher bridge process: running" : "");
+        }
+        catch (Exception ex)
+        {
+            ConnectionSummary.Text = "MCP endpoint: not reachable\n" +
+                "ZOS-API files: " + (apiFiles ? "found" : root == null ? "remote endpoint" : "missing") +
+                (localBridge ? "\nLocal launcher bridge process is running, but the HTTP health check failed: " + ex.Message : "\n" + ex.Message);
+        }
+    }
+    private static JObject GetHealth(string endpoint)
+    {
+        var request = (HttpWebRequest)WebRequest.Create(endpoint.TrimEnd('/') + "/health");
+        request.Method = "GET";
+        request.Timeout = 5000;
+        using var response = (HttpWebResponse)request.GetResponse();
+        using var reader = new StreamReader(response.GetResponseStream());
+        return JObject.Parse(reader.ReadToEnd());
+    }
+    private void Exit_Click(object sender, RoutedEventArgs e) => ExitApplication();
+    private void ExitApplication()
+    {
+        _exitRequested = true;
+        Close();
+    }
+    private void StopBridge()
+    {
+        if (_bridge == null) return;
+        _stoppingBridge = true;
+        try { if (_bridge != null && !_bridge.HasExited) _bridge.Kill(); } catch { }
+        _bridge = null;
+    }
+    private bool EnsureZosApiBootstrap(string zemaxRoot)
+    {
+        try
+        {
+            // NetHelper is an Ansys library, so it is deliberately absent from
+            // the public ZIP. Copy the current user's own installed copy only
+            // when launching locally; ZOSAPI itself continues to load from
+            // ZEMAX_ROOT through the server resolver.
+            var source = Path.Combine(zemaxRoot, "ZOSAPI_NetHelper.dll");
+            var target = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZOSAPI_NetHelper.dll");
+            if (!File.Exists(source)) { Report("The selected OpticStudio installation is missing ZOSAPI_NetHelper.dll."); return false; }
+            if (!File.Exists(target) || File.GetLastWriteTimeUtc(source) != File.GetLastWriteTimeUtc(target) || new FileInfo(source).Length != new FileInfo(target).Length)
+                File.Copy(source, target, true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Report("Could not prepare the local ZOS-API runtime: " + ex.Message);
+            return false;
+        }
+    }
+    private void CopyEndpoint_Click(object sender, RoutedEventArgs e) { System.Windows.Clipboard.SetText(McpUrl); Report("MCP address copied: " + McpUrl); }
+    private async void TestMcp_Click(object sender, RoutedEventArgs e)
+    {
+        var endpoint = McpUrl;
+        Report("Testing MCP handshake: " + endpoint + "…");
+        try { Report(await Task.Run(() => TestMcp(endpoint))); }
+        catch (Exception ex) { Report("MCP connection failed: " + ex.Message + Environment.NewLine + "On the OpticStudio computer, keep Start-Zemax-MCP open, start the bridge, then enable Share with a trusted LAN computer."); }
+        await RefreshStatusAsync();
+    }
+    private static string TestMcp(string endpoint)
+    {
+        var request = (HttpWebRequest)WebRequest.Create(endpoint);
+        request.Method = "POST";
+        request.ContentType = "application/json";
+        request.Accept = "application/json, text/event-stream";
+        request.Timeout = 10000;
+        var payload = "{\"jsonrpc\":\"2.0\",\"id\":\"zemax-mcp-healthcheck\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"zemax-mcp-launcher\",\"version\":\"1.0\"}}}";
+        var bytes = Encoding.UTF8.GetBytes(payload);
+        using (var stream = request.GetRequestStream()) stream.Write(bytes, 0, bytes.Length);
+        using (var response = (HttpWebResponse)request.GetResponse())
+        using (var reader = new StreamReader(response.GetResponseStream()))
+        {
+            var result = JObject.Parse(reader.ReadToEnd());
+            var name = result["result"]?["serverInfo"]?["name"]?.ToString();
+            if (response.StatusCode != HttpStatusCode.OK || string.IsNullOrWhiteSpace(name)) throw new InvalidOperationException("the endpoint did not return an MCP initialize response.");
+            return "MCP connection succeeded: " + name + " responded at " + endpoint;
+        }
+    }
+    private void OpenLogs_Click(object sender, RoutedEventArgs e)
+    {
+        var logs = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs");
+        Directory.CreateDirectory(logs);
+        Process.Start(new ProcessStartInfo(logs) { UseShellExecute = true });
+    }
+    private void ConfigureDetected_Click(object sender, RoutedEventArgs e)
+    {
+        var configured = ConfigureDetectedClients();
+        Report(configured.Count == 0 ? "No supported AI client was detected. Use the individual configuration buttons after installing one." : "Configured: " + string.Join(", ", configured) + ". Restart the client to connect.");
+    }
+    private List<string> ConfigureDetectedClients()
+    {
+        var configured = new List<string>();
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        if (Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex"))) { Configurator.ConfigureCodex(McpUrl); configured.Add("Codex"); }
+        if (Directory.Exists(Path.Combine(appData, "Claude"))) { Configurator.ConfigureJson(Path.Combine(appData, "Claude", "claude_desktop_config.json"), "mcpServers", McpUrl); configured.Add("Claude Desktop"); }
+        if (Directory.Exists(Path.Combine(appData, "Cursor"))) { Configurator.ConfigureJson(Path.Combine(appData, "Cursor", "User", "mcp.json"), "mcpServers", McpUrl); configured.Add("Cursor"); }
+        return configured;
+    }
+    private void OfferFirstRunClientSetup()
+    {
+        if (_clientSetupPrompted || DetectedClientNames().Count == 0) return;
+        _clientSetupPrompted = true;
+        SaveSettings();
+        var clients = string.Join(", ", DetectedClientNames());
+        if (System.Windows.MessageBox.Show("Detected " + clients + ". Configure it to use Zemax MCP now? Existing MCP entries will be kept.", "Zemax MCP first-time setup", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+        {
+            var configured = ConfigureDetectedClients();
+            Report("Configured: " + string.Join(", ", configured) + ". Restart the client to connect.");
+        }
+    }
+    private static List<string> DetectedClientNames()
+    {
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var clients = new List<string>();
+        if (Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex"))) clients.Add("Codex");
+        if (Directory.Exists(Path.Combine(appData, "Claude"))) clients.Add("Claude Desktop");
+        if (Directory.Exists(Path.Combine(appData, "Cursor"))) clients.Add("Cursor");
+        return clients;
+    }
+    private void Codex_Click(object sender, RoutedEventArgs e) { Configurator.ConfigureCodex(McpUrl); Report("Codex configured for " + McpUrl); }
+    private void Claude_Click(object sender, RoutedEventArgs e) { Configurator.ConfigureJson(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Claude", "claude_desktop_config.json"), "mcpServers", McpUrl); Report("Claude Desktop configured for " + McpUrl); }
+    private void Cursor_Click(object sender, RoutedEventArgs e) { Configurator.ConfigureJson(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Cursor", "User", "mcp.json"), "mcpServers", McpUrl); Report("Cursor configured for " + McpUrl); }
     private void Update_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -63,17 +264,99 @@ public partial class MainWindow : Window
                 ZipFile.ExtractToDirectory(zip, staging);
                 var install = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
                 var script = Path.Combine(staging, "apply-update.cmd");
-                File.WriteAllText(script, "@echo off\r\nping 127.0.0.1 -n 4 > nul\r\nrobocopy \"" + staging + "\" \"" + install + "\" /E /MOV /XF release.zip apply-update.cmd > nul\r\nstart \"\" \"" + Path.Combine(install, "Zemax MCP Setup.exe") + "\"\r\n");
+                File.WriteAllText(script, "@echo off\r\nping 127.0.0.1 -n 4 > nul\r\nrobocopy \"" + staging + "\" \"" + install + "\" /E /MOV /XF release.zip apply-update.cmd > nul\r\nstart \"\" \"" + Path.Combine(install, "Start-Zemax-MCP.exe") + "\"\r\n");
                 Process.Start(new ProcessStartInfo("cmd.exe", "/c \"" + script + "\"") { CreateNoWindow = true, UseShellExecute = false });
                 Report("Update downloaded. Restarting with " + release["tag_name"] + "…");
-                Application.Current.Shutdown();
+                System.Windows.Application.Current.Shutdown();
             }
         }
         catch (Exception ex) { Report("Could not check GitHub releases: " + ex.Message); }
     }
     private void Report(string text) => Status.Text = DateTime.Now.ToString("HH:mm:ss") + "  " + text;
+    private static string SettingsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZemaxMCP", "launcher-settings.json");
+    private string? ReadSetting(string key)
+    {
+        try { return File.Exists(SettingsPath) ? JObject.Parse(File.ReadAllText(SettingsPath))[key]?.ToString() : null; }
+        catch { return null; }
+    }
+    private void LoadSettings()
+    {
+        try
+        {
+            if (!File.Exists(SettingsPath)) return;
+            var settings = JObject.Parse(File.ReadAllText(SettingsPath));
+            Port.Text = settings["port"]?.ToString() ?? Port.Text;
+            RemoteEndpoint.Text = settings["remoteEndpoint"]?.ToString() ?? "";
+            ShareOnLan.IsChecked = settings["shareOnLan"]?.Value<bool>() ?? false;
+            StartOnLogin.IsChecked = settings["startOnLogin"]?.Value<bool>() ?? false;
+            _clientSetupPrompted = settings["clientSetupPrompted"]?.Value<bool>() ?? false;
+        }
+        catch { /* A malformed optional preference file must never prevent startup. */ }
+    }
+    private void SaveSettings()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
+            File.WriteAllText(SettingsPath, new JObject
+            {
+                ["zemaxRoot"] = Installation?.Root ?? "",
+                ["port"] = Port.Text,
+                ["remoteEndpoint"] = RemoteEndpoint.Text,
+                ["shareOnLan"] = ShareOnLan.IsChecked == true,
+                ["startOnLogin"] = StartOnLogin.IsChecked == true,
+                ["clientSetupPrompted"] = _clientSetupPrompted
+            }.ToString());
+        }
+        catch { /* Preferences are non-essential. */ }
+    }
     private static string GetLanAddress() => Dns.GetHostEntry(Dns.GetHostName()).AddressList.FirstOrDefault(x => x.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !IPAddress.IsLoopback(x))?.ToString() ?? "127.0.0.1";
-    protected override void OnClosed(EventArgs e) { StopBridge(); base.OnClosed(e); }
+    private void RestoreWindow()
+    {
+        Show();
+        WindowState = WindowState.Normal;
+        Activate();
+    }
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        if (!_exitRequested)
+        {
+            e.Cancel = true;
+            Hide();
+            _trayIcon.ShowBalloonTip(2500, "Zemax MCP is still running", "Use the tray icon to reopen it. Choose Exit to stop the MCP service.", Forms.ToolTipIcon.Info);
+        }
+        base.OnClosing(e);
+    }
+    protected override void OnClosed(EventArgs e)
+    {
+        StopBridge();
+        _trayIcon.Visible = false;
+        _trayIcon.Dispose();
+        base.OnClosed(e);
+    }
+}
+
+internal static class FirewallRule
+{
+    public static bool TryEnsure(int port)
+    {
+        try
+        {
+            var rule = "Zemax MCP HTTP " + port;
+            var user = Environment.UserDomainName + "\\" + Environment.UserName;
+            var firewall = "netsh advfirewall firewall add rule name=\"" + rule + "\" dir=in action=allow protocol=TCP localport=" + port + " profile=private";
+            var urlAcl = "netsh http add urlacl url=http://+:" + port + "/mcp/ user=\"" + user + "\"";
+            // cmd.exe lets one UAC confirmation configure both HTTP.SYS and the
+            // private-network firewall rule. Existing URL ACLs are harmless.
+            var arguments = "/c \"" + firewall + " & " + urlAcl + " & exit /b 0\"";
+            using (var process = Process.Start(new ProcessStartInfo("cmd.exe", arguments) { Verb = "runas", UseShellExecute = true }))
+            {
+                process.WaitForExit();
+                return process.ExitCode == 0;
+            }
+        }
+        catch { return false; }
+    }
 }
 
 public sealed class ZemaxInstallation
@@ -82,10 +365,31 @@ public sealed class ZemaxInstallation
     public string DisplayName { get; set; } = "";
     public static List<ZemaxInstallation> FindAll()
     {
-        var roots = new[] { Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86) }
-            .Where(Directory.Exists).SelectMany(p => Directory.GetDirectories(p, "*Zemax OpticStudio*"));
+        var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var programFiles in new[] { Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86) }.Where(Directory.Exists))
+        {
+            try { foreach (var folder in Directory.GetDirectories(programFiles, "*Zemax*")) roots.Add(folder); }
+            catch (UnauthorizedAccessException) { }
+        }
+        foreach (var keyPath in new[] { @"SOFTWARE\Zemax", @"SOFTWARE\WOW6432Node\Zemax" })
+        {
+            try { CollectRegistryFolders(Registry.LocalMachine.OpenSubKey(keyPath), roots); }
+            catch { }
+        }
+        try { CollectRegistryFolders(Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Zemax"), roots); }
+        catch { }
         return roots.Where(p => File.Exists(Path.Combine(p, "ZOSAPI.dll")) && File.Exists(Path.Combine(p, "ZOSAPI_NetHelper.dll")))
             .Select(p => new ZemaxInstallation { Root = p, DisplayName = Path.GetFileName(p) + " — " + p }).OrderByDescending(x => x.DisplayName).ToList();
+    }
+    private static void CollectRegistryFolders(RegistryKey? key, ISet<string> roots)
+    {
+        if (key == null) return;
+        using (key)
+        {
+            foreach (var name in key.GetValueNames())
+                if (key.GetValue(name) is string value && Directory.Exists(value)) roots.Add(value);
+            foreach (var subKeyName in key.GetSubKeyNames()) CollectRegistryFolders(key.OpenSubKey(subKeyName), roots);
+        }
     }
 }
 
