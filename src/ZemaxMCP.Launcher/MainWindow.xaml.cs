@@ -357,6 +357,15 @@ public partial class MainWindow : Window
     private void Codex_Click(object sender, RoutedEventArgs e) => ConfigureClient("Codex", () => Configurator.ConfigureCodex(McpUrl));
     private void Claude_Click(object sender, RoutedEventArgs e) => ConfigureClient("Claude Desktop", () => Configurator.ConfigureClaudeDesktop(McpUrl));
     private void Cursor_Click(object sender, RoutedEventArgs e) => ConfigureClient("Cursor", () => Configurator.ConfigureCursor(McpUrl));
+    private void VsCode_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Configurator.ConfigureVsCode(McpUrl);
+            Report("VS Code opened its MCP setup. Review and approve Zemax MCP there to finish configuration.");
+        }
+        catch (Exception ex) { Report("Could not open VS Code MCP setup: " + ex.Message); }
+    }
     private void Update_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -514,6 +523,25 @@ internal static class Configurator
 
     public static void ConfigureClaudeDesktop(string url) => ConfigureJson(ClaudeDesktopPath, "mcpServers", url);
     public static void ConfigureCursor(string url) => ConfigureJson(CursorPath, "mcpServers", url);
+
+    public static void ConfigureVsCode(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var endpoint) ||
+            (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps))
+            throw new ArgumentException("The MCP endpoint must be an absolute HTTP or HTTPS address.", nameof(url));
+
+        // VS Code owns user-profile and workspace configuration locations. Its documented
+        // installation URI opens the native review/trust flow and prevents this launcher
+        // from overwriting an unknown profile's mcp.json file.
+        var server = new JObject
+        {
+            ["name"] = "zemax-mcp",
+            ["type"] = "http",
+            ["url"] = endpoint.AbsoluteUri
+        };
+        var installUri = "vscode:mcp/install?" + Uri.EscapeDataString(server.ToString(Newtonsoft.Json.Formatting.None));
+        Process.Start(new ProcessStartInfo(installUri) { UseShellExecute = true });
+    }
 
     public static void ConfigureJson(string path, string property, string url)
     {
