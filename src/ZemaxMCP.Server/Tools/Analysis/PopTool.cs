@@ -347,7 +347,7 @@ public class PopTool
                             return new PopResult(false,
                                 Error: $"Grid {nx}x{ny}={cells} exceeds inline limit {InlineGridCellLimit}. Provide outputGridPath.");
 
-                        EnsureDirectory(outputGridPath);
+                        EnsureDirectory(outputGridPath!);
                         WriteGridBin(outputGridPath!, nx, ny, dx, dy, values2d);
                         gridFilePath = outputGridPath;
                     }
@@ -356,7 +356,7 @@ public class PopTool
                     string? bmpPath = null;
                     if (!string.IsNullOrEmpty(exportBmpPath))
                     {
-                        EnsureDirectory(exportBmpPath);
+                        EnsureDirectory(exportBmpPath!);
                         if (AnalysisBmpHelper.TryExportBmp(results, exportBmpPath!))
                             bmpPath = exportBmpPath;
                     }

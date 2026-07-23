@@ -155,7 +155,7 @@ public class FftPsfTool
                         if (string.IsNullOrEmpty(gridPath))
                             return new FftPsfResult(false,
                                 Error: $"Grid {nx}x{ny}={cells} exceeds inline limit {InlineGridCellLimit}. Provide gridPath.");
-                        EnsureDirectory(gridPath);
+                        EnsureDirectory(gridPath!);
                         WriteGridBin(gridPath!, nx, ny, dx, dy, flat);
                         gridOut = gridPath;
                     }

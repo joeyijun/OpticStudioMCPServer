@@ -67,9 +67,9 @@ public class ExportAnalysisTool
                 string? actualTextPath = null;
                 if (!string.IsNullOrEmpty(textPath))
                 {
-                    EnsureDirectory(textPath);
-                    results.GetTextFile(textPath);
-                    if (File.Exists(textPath))
+                    EnsureDirectory(textPath!);
+                    results.GetTextFile(textPath!);
+                    if (File.Exists(textPath!))
                         actualTextPath = textPath;
                 }
 

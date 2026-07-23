@@ -36,7 +36,7 @@ public class SaveFileTool
 
             // Save constraints sidecar alongside the Zemax file
             if (!string.IsNullOrEmpty(savedPath))
-                _constraintStore.SaveToFile(savedPath);
+                _constraintStore.SaveToFile(savedPath!);
 
             return new SaveFileResult(
                 Success: true,

@@ -67,7 +67,7 @@ public class SetExtraDataTool
                 // Parse batchSet
                 if (!string.IsNullOrWhiteSpace(batchSet))
                 {
-                    foreach (var pair in batchSet.Split(','))
+                    foreach (var pair in batchSet!.Split(','))
                     {
                         var parts = pair.Trim().Split(':');
                         if (parts.Length != 2)
@@ -89,7 +89,7 @@ public class SetExtraDataTool
                 // Parse variableCells
                 if (!string.IsNullOrWhiteSpace(variableCells))
                 {
-                    foreach (var tok in variableCells.Split(','))
+                    foreach (var tok in variableCells!.Split(','))
                     {
                         if (!int.TryParse(tok.Trim(), out int cn))
                             return new SetExtraDataResult(false,

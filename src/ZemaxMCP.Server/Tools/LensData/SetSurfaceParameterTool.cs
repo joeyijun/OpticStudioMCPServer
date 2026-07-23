@@ -62,7 +62,7 @@ public class SetSurfaceParameterTool
                 if (!string.IsNullOrEmpty(batchSet))
                 {
                     var entries = new List<ParameterEntry>();
-                    foreach (var pair in batchSet.Split(','))
+                    foreach (var pair in batchSet!.Split(','))
                     {
                         var parts = pair.Trim().Split(':');
                         if (parts.Length != 2)
