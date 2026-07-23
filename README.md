@@ -1,22 +1,31 @@
 # OpticStudio MCP Server
 
-An MCP (Model Context Protocol) server that enables AI assistants to interact with Zemax OpticStudio for optical design tasks. Works with **Claude Desktop**, **Claude Code**, and **Ollama** (local LLMs).
+**A one-click Windows GUI and HTTP MCP server for Zemax OpticStudio.** It detects installed OpticStudio versions, starts a local or trusted-LAN MCP endpoint, and connects **Codex**, **Claude Desktop**, and **Cursor** without hand-editing configuration files.
 
 > **Windows end-user installation (no command line)**
 >
 > 1. Download and extract `ZemaxMCP-win-x64.zip` from [Releases](../../releases).
 > 2. Double-click **Install.exe**. It installs only for the current Windows user, makes a desktop shortcut, and starts the service.
-> 3. In the **Zemax MCP** window, click **Configure installed AI clients**. It detects and configures Codex, Claude Desktop, and Cursor in one operation; restart the selected AI client once.
+> 3. On first launch, confirm the detected AI-client setup prompt (or open **Configure AI clients**). It adds Codex, Claude Desktop, and Cursor without replacing existing MCP entries; restart the selected AI client once.
 > 4. The local MCP address is displayed in the window. For a second trusted computer, select **Share with a trusted LAN computer** and use the displayed LAN address on that computer.
 >
-> No Node.js, Supergateway, terminal, source checkout, or manual ZOS-API DLL copying is required for end users. For the full screen-by-screen guide, see [Windows Quick Start](docs/QUICKSTART_WINDOWS.md).
+> The dashboard refreshes MCP, ZOS-API/OpticStudio, and recent AI-client activity automatically. No Node.js, Supergateway, terminal, source checkout, or manual ZOS-API DLL copying is required for end users. For the full screen-by-screen guide, see [Windows Quick Start](docs/QUICKSTART_WINDOWS.md).
+
+## Highlights
+
+- **Graphical installation and updates** — Double-click `Install.exe`; `Portable-Install.cmd` is available where an organisation blocks the installer executable.
+- **Built-in HTTP MCP** — No Node.js or external bridge. The endpoint is ready for local AI clients or a trusted LAN computer.
+- **Live, colour-coded status** — Automatic 10-second checks distinguish MCP service, ZOS-API/OpticStudio connection, and recent AI-client activity.
+- **Multi-version OpticStudio detection** — Select a detected installation; the launcher remembers the choice and can start when you sign in.
+- **One menu for AI clients** — Configure all detected clients or choose Codex, Claude Desktop, or Cursor individually.
+- **Safe public package** — The ZIP does not contain proprietary ZOS-API DLLs; it uses the licensed OpticStudio installation on the Zemax computer at runtime.
 
 The build-from-source instructions below are for contributors and release maintainers, not normal users.
 
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
-- [Quick Start](#quick-start)
+- [Contributor Quick Start](#contributor-quick-start)
 - [Step 1: Build the Solution](#step-1-build-the-solution)
 - [Step 2: Fix Binaries (Configure ZOS-API Path)](#step-2-fix-binaries-configure-zos-api-path)
 - [Step 3: Configure Your AI Client](#step-3-configure-your-ai-client)
@@ -54,12 +63,13 @@ The build-from-source instructions below are for contributors and release mainta
 
 ---
 
-## Quick Start
+## Contributor Quick Start
 
-1. **Build** the solution in Visual Studio or via command line
-2. **Run FixBinaries** to point the project at your OpticStudio installation
-3. **Run ConfigureClaudeMCP** to automatically set up Claude Desktop and/or Claude Code
-4. Start using OpticStudio through your AI assistant
+The packaged flow above is the supported path for normal users. The following source-build steps are for contributors and release maintainers only.
+
+1. **Build** the solution in Visual Studio or via command line.
+2. Set `ZEMAX_ROOT` (or use the legacy FixBinaries workflow) to point the build at a licensed OpticStudio installation.
+3. Use the release packaging script to produce the public Windows ZIP.
 
 ---
 
