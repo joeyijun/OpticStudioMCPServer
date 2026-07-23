@@ -160,6 +160,7 @@ try
     // Non-sequential and tolerancing tools
     .WithTools<ZemaxMCP.Server.Tools.NonSequential.GetNscObjectsTool>()
     .WithTools<ZemaxMCP.Server.Tools.NonSequential.GetNscDetectorTool>()
+    .WithTools<ZemaxMCP.Server.Tools.NonSequential.GetNscObjectParametersTool>()
     .WithTools<ZemaxMCP.Server.Tools.Tolerancing.GetTolerancesTool>()
     // Configuration Tools
     .WithTools<ZemaxMCP.Server.Tools.Configuration.GetConfigurationTool>()

@@ -54,6 +54,7 @@ public static class McpServerExtensions
         // Non-sequential and tolerancing tools
         .WithTools<GetNscObjectsTool>()
         .WithTools<GetNscDetectorTool>()
+        .WithTools<GetNscObjectParametersTool>()
         .WithTools<GetTolerancesTool>()
 
         // System Tools
