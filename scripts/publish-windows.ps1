@@ -5,6 +5,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
+$verificationScript = Join-Path $PSScriptRoot "verify-tool-registration.ps1"
+& $verificationScript -RepositoryRoot $root
 $publish = Join-Path $root "artifacts\ZemaxMCP"
 
 if ([string]::IsNullOrWhiteSpace($ZemaxRoot)) {

@@ -38,6 +38,8 @@ The MCP server uses **explicit registration** - NOT reflection-based discovery:
 - Simply creating a tool file and adding attributes is NOT sufficient
 - The tool will compile but won't be available at runtime
 
+`scripts/verify-tool-registration.ps1` checks this invariant. `publish-windows.ps1` runs it automatically before every release build.
+
 ## Files Involved
 
 - `src/ZemaxMCP.Server/Program.cs` - Main tool registration (used by the released server)
