@@ -48,15 +48,16 @@ Use the launcher status dashboard to confirm that ZOS-API is loaded and OpticStu
 
 ## MCP capabilities
 
-The connected server currently exposes **87 MCP tools**. AI clients discover their exact schemas through MCP `tools/list`; this prevents the README from drifting from the running server.
+The server exposes a broad tool set. AI clients discover the exact, version-matched schemas through MCP `tools/list`, so this README does not become a stale duplicate of the running server.
 
 Major groups include:
 
 - System and file operations
 - Lens Data Editor surfaces, fields, wavelengths, aperture, solves, and extra data
+- Non-Sequential Component (NSC) objects and detectors
 - Imaging and optical analyses: spot, MTF, PSF, POP, ray fans, aberrations, and illumination
 - Optimization, merit functions, operands, constraints, and multistart jobs
-- Multi-configuration, system settings, and glass-catalog operations
+- Multi-configuration, tolerance-data-editor (TDE), system settings, and glass-catalog operations
 
 This fork additionally includes the following acceptance and validation tools:
 

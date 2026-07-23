@@ -6,6 +6,8 @@ using ZemaxMCP.Server.Tools.LensData;
 using ZemaxMCP.Server.Tools.System;
 using ZemaxMCP.Server.Tools.Configuration;
 using ZemaxMCP.Server.Tools.SystemSettings;
+using ZemaxMCP.Server.Tools.NonSequential;
+using ZemaxMCP.Server.Tools.Tolerancing;
 using ZemaxMCP.Server.Resources;
 using ZemaxMCP.Server.Prompts;
 
@@ -48,6 +50,11 @@ public static class McpServerExtensions
         .WithTools<SetApertureTool>()
         .WithTools<GetAsphericSurfaceTool>()
         .WithTools<SetAsphericSurfaceTool>()
+
+        // Non-sequential and tolerancing tools
+        .WithTools<GetNscObjectsTool>()
+        .WithTools<GetNscDetectorTool>()
+        .WithTools<GetTolerancesTool>()
 
         // System Tools
         .WithTools<OpenFileTool>()

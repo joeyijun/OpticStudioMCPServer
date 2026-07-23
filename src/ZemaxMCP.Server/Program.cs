@@ -157,6 +157,10 @@ try
     .WithTools<ZemaxMCP.Server.Tools.LensData.SurfaceApertureTool>()
     .WithTools<ZemaxMCP.Server.Tools.LensData.OffAxisConicFreeformTool>()
     .WithTools<ZemaxMCP.Server.Tools.LensData.GetGlobalMatrixTool>()
+    // Non-sequential and tolerancing tools
+    .WithTools<ZemaxMCP.Server.Tools.NonSequential.GetNscObjectsTool>()
+    .WithTools<ZemaxMCP.Server.Tools.NonSequential.GetNscDetectorTool>()
+    .WithTools<ZemaxMCP.Server.Tools.Tolerancing.GetTolerancesTool>()
     // Configuration Tools
     .WithTools<ZemaxMCP.Server.Tools.Configuration.GetConfigurationTool>()
     .WithTools<ZemaxMCP.Server.Tools.Configuration.SetNumberOfConfigurationsTool>()
