@@ -89,10 +89,15 @@ public class ZemaxSession : IZemaxSession
             }
 
             // Initialize ZOSAPI
-            bool isInitialized = ZOSAPI_NetHelper.ZOSAPI_Initializer.Initialize();
+            var zemaxRoot = Environment.GetEnvironmentVariable("ZEMAX_ROOT");
+            bool isInitialized = string.IsNullOrWhiteSpace(zemaxRoot)
+                ? ZOSAPI_NetHelper.ZOSAPI_Initializer.Initialize()
+                : ZOSAPI_NetHelper.ZOSAPI_Initializer.Initialize(zemaxRoot);
             if (!isInitialized)
             {
-                throw new ZemaxConnectionException("Failed to initialize ZOSAPI. Ensure OpticStudio is installed.");
+                throw new ZemaxConnectionException(
+                    $"Failed to initialize ZOSAPI. Ensure OpticStudio is installed. " +
+                    $"ZEMAX_ROOT='{zemaxRoot ?? "<auto-detect>"}'");
             }
 
             var connection = new ZOSAPI_Connection();

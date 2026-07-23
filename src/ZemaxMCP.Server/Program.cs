@@ -12,8 +12,19 @@ using ZemaxMCP.Server.Hosting;
 // MCP stdio transport uses the raw process stdout stream, not Console.Out.
 Console.SetOut(TextWriter.Null);
 
-// Initialize ZOSAPI assembly resolver BEFORE any ZOSAPI types are loaded
-ZOSAPI_NetHelper.ZOSAPI_Initializer.Initialize();
+// Initialize ZOSAPI assembly resolver BEFORE any ZOSAPI types are loaded.
+// The launcher sets ZEMAX_ROOT after detecting the selected OpticStudio version.
+// Keeping the implicit lookup as a fallback preserves the existing stdio workflow.
+var zemaxRoot = Environment.GetEnvironmentVariable("ZEMAX_ROOT");
+var initialized = string.IsNullOrWhiteSpace(zemaxRoot)
+    ? ZOSAPI_NetHelper.ZOSAPI_Initializer.Initialize()
+    : ZOSAPI_NetHelper.ZOSAPI_Initializer.Initialize(zemaxRoot);
+
+if (!initialized)
+{
+    throw new InvalidOperationException(
+        $"Failed to initialize ZOS-API. ZEMAX_ROOT='{zemaxRoot ?? "<auto-detect>"}'.");
+}
 
 // Configure Serilog - write to file only (console interferes with stdio)
 var serilogPath = Path.Combine(AppContext.BaseDirectory, "logs", "zemaxmcp-.log");
