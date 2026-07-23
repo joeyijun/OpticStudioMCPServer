@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using Forms = System.Windows.Forms;
 using Newtonsoft.Json.Linq;
@@ -22,7 +23,9 @@ public partial class MainWindow : Window
     private bool _stoppingBridge;
     private bool _exitRequested;
     private bool _clientSetupPrompted;
+    private bool _refreshingStatus;
     private readonly Forms.NotifyIcon _trayIcon;
+    private readonly DispatcherTimer _statusTimer;
     public MainWindow()
     {
         InitializeComponent();
@@ -32,6 +35,8 @@ public partial class MainWindow : Window
         menu.Items.Add("Open Zemax MCP", null, (_, _) => RestoreWindow());
         menu.Items.Add("Exit", null, (_, _) => ExitApplication());
         _trayIcon.ContextMenuStrip = menu;
+        _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
+        _statusTimer.Tick += async (_, _) => await RefreshStatusAsync();
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -48,11 +53,12 @@ public partial class MainWindow : Window
         RefreshEndpoint();
         if (installs.Count > 0) StartBridge();
         SetIndicatorsChecking();
+        _statusTimer.Start();
         OfferFirstRunClientSetup();
     }
     private void ZemaxVersions_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) { RefreshEndpoint(); SaveSettings(); }
     private string HostName => ShareOnLan.IsChecked == true ? "0.0.0.0" : "127.0.0.1";
-    private void RefreshEndpoint() => Endpoint.Text = "MCP endpoint: " + Url;
+    private void RefreshEndpoint() => Endpoint.Text = Url;
     private ZemaxInstallation? Installation => ZemaxVersions.SelectedItem as ZemaxInstallation;
     private string Url => "http://" + (ShareOnLan.IsChecked == true ? GetLanAddress() : "127.0.0.1") + ":" + Port.Text + "/mcp";
     private string McpUrl => Uri.TryCreate(RemoteEndpoint.Text, UriKind.Absolute, out var remote) &&
@@ -105,6 +111,8 @@ public partial class MainWindow : Window
     private async void RefreshStatus_Click(object sender, RoutedEventArgs e) => await RefreshStatusAsync();
     private async Task RefreshStatusAsync()
     {
+        if (_refreshingStatus) return;
+        _refreshingStatus = true;
         var root = Installation?.Root;
         var endpoint = McpUrl;
         var apiFiles = root != null && new[] { "ZOSAPI.dll", "ZOSAPI_Interfaces.dll", "ZOSAPI_NetHelper.dll" }.All(x => File.Exists(Path.Combine(root, x)));
@@ -137,6 +145,7 @@ public partial class MainWindow : Window
             else if (apiFiles) SetIndicator(ZosStateDot, ZosState, "Files found — not loaded yet", System.Windows.Media.Brushes.DarkOrange);
             else SetIndicator(ZosStateDot, ZosState, "ZOS-API files are missing", System.Windows.Media.Brushes.IndianRed);
             SetAiIndicator(client, lastRequest);
+            LastStatusCheck.Text = "Updated " + DateTime.Now.ToString("HH:mm:ss") + " · automatic refresh every 10 seconds";
         }
         catch (Exception ex)
         {
@@ -148,7 +157,9 @@ public partial class MainWindow : Window
             else if (apiFiles) SetIndicator(ZosStateDot, ZosState, "Files found — service is unavailable", System.Windows.Media.Brushes.DarkOrange);
             else SetIndicator(ZosStateDot, ZosState, "ZOS-API files are missing", System.Windows.Media.Brushes.IndianRed);
             SetIndicator(AiStateDot, AiState, "Unknown until the MCP service responds", System.Windows.Media.Brushes.SlateGray);
+            LastStatusCheck.Text = "Last checked " + DateTime.Now.ToString("HH:mm:ss") + " · endpoint unavailable; retrying automatically";
         }
+        finally { _refreshingStatus = false; }
     }
     private void SetIndicatorsChecking()
     {
@@ -386,6 +397,7 @@ public partial class MainWindow : Window
     }
     protected override void OnClosed(EventArgs e)
     {
+        _statusTimer.Stop();
         StopBridge();
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
