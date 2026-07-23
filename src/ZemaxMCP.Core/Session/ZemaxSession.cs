@@ -146,6 +146,11 @@ public class ZemaxSession : IZemaxSession
                 throw new ZemaxConnectionException("Failed to get primary optical system");
             }
 
+            // Keep status and save operations aligned with the system OpticStudio
+            // actually opened before this MCP process attached to it.
+            var systemFile = _primarySystem.SystemFile;
+            CurrentFilePath = string.IsNullOrWhiteSpace(systemFile) ? null : systemFile;
+
             _logger.LogInformation("Successfully connected to OpticStudio in {Mode} mode", mode);
             Console.Error.WriteLine("ZEMAX_MCP_STATUS:ZOS_API_CONNECTED");
             _commandLog.LogResult("Connect", true, $"Connected in {mode} mode", sw.ElapsedMilliseconds);
