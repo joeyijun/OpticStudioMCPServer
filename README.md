@@ -20,18 +20,15 @@
 - **One menu for AI clients** — Configure all detected clients or choose Codex, Claude Desktop, or Cursor individually.
 - **Safe public package** — The ZIP does not contain proprietary ZOS-API DLLs; it uses the licensed OpticStudio installation on the Zemax computer at runtime.
 
-The build-from-source instructions below are for contributors and release maintainers, not normal users.
+## Fork and attribution
+
+This repository is a fork of the MIT-licensed **OpticStudio MCP Server** by Javier A Ruiz. This fork focuses on a graphical, zero-command Windows experience: packaged installation, built-in HTTP MCP, trusted-LAN use, live status, and graphical AI-client configuration. The original copyright and MIT license are retained in [LICENSE](LICENSE).
 
 ## Table of Contents
 
-- [Prerequisites](#prerequisites)
-- [Contributor Quick Start](#contributor-quick-start)
-- [Step 1: Build the Solution](#step-1-build-the-solution)
-- [Step 2: Fix Binaries (Configure ZOS-API Path)](#step-2-fix-binaries-configure-zos-api-path)
-- [Step 3: Configure Your AI Client](#step-3-configure-your-ai-client)
-  - [Claude Desktop Setup](#claude-desktop-setup)
-  - [Claude Code Setup](#claude-code-setup)
-  - [Ollama Setup (Local LLMs)](#ollama-setup-local-llms)
+- [Windows Quick Start](docs/QUICKSTART_WINDOWS.md)
+- [Highlights](#highlights)
+- [Fork and Attribution](#fork-and-attribution)
 - [Connection Modes](#connection-modes)
 - [Tool Reference](#tool-reference)
   - [System Tools](#system-tools)
@@ -50,6 +47,8 @@ The build-from-source instructions below are for contributors and release mainta
 - [License](#license)
 
 ---
+
+> **For contributors only:** the legacy source-build and earlier client-specific deployment notes below are retained for historical development reference. They are not needed to install or use the Windows release.
 
 ## Prerequisites
 
