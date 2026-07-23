@@ -14,7 +14,7 @@ On the AI-client computer, extract the same release, double-click `Install.exe`,
 
 ## Updates and logs
 
-The launcher downloads and applies the current GitHub release with **Check updates**, then restarts itself. Each release includes the server, HTTP bridge, launcher, and a rolling `logs` folder. Your OpticStudio installation and client configuration are retained.
+Use **Updates** in the launcher to download and apply the current GitHub release, then restart it. Each release includes the server, HTTP bridge, launcher, and installer. Logs are created in the application's `logs` folder; your OpticStudio installation and client configuration are retained.
 
 The public ZIP intentionally contains no `ZOSAPI*.dll` files. On the computer that has OpticStudio installed, the launcher uses that user's local licensed installation at runtime; it does not download, bundle, or redistribute Ansys ZOS-API files.
 

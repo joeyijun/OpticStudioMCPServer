@@ -124,21 +124,32 @@ public class ZemaxSession : IZemaxSession
                 }
             }
 
-            _logger.LogInformation("ZOSAPI Application created. LicenseStatus={Status}, IsValidLicenseForAPI={Valid}",
-                _application.LicenseStatus, _application.IsValidLicenseForAPI);
+            // Both connection modes must yield an application before using it.  Keep a
+            // non-null local reference so a future connection mode cannot accidentally
+            // bypass the checks above and cause a less useful NullReferenceException.
+            var application = _application ?? throw new ZemaxConnectionException(
+                $"Failed to create an OpticStudio application for connection mode {mode}.");
 
-            if (!_application.IsValidLicenseForAPI)
+            _logger.LogInformation("ZOSAPI Application created. LicenseStatus={Status}, IsValidLicenseForAPI={Valid}",
+                application.LicenseStatus, application.IsValidLicenseForAPI);
+
+            if (!application.IsValidLicenseForAPI)
             {
-                throw new ZemaxConnectionException($"Invalid Zemax license: {_application.LicenseStatus}");
+                throw new ZemaxConnectionException($"Invalid Zemax license: {application.LicenseStatus}");
             }
 
-            _primarySystem = _application.PrimarySystem;
-            ZemaxDataDir = _application.ZemaxDataDir;
+            _primarySystem = application.PrimarySystem;
+            ZemaxDataDir = application.ZemaxDataDir;
 
             if (_primarySystem == null)
             {
                 throw new ZemaxConnectionException("Failed to get primary optical system");
             }
+
+            // Keep status and save operations aligned with the system OpticStudio
+            // actually opened before this MCP process attached to it.
+            var systemFile = _primarySystem.SystemFile;
+            CurrentFilePath = string.IsNullOrWhiteSpace(systemFile) ? null : systemFile;
 
             _logger.LogInformation("Successfully connected to OpticStudio in {Mode} mode", mode);
             Console.Error.WriteLine("ZEMAX_MCP_STATUS:ZOS_API_CONNECTED");

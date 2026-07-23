@@ -1,6 +1,6 @@
 # OpticStudio MCP Server
 
-**A GUI-first Windows HTTP MCP server for Zemax OpticStudio.** It detects installed OpticStudio versions, starts a local or trusted-LAN MCP endpoint, and configures **Codex**, **Claude Desktop**, and **Cursor** without manual configuration-file editing.
+**A GUI-first Windows HTTP MCP server for Zemax OpticStudio.** It detects installed OpticStudio versions, starts a local or trusted-LAN MCP endpoint, and configures **Codex**, **Claude Desktop**, **Cursor**, and **VS Code / GitHub Copilot** without manual configuration-file editing.
 
 ## Windows quick start
 
@@ -19,7 +19,7 @@ For the complete one- and two-computer guide, see [Windows Quick Start](docs/QUI
 flowchart LR
   A["OpticStudio computer\nInstall.exe → Start-Zemax-MCP.exe"] --> B["Built-in HTTP MCP bridge\n/mcp"]
   B --> C["ZOS-API + licensed\nOpticStudio"]
-  D["Codex / Claude Desktop / Cursor\nlocal or trusted LAN computer"] -->|"HTTP MCP"| B
+  D["Codex / Claude Desktop / Cursor / VS Code Copilot\nlocal or trusted LAN computer"] -->|"HTTP MCP"| B
   B --> E["Live dashboard\nMCP · ZOS-API · AI activity"]
 ```
 
@@ -32,7 +32,7 @@ For a single computer, the AI client uses the local MCP address. For two compute
 - **Trusted LAN use** — Enable LAN sharing on the OpticStudio computer, copy its address, and configure the AI-client computer graphically.
 - **Live status dashboard** — Colour-coded status cards distinguish the MCP service, ZOS-API/OpticStudio connection, and recent AI-client calls.
 - **Multi-version OpticStudio detection** — Choose from detected installations; the launcher remembers the choice and can start at sign-in.
-- **One AI configuration menu** — Configure all detected clients or Codex, Claude Desktop, and Cursor individually.
+- **One AI configuration menu** — Configure detected Codex, Claude Desktop, and Cursor clients directly. VS Code / GitHub Copilot uses its native MCP review and trust flow, so its own profile and workspace configuration remain intact.
 - **Safe public package** — The ZIP does not redistribute proprietary ZOS-API DLLs. It uses the licensed OpticStudio installation at runtime on the Zemax computer.
 
 ## Connection modes
@@ -48,15 +48,16 @@ Use the launcher status dashboard to confirm that ZOS-API is loaded and OpticStu
 
 ## MCP capabilities
 
-The connected server currently exposes **87 MCP tools**. AI clients discover their exact schemas through MCP `tools/list`; this prevents the README from drifting from the running server.
+The server exposes a broad tool set. AI clients discover the exact, version-matched schemas through MCP `tools/list`, so this README does not become a stale duplicate of the running server.
 
 Major groups include:
 
 - System and file operations
 - Lens Data Editor surfaces, fields, wavelengths, aperture, solves, and extra data
+- Non-Sequential Component (NSC) objects and detectors
 - Imaging and optical analyses: spot, MTF, PSF, POP, ray fans, aberrations, and illumination
 - Optimization, merit functions, operands, constraints, and multistart jobs
-- Multi-configuration, system settings, and glass-catalog operations
+- Multi-configuration, tolerance-data-editor (TDE), system settings, and glass-catalog operations
 
 This fork additionally includes the following acceptance and validation tools:
 

@@ -7,7 +7,6 @@ using ZemaxMCP.Core.Logging;
 using ZemaxMCP.Core.Services.ConstrainedOptimization;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Documentation;
-using ZemaxMCP.Server.Hosting;
 
 // Redirect Console.Out to prevent ZOSAPI (or any library) from polluting stdout.
 // MCP stdio transport uses the raw process stdout stream, not Console.Out.
@@ -143,6 +142,8 @@ try
     .WithTools<ZemaxMCP.Server.Tools.LensData.AddSurfaceTool>()
     .WithTools<ZemaxMCP.Server.Tools.LensData.SetFieldsTool>()
     .WithTools<ZemaxMCP.Server.Tools.LensData.SetWavelengthsTool>()
+    .WithTools<ZemaxMCP.Server.Tools.LensData.SetNumberOfFieldsTool>()
+    .WithTools<ZemaxMCP.Server.Tools.LensData.SetNumberOfWavelengthsTool>()
     .WithTools<ZemaxMCP.Server.Tools.LensData.SetApertureTool>()
     .WithTools<ZemaxMCP.Server.Tools.LensData.GetSurfaceSolvesTool>()
     .WithTools<ZemaxMCP.Server.Tools.LensData.SetSurfaceSolveTool>()
@@ -157,6 +158,11 @@ try
     .WithTools<ZemaxMCP.Server.Tools.LensData.SurfaceApertureTool>()
     .WithTools<ZemaxMCP.Server.Tools.LensData.OffAxisConicFreeformTool>()
     .WithTools<ZemaxMCP.Server.Tools.LensData.GetGlobalMatrixTool>()
+    // Non-sequential and tolerancing tools
+    .WithTools<ZemaxMCP.Server.Tools.NonSequential.GetNscObjectsTool>()
+    .WithTools<ZemaxMCP.Server.Tools.NonSequential.GetNscDetectorTool>()
+    .WithTools<ZemaxMCP.Server.Tools.NonSequential.GetNscObjectParametersTool>()
+    .WithTools<ZemaxMCP.Server.Tools.Tolerancing.GetTolerancesTool>()
     // Configuration Tools
     .WithTools<ZemaxMCP.Server.Tools.Configuration.GetConfigurationTool>()
     .WithTools<ZemaxMCP.Server.Tools.Configuration.SetNumberOfConfigurationsTool>()
@@ -175,6 +181,12 @@ try
     .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SetRayAimingTool>()
     .WithTools<ZemaxMCP.Server.Tools.SystemSettings.GetAfocalModeTool>()
     .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SetAfocalModeTool>()
+    .WithTools<ZemaxMCP.Server.Tools.SystemSettings.GetApodizationTool>()
+    .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SetApodizationTool>()
+    .WithTools<ZemaxMCP.Server.Tools.SystemSettings.GetClearSemiDiameterMarginTool>()
+    .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SetClearSemiDiameterMarginTool>()
+    .WithTools<ZemaxMCP.Server.Tools.SystemSettings.GetMtfUnitsTool>()
+    .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SetMtfUnitsTool>()
     // Glass Catalog Tools
     .WithTools<ZemaxMCP.Server.Tools.GlassCatalog.GetGlassCatalogsTool>()
     .WithTools<ZemaxMCP.Server.Tools.GlassCatalog.GetGlassesTool>()

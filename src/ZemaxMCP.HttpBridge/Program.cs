@@ -60,7 +60,8 @@ internal sealed class BridgeOptions
     public static BridgeOptions Parse(string[] args)
     {
         var result = new BridgeOptions();
-        for (var i = 0; i < args.Length - 1; i += 2)
+        if (args.Length % 2 != 0) throw new ArgumentException("Bridge arguments must be supplied as --option value pairs.");
+        for (var i = 0; i < args.Length; i += 2)
         {
             var value = args[i + 1];
             switch (args[i].ToLowerInvariant())
@@ -68,17 +69,25 @@ internal sealed class BridgeOptions
                 case "--server": result.ServerPath = value; break;
                 case "--zemax-root": result.ZemaxRoot = value; break;
                 case "--host": result.Host = value; break;
-                case "--port": result.Port = int.Parse(value); break;
+                case "--port":
+                    if (!int.TryParse(value, out var port) || port < 1 || port > 65535)
+                        throw new ArgumentException("--port must be a number from 1 to 65535.");
+                    result.Port = port;
+                    break;
                 case "--path": result.Path = value.TrimEnd('/') + "/"; break;
                 case "--log-dir": result.LogDirectory = value; break;
+                default: throw new ArgumentException("Unknown bridge option: " + args[i]);
             }
         }
+        if (string.IsNullOrWhiteSpace(result.ServerPath)) throw new ArgumentException("--server cannot be empty.");
+        if (string.IsNullOrWhiteSpace(result.Host)) throw new ArgumentException("--host cannot be empty.");
         return result;
     }
 }
 
 internal sealed class StdioMcpBridge : IDisposable
 {
+    private const int MaxRequestBytes = 1024 * 1024;
     private readonly BridgeOptions _options;
     private readonly SemaphoreSlim _requestLock = new SemaphoreSlim(1, 1);
     private readonly string _sessionId = Guid.NewGuid().ToString("N");
@@ -165,10 +174,18 @@ internal sealed class StdioMcpBridge : IDisposable
                 context.Response.Close();
                 return;
             }
+            if (context.Request.ContentLength64 > MaxRequestBytes)
+            {
+                await WriteJsonAsync(context, new JObject
+                {
+                    ["jsonrpc"] = "2.0",
+                    ["error"] = new JObject { ["code"] = -32600, ["message"] = "MCP request exceeds the 1 MiB bridge limit." },
+                    ["id"] = null
+                }, HttpStatusCode.RequestEntityTooLarge).ConfigureAwait(false);
+                return;
+            }
 
-            string request;
-            using (var reader = new StreamReader(context.Request.InputStream, context.Request.ContentEncoding))
-                request = await reader.ReadToEndAsync().ConfigureAwait(false);
+            var request = await ReadRequestAsync(context.Request).ConfigureAwait(false);
             var json = JObject.Parse(request);
             _lastRequestAt = DateTimeOffset.Now;
             if (string.Equals(json["method"]?.ToString(), "initialize", StringComparison.OrdinalIgnoreCase))
@@ -211,6 +228,26 @@ internal sealed class StdioMcpBridge : IDisposable
             await context.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
             context.Response.Close();
         }
+        catch (RequestTooLargeException ex)
+        {
+            Log.Warning(ex, "Rejected an oversized MCP request");
+            await WriteJsonAsync(context, new JObject
+            {
+                ["jsonrpc"] = "2.0",
+                ["error"] = new JObject { ["code"] = -32600, ["message"] = "MCP request exceeds the 1 MiB bridge limit." },
+                ["id"] = null
+            }, HttpStatusCode.RequestEntityTooLarge).ConfigureAwait(false);
+        }
+        catch (Newtonsoft.Json.JsonReaderException ex)
+        {
+            Log.Warning(ex, "Rejected malformed MCP JSON");
+            await WriteJsonAsync(context, new JObject
+            {
+                ["jsonrpc"] = "2.0",
+                ["error"] = new JObject { ["code"] = -32700, ["message"] = "Malformed JSON-RPC request." },
+                ["id"] = null
+            }, HttpStatusCode.BadRequest).ConfigureAwait(false);
+        }
         catch (Exception ex)
         {
             Log.Error(ex, "HTTP request failed");
@@ -223,14 +260,31 @@ internal sealed class StdioMcpBridge : IDisposable
         }
     }
 
-    private static async Task WriteJsonAsync(HttpListenerContext context, JObject payload)
+    private static async Task WriteJsonAsync(HttpListenerContext context, JObject payload, HttpStatusCode status = HttpStatusCode.OK)
     {
         var bytes = Encoding.UTF8.GetBytes(payload.ToString(Newtonsoft.Json.Formatting.None));
-        context.Response.StatusCode = (int)HttpStatusCode.OK;
+        context.Response.StatusCode = (int)status;
         context.Response.ContentType = "application/json; charset=utf-8";
         context.Response.ContentLength64 = bytes.Length;
         await context.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
         context.Response.Close();
+    }
+
+    private static async Task<string> ReadRequestAsync(HttpListenerRequest request)
+    {
+        using (var body = new MemoryStream())
+        {
+            var buffer = new byte[8192];
+            while (true)
+            {
+                var read = await request.InputStream.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
+                if (read == 0) break;
+                if (body.Length + read > MaxRequestBytes)
+                    throw new RequestTooLargeException();
+                await body.WriteAsync(buffer, 0, read).ConfigureAwait(false);
+            }
+            return request.ContentEncoding.GetString(body.ToArray());
+        }
     }
 
     private async Task<string> ReadResponseAsync(JToken id)
@@ -252,4 +306,9 @@ internal sealed class StdioMcpBridge : IDisposable
         _server?.Dispose();
         _requestLock.Dispose();
     }
+}
+
+internal sealed class RequestTooLargeException : Exception
+{
+    public RequestTooLargeException() : base("MCP request exceeds the 1 MiB bridge limit.") { }
 }

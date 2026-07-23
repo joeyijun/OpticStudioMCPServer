@@ -47,24 +47,49 @@ public partial class MainWindow : Window
         var savedRoot = ReadSetting("zemaxRoot");
         ZemaxVersions.SelectedItem = installs.FirstOrDefault(x => x.Root.Equals(savedRoot, StringComparison.OrdinalIgnoreCase));
         if (ZemaxVersions.SelectedItem == null) ZemaxVersions.SelectedIndex = installs.Count > 0 ? 0 : -1;
-        Report(installs.Count == 0
+        var hasRemoteEndpoint = IsRemoteEndpointConfigured;
+        Report(hasRemoteEndpoint
+            ? "Using the saved remote MCP endpoint. Local service startup is skipped."
+            : installs.Count == 0
             ? "No local OpticStudio installation detected. To use this computer as an AI client, paste the MCP address from the OpticStudio computer, then click Test MCP connection and Configure installed AI clients."
             : "Starting local MCP endpoint automatically…");
         RefreshEndpoint();
-        if (installs.Count > 0) StartBridge();
+        if (installs.Count > 0 && !hasRemoteEndpoint) StartBridge();
         SetIndicatorsChecking();
         _statusTimer.Start();
         OfferFirstRunClientSetup();
     }
     private void ZemaxVersions_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) { RefreshEndpoint(); SaveSettings(); }
+    private void Port_LostFocus(object sender, RoutedEventArgs e) { RefreshEndpoint(); SaveSettings(); }
+    private async void RemoteEndpoint_LostFocus(object sender, RoutedEventArgs e)
+    {
+        SaveSettings();
+        if (!string.IsNullOrWhiteSpace(RemoteEndpoint.Text) && !IsRemoteEndpointConfigured)
+        {
+            Report("Remote MCP address is invalid. Use a full http:// or https:// address.");
+            return;
+        }
+        if (IsRemoteEndpointConfigured) StopBridge();
+        else if (Installation != null && (_bridge == null || _bridge.HasExited)) StartBridge();
+        await RefreshStatusAsync();
+    }
     private string HostName => ShareOnLan.IsChecked == true ? "0.0.0.0" : "127.0.0.1";
     private void RefreshEndpoint() => Endpoint.Text = Url;
     private ZemaxInstallation? Installation => ZemaxVersions.SelectedItem as ZemaxInstallation;
     private string Url => "http://" + (ShareOnLan.IsChecked == true ? GetLanAddress() : "127.0.0.1") + ":" + Port.Text + "/mcp";
+    private bool IsRemoteEndpointConfigured => Uri.TryCreate(RemoteEndpoint.Text, UriKind.Absolute, out var remote) &&
+        (remote.Scheme == Uri.UriSchemeHttp || remote.Scheme == Uri.UriSchemeHttps);
     private string McpUrl => Uri.TryCreate(RemoteEndpoint.Text, UriKind.Absolute, out var remote) &&
         (remote.Scheme == Uri.UriSchemeHttp || remote.Scheme == Uri.UriSchemeHttps) ? remote.ToString().TrimEnd('/') : Url;
 
-    private void ShareOnLan_Changed(object sender, RoutedEventArgs e) { RefreshEndpoint(); SaveSettings(); StopBridge(); if (Installation != null) StartBridge(); }
+    private void ShareOnLan_Changed(object sender, RoutedEventArgs e)
+    {
+        RefreshEndpoint();
+        SaveSettings();
+        if (IsRemoteEndpointConfigured) return;
+        StopBridge();
+        if (Installation != null) StartBridge();
+    }
     private void StartOnLogin_Changed(object sender, RoutedEventArgs e)
     {
         try
@@ -284,10 +309,18 @@ public partial class MainWindow : Window
     private List<string> ConfigureDetectedClients()
     {
         var configured = new List<string>();
-        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        if (Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex"))) { Configurator.ConfigureCodex(McpUrl); configured.Add("Codex"); }
-        if (Directory.Exists(Path.Combine(appData, "Claude"))) { Configurator.ConfigureJson(Path.Combine(appData, "Claude", "claude_desktop_config.json"), "mcpServers", McpUrl); configured.Add("Claude Desktop"); }
-        if (Directory.Exists(Path.Combine(appData, "Cursor"))) { Configurator.ConfigureJson(Path.Combine(appData, "Cursor", "User", "mcp.json"), "mcpServers", McpUrl); configured.Add("Cursor"); }
+        foreach (var client in DetectedClientConfigurations())
+        {
+            try
+            {
+                client.Configure();
+                configured.Add(client.Name);
+            }
+            catch (Exception ex)
+            {
+                Report("Could not configure " + client.Name + ": " + ex.Message);
+            }
+        }
         return configured;
     }
     private void OfferFirstRunClientSetup()
@@ -302,18 +335,37 @@ public partial class MainWindow : Window
             Report("Configured: " + string.Join(", ", configured) + ". Restart the client to connect.");
         }
     }
-    private static List<string> DetectedClientNames()
+    private List<string> DetectedClientNames()
+    {
+        return DetectedClientConfigurations().Select(x => x.Name).ToList();
+    }
+    private List<(string Name, Action Configure)> DetectedClientConfigurations()
     {
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        var clients = new List<string>();
-        if (Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex"))) clients.Add("Codex");
-        if (Directory.Exists(Path.Combine(appData, "Claude"))) clients.Add("Claude Desktop");
-        if (Directory.Exists(Path.Combine(appData, "Cursor"))) clients.Add("Cursor");
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var clients = new List<(string, Action)>();
+        if (Directory.Exists(Path.Combine(profile, ".codex"))) clients.Add(("Codex", () => Configurator.ConfigureCodex(McpUrl)));
+        if (Directory.Exists(Path.Combine(appData, "Claude"))) clients.Add(("Claude Desktop", () => Configurator.ConfigureClaudeDesktop(McpUrl)));
+        if (Directory.Exists(Path.Combine(profile, ".cursor")) || Directory.Exists(Path.Combine(appData, "Cursor")) || Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Cursor"))) clients.Add(("Cursor", () => Configurator.ConfigureCursor(McpUrl)));
         return clients;
     }
-    private void Codex_Click(object sender, RoutedEventArgs e) { Configurator.ConfigureCodex(McpUrl); Report("Codex configured for " + McpUrl); }
-    private void Claude_Click(object sender, RoutedEventArgs e) { Configurator.ConfigureJson(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Claude", "claude_desktop_config.json"), "mcpServers", McpUrl); Report("Claude Desktop configured for " + McpUrl); }
-    private void Cursor_Click(object sender, RoutedEventArgs e) { Configurator.ConfigureJson(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Cursor", "User", "mcp.json"), "mcpServers", McpUrl); Report("Cursor configured for " + McpUrl); }
+    private void ConfigureClient(string name, Action configure)
+    {
+        try { configure(); Report(name + " configured for " + McpUrl + ". Restart the client to connect."); }
+        catch (Exception ex) { Report("Could not configure " + name + ": " + ex.Message); }
+    }
+    private void Codex_Click(object sender, RoutedEventArgs e) => ConfigureClient("Codex", () => Configurator.ConfigureCodex(McpUrl));
+    private void Claude_Click(object sender, RoutedEventArgs e) => ConfigureClient("Claude Desktop", () => Configurator.ConfigureClaudeDesktop(McpUrl));
+    private void Cursor_Click(object sender, RoutedEventArgs e) => ConfigureClient("Cursor", () => Configurator.ConfigureCursor(McpUrl));
+    private void VsCode_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Configurator.ConfigureVsCode(McpUrl);
+            Report("VS Code opened its MCP setup. Review and approve Zemax MCP there to finish configuration.");
+        }
+        catch (Exception ex) { Report("Could not open VS Code MCP setup: " + ex.Message); }
+    }
     private void Update_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -464,13 +516,40 @@ public sealed class ZemaxInstallation
 
 internal static class Configurator
 {
+    private static string UserProfile => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    private static string ClaudeDesktopPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Claude", "claude_desktop_config.json");
+    // Cursor's documented global MCP configuration is ~/.cursor/mcp.json.
+    private static string CursorPath => Path.Combine(UserProfile, ".cursor", "mcp.json");
+
+    public static void ConfigureClaudeDesktop(string url) => ConfigureJson(ClaudeDesktopPath, "mcpServers", url);
+    public static void ConfigureCursor(string url) => ConfigureJson(CursorPath, "mcpServers", url);
+
+    public static void ConfigureVsCode(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var endpoint) ||
+            (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps))
+            throw new ArgumentException("The MCP endpoint must be an absolute HTTP or HTTPS address.", nameof(url));
+
+        // VS Code owns user-profile and workspace configuration locations. Its documented
+        // installation URI opens the native review/trust flow and prevents this launcher
+        // from overwriting an unknown profile's mcp.json file.
+        var server = new JObject
+        {
+            ["name"] = "zemax-mcp",
+            ["type"] = "http",
+            ["url"] = endpoint.AbsoluteUri
+        };
+        var installUri = "vscode:mcp/install?" + Uri.EscapeDataString(server.ToString(Newtonsoft.Json.Formatting.None));
+        Process.Start(new ProcessStartInfo(installUri) { UseShellExecute = true });
+    }
+
     public static void ConfigureJson(string path, string property, string url)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var root = File.Exists(path) ? JObject.Parse(File.ReadAllText(path)) : new JObject();
         var servers = root[property] as JObject ?? new JObject(); root[property] = servers;
         servers["zemax-mcp"] = new JObject { ["type"] = "http", ["url"] = url };
-        File.WriteAllText(path, root.ToString());
+        WriteAtomically(path, root.ToString());
     }
     public static void ConfigureCodex(string url)
     {
@@ -480,6 +559,31 @@ internal static class Configurator
         var block = "[mcp_servers.zemax]\r\nurl = \"" + url + "\"\r\n";
         content = Regex.Replace(content, @"(?ms)^\[mcp_servers\.zemax\].*?(?=^\[|\z)", block);
         if (!content.Contains("[mcp_servers.zemax]")) content += (content.EndsWith("\n") || content.Length == 0 ? "" : "\r\n") + block;
-        File.WriteAllText(path, content);
+        WriteAtomically(path, content);
+    }
+
+    private static void WriteAtomically(string path, string content)
+    {
+        var temporary = path + ".zemaxmcp-" + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temporary, content);
+            if (File.Exists(path))
+            {
+                var backup = path + ".zemaxmcp.bak";
+                try { File.Replace(temporary, path, backup, true); }
+                catch (PlatformNotSupportedException)
+                {
+                    File.Copy(path, backup, true);
+                    File.Delete(path);
+                    File.Move(temporary, path);
+                }
+            }
+            else File.Move(temporary, path);
+        }
+        finally
+        {
+            try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
+        }
     }
 }

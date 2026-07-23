@@ -20,22 +20,15 @@ Open `src/ZemaxMCP.Server/Program.cs` and add a `.WithTools<>()` line in the app
 .WithTools<ZemaxMCP.Server.Tools.LensData.YourNewTool>()
 ```
 
-The sections in Program.cs are organized by category:
-- Lines 51-56: Analysis Tools
-- Lines 57-69: Optimization Tools
-- Lines 70-81: Lens Data Tools  <-- Add lens data tools here
-- Lines 82-89: Configuration Tools
-- Lines 90-93: System Tools
+The sections in `Program.cs` are organized by tool category. Keep the registration beside related tools; do not rely on fixed line numbers.
 
 ### Step 3: Rebuild and Restart
 ```bash
-# Kill any running MCP server first
-taskkill /F /IM ZemaxMCP.Server.exe
+# Rebuild against a local licensed OpticStudio API installation
+dotnet build src\ZemaxMCP.Server\ZemaxMCP.Server.csproj -c Release /p:ZEMAX_ROOT="C:\Path\To\OpticStudio"
 
-# Rebuild
-dotnet build src\ZemaxMCP.Server\ZemaxMCP.Server.csproj
-
-# The MCP server will auto-restart when Claude Code uses a Zemax tool
+# Package the supported Windows distribution
+.\scripts\publish-windows.ps1 -Configuration Release -ZemaxRoot "C:\Path\To\OpticStudio"
 ```
 
 ## Root Cause of "Tools Not Loading" Issue
@@ -45,19 +38,19 @@ The MCP server uses **explicit registration** - NOT reflection-based discovery:
 - Simply creating a tool file and adding attributes is NOT sufficient
 - The tool will compile but won't be available at runtime
 
+`scripts/verify-tool-registration.ps1` checks this invariant. `publish-windows.ps1` runs it automatically before every release build.
+
 ## Files Involved
 
-- `src/ZemaxMCP.Server/Program.cs` - Main tool registration (USED)
-- `src/ZemaxMCP.Server/Hosting/McpServerExtensions.cs` - Alternative registration (NOT USED)
-
-Note: `McpServerExtensions.cs` exists but is NOT used by Program.cs. Keep Program.cs up to date.
+- `src/ZemaxMCP.Server/Program.cs` - Main tool registration (used by the released server)
+- `scripts/publish-windows.ps1` - Supported package build and ZOS-API exclusion checks
 
 ## Verification
 
 After adding a tool, verify it's registered by:
 1. Rebuilding the project
-2. Restarting Claude Code (or the MCP server)
-3. Testing the tool via Claude
+2. Restarting the launcher or MCP server
+3. Calling `tools/list` from any configured MCP client and then exercising the tool against a safe test design
 
 ---
 
@@ -81,23 +74,6 @@ Custom MCP-implemented optimization algorithms (NOT built-in Zemax optimizers). 
 - `LMOptimizer` — Core Levenberg-Marquardt optimizer with bounds clamping and Broyden updates.
 - `MultistartOptimizer` — Multistart wrapper: randomizes variables + glasses, runs short LM trials.
 - `MultistartState` — Shared state for non-blocking multistart (progress, cancellation, save tracking).
-
----
-
-## Known Issues & Disabled Tools
-
-### `zemax_optimization_wizard` - DISABLED
-**Status:** Do not use until fixed
-
-**Problem:** The optimization wizard tool does not work correctly.
-
-**Alternatives:** Use these tools instead for building merit functions:
-- `zemax_forbes_merit_function` - Forbes 1988 Gaussian quadrature OPD-based merit function
-- `zemax_add_operand` - Manually add individual operands one at a time
-- `zemax_load_merit_function_file` - Load pre-built .MF files
-
----
-*Last updated: 2026-03-21*
 
 ---
 

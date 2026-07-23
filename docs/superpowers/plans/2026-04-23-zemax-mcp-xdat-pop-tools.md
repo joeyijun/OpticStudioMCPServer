@@ -1389,7 +1389,6 @@ Expected output (order and commit messages):
 - No xUnit test project introduction (per design decision)
 - No performance benchmarking of POP for large grids (2048×2048 and above)
 - No automatic ZOSAPI path-detection persistence across sessions (each MCP session re-detects)
-- No UI changes to `ConfigureClaudeMCP` or `ConfigureOllama` tools
 - No `zemax_pop` extensions for multi-surface POP (e.g., propagate through series of defined intermediate pilot beams) — only startSurface→endSurface
 
 ## Done Definition

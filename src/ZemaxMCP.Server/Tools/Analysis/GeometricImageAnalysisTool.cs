@@ -175,15 +175,15 @@ public class GeometricImageAnalysisTool
                 // Export text file
                 if (!string.IsNullOrEmpty(exportTextPath))
                 {
-                    EnsureDirectory(exportTextPath);
-                    results.GetTextFile(exportTextPath);
+                    EnsureDirectory(exportTextPath!);
+                    results.GetTextFile(exportTextPath!);
                 }
 
                 // Export image (generate BMP from data grid)
                 if (!string.IsNullOrEmpty(exportImagePath))
                 {
-                    EnsureDirectory(exportImagePath);
-                    AnalysisBmpHelper.TryExportBmp(results, exportImagePath);
+                    EnsureDirectory(exportImagePath!);
+                    AnalysisBmpHelper.TryExportBmp(results, exportImagePath!);
                 }
 
                 // Extract data grid
