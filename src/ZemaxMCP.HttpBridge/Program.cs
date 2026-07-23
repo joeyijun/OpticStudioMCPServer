@@ -87,6 +87,7 @@ internal sealed class BridgeOptions
 
 internal sealed class StdioMcpBridge : IDisposable
 {
+    private const int MaxRequestBytes = 1024 * 1024;
     private readonly BridgeOptions _options;
     private readonly SemaphoreSlim _requestLock = new SemaphoreSlim(1, 1);
     private readonly string _sessionId = Guid.NewGuid().ToString("N");
@@ -173,6 +174,16 @@ internal sealed class StdioMcpBridge : IDisposable
                 context.Response.Close();
                 return;
             }
+            if (context.Request.ContentLength64 > MaxRequestBytes)
+            {
+                await WriteJsonAsync(context, new JObject
+                {
+                    ["jsonrpc"] = "2.0",
+                    ["error"] = new JObject { ["code"] = -32600, ["message"] = "MCP request exceeds the 1 MiB bridge limit." },
+                    ["id"] = null
+                }, HttpStatusCode.RequestEntityTooLarge).ConfigureAwait(false);
+                return;
+            }
 
             string request;
             using (var reader = new StreamReader(context.Request.InputStream, context.Request.ContentEncoding))
@@ -231,10 +242,10 @@ internal sealed class StdioMcpBridge : IDisposable
         }
     }
 
-    private static async Task WriteJsonAsync(HttpListenerContext context, JObject payload)
+    private static async Task WriteJsonAsync(HttpListenerContext context, JObject payload, HttpStatusCode status = HttpStatusCode.OK)
     {
         var bytes = Encoding.UTF8.GetBytes(payload.ToString(Newtonsoft.Json.Formatting.None));
-        context.Response.StatusCode = (int)HttpStatusCode.OK;
+        context.Response.StatusCode = (int)status;
         context.Response.ContentType = "application/json; charset=utf-8";
         context.Response.ContentLength64 = bytes.Length;
         await context.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
