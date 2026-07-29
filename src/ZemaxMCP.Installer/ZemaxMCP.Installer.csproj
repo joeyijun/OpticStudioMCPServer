@@ -5,8 +5,10 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>Install</AssemblyName>
     <RootNamespace>ZemaxMCP.Installer</RootNamespace>
+    <ApplicationIcon>..\ZemaxMCP.Launcher\Assets\ZemaxMCP.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="Microsoft.CSharp" />
+    <Resource Include="..\ZemaxMCP.Launcher\Assets\ZemaxMCP.ico" Link="Assets\ZemaxMCP.ico" />
   </ItemGroup>
 </Project>

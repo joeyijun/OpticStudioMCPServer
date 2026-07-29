@@ -31,7 +31,7 @@ For a single computer, the AI client uses the local MCP address. For two compute
 - **Resilient built-in HTTP MCP** — The .NET bridge applies request timeouts, tracks independent MCP sessions, and automatically recovers its server subprocess after an unexpected failure.
 - **Trusted LAN use** — Enable LAN sharing on the OpticStudio computer, copy its address, and configure the AI-client computer graphically.
 - **Per-client live dashboard** — Colour-coded cards distinguish installation, configuration, historical activity, and a real request made within the last five minutes. The launcher health check is excluded from AI activity.
-- **Multi-version OpticStudio detection** — Choose from detected installations; the launcher remembers the choice and can start at sign-in.
+- **Multi-version OpticStudio detection** — Detects classic Zemax and current `ANSYS Inc\v*` layouts from environment variables, both registry views, uninstall entries, and known Program Files locations. The launcher validates all three ZOS-API assemblies before offering a version.
 - **One AI configuration menu** — Configure detected Codex, Claude Desktop, Cursor, Kimi Code, and WorkBuddy clients directly. VS Code / GitHub Copilot uses its native MCP review and trust flow. A generic HTTP MCP JSON entry covers other compatible agents.
 - **Safe public package** — The ZIP does not redistribute proprietary ZOS-API DLLs. It uses the licensed OpticStudio installation at runtime on the Zemax computer.
 
@@ -46,20 +46,28 @@ The server supports the following OpticStudio connection modes:
 
 Use the launcher status dashboard to confirm that ZOS-API is loaded and OpticStudio is connected before asking the AI to work on a design.
 
+## Zemax discovery and license diagnostics
+
+The dashboard reports the selected OpticStudio program folder, how it was discovered, the resolved `ZOSAPI.dll`, `ZOSAPI_Interfaces.dll`, and `ZOSAPI_NetHelper.dll` paths, the Zemax Data folder, and license status. After startup it separately reports each assembly's actual CLR load path, so “found” and “loaded” are independently visible on both computers. `ZOSAPI_NetHelper.dll` is supported both beside `ZOSAPI.dll` and in the newer `ZOS-API\Libraries` layout.
+
+The Data folder is resolved from `ZEMAX_DATA_ROOT`, the OpticStudio user registry (`HKCU\SOFTWARE\Zemax\ZemaxRoot`), redirected Windows Documents, the normal `Documents\Zemax` location, or the OpticStudio Online default. The presence of `Data\License`, `Data\Configs\SNTLCONFIG.XML`, or `ANSYSLMD_LICENSE_FILE` is shown only as configuration evidence. The authoritative license result is reported after ZOS-API actually connects; secret environment-variable values are never written to logs.
+
+For an unusual portable layout, set `ZEMAX_ROOT` to the program directory and optionally `ZEMAX_DATA_ROOT` to the Data directory before starting the launcher.
+
 ## AI client configuration
 
 Use **Configure AI clients** in the launcher. Existing unrelated MCP entries are preserved and a backup is kept when an existing configuration is replaced.
 
 | Client | Configuration used by the launcher | Connection confirmation |
 |---|---|---|
-| Codex | `~/.codex/config.toml` | The client card turns green after an actual request. |
-| Claude Desktop | `%APPDATA%/Claude/claude_desktop_config.json` | The client card turns green after an actual request. |
+| Codex | `$CODEX_HOME/config.toml`, or `~/.codex/config.toml` | The client card turns green after an actual request. |
+| Claude Desktop | `%APPDATA%/Claude/claude_desktop_config.json`; the packaged local stdio proxy reaches the HTTP/LAN endpoint | The client card turns green after an actual request. |
 | Cursor | `~/.cursor/mcp.json` | The client card turns green after an actual request. |
 | Kimi Code | `$KIMI_CODE_HOME/mcp.json`, or `~/.kimi-code/mcp.json` | Run `/mcp` in Kimi Code or watch the launcher client card. See the [official Kimi MCP guide](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/mcp.html). |
 | WorkBuddy | `~/.workbuddy/mcp.json` | WorkBuddy shows its own green/red MCP status; the launcher also records real requests. See the [official WorkBuddy MCP guide](https://www.workbuddy.ai/docs/zh/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide). |
-| VS Code / Copilot | Native `vscode:mcp/install` review flow | Approve the server in VS Code, then make a request. |
+| VS Code / Copilot | Native `vscode:mcp/install` review flow; status checks the default and profile-specific `mcp.json` files | Approve the server in VS Code, then make a request. |
 
-“Configured” does not claim that an AI process is currently connected. “Active now” is shown only when the bridge identifies that client and receives a request within five minutes. Client names depend on the identification string sent by each agent; unrecognised implementations appear as **Other MCP client**.
+Each card displays the exact configuration path inspected by the launcher. “Configured” requires that the stored `zemax-mcp` entry matches the endpoint currently shown in the launcher; it does not claim that an AI process is connected. “Active now” is shown only when the bridge identifies that client and receives a request within five minutes. Client names depend on the identification string sent by each agent; unrecognised implementations appear as **Other MCP client**.
 
 ## MCP capabilities
 
@@ -109,4 +117,4 @@ The original copyright and MIT license are retained in [LICENSE](LICENSE). A val
 
 ## Release maintainers
 
-The public ZIP is produced on a trusted Windows computer with a licensed OpticStudio installation. The required ZOS-API files must remain outside source control and the public release. See [Windows Quick Start](docs/QUICKSTART_WINDOWS.md#maintainers-publishing-an-update) for the release-runner requirements.
+The public ZIP is produced on a trusted Windows computer with a licensed OpticStudio installation. The required ZOS-API files must remain outside source control and the public release. The build accepts `ZOSAPI_NetHelper.dll` either in the program root or `ZOS-API\Libraries`. See [Windows Quick Start](docs/QUICKSTART_WINDOWS.md#maintainers-publishing-an-update) for the release-runner requirements.

@@ -51,7 +51,7 @@ public partial class MainWindow : Window
     }
     private static void StopExistingProcesses()
     {
-        foreach (var name in new[] { "Start-Zemax-MCP", "ZemaxMCP.HttpBridge" })
+        foreach (var name in new[] { "Start-Zemax-MCP", "ZemaxMCP.ClientProxy", "ZemaxMCP.HttpBridge", "ZemaxMCP.Server" })
         {
             foreach (var process in Process.GetProcessesByName(name))
             {
@@ -76,6 +76,7 @@ public partial class MainWindow : Window
         shortcut.TargetPath = target;
         shortcut.WorkingDirectory = Path.GetDirectoryName(target);
         shortcut.Description = "Start Zemax MCP HTTP bridge";
+        shortcut.IconLocation = target + ",0";
         shortcut.Save();
     }
     private void Close_Click(object sender, RoutedEventArgs e) => Close();

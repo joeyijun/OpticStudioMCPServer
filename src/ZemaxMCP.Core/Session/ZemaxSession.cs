@@ -75,18 +75,14 @@ public class ZemaxSession : IZemaxSession
 
             _logger.LogInformation("Connecting to OpticStudio in {Mode} mode", mode);
 
-            // Diagnostic: dump ALL environment variables for debugging license issues
+            // Keep diagnostics useful without copying credentials, tokens, user
+            // paths, or license-server values into the application log.
             _logger.LogInformation("Thread ApartmentState: {State}", System.Threading.Thread.CurrentThread.GetApartmentState());
             _logger.LogInformation("Process Bitness: {Bit}", Environment.Is64BitProcess ? "64-bit" : "32-bit");
             _logger.LogInformation("Working Directory: {Dir}", Environment.CurrentDirectory);
             _logger.LogInformation("Process Path: {Path}", System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName ?? "(null)");
-            var allEnv = Environment.GetEnvironmentVariables();
-            foreach (System.Collections.DictionaryEntry entry in allEnv)
-            {
-                var key = entry.Key?.ToString() ?? "";
-                if (key.Equals("PATH", StringComparison.OrdinalIgnoreCase)) continue; // skip long PATH
-                _logger.LogInformation("ENV {Key}={Value}", key, entry.Value);
-            }
+            _logger.LogInformation("ZEMAX_ROOT configured: {Configured}", !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ZEMAX_ROOT")));
+            _logger.LogInformation("Ansys license environment configured: {Configured}", !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ANSYSLMD_LICENSE_FILE")));
 
             // Initialize ZOSAPI
             var zemaxRoot = Environment.GetEnvironmentVariable("ZEMAX_ROOT");
@@ -133,6 +129,10 @@ public class ZemaxSession : IZemaxSession
             _logger.LogInformation("ZOSAPI Application created. LicenseStatus={Status}, IsValidLicenseForAPI={Valid}",
                 application.LicenseStatus, application.IsValidLicenseForAPI);
 
+            Console.Error.WriteLine((application.IsValidLicenseForAPI
+                ? "ZEMAX_MCP_STATUS:ZOS_LICENSE_VALID:"
+                : "ZEMAX_MCP_STATUS:ZOS_LICENSE_INVALID:") + application.LicenseStatus);
+
             if (!application.IsValidLicenseForAPI)
             {
                 throw new ZemaxConnectionException($"Invalid Zemax license: {application.LicenseStatus}");
@@ -140,6 +140,7 @@ public class ZemaxSession : IZemaxSession
 
             _primarySystem = application.PrimarySystem;
             ZemaxDataDir = application.ZemaxDataDir;
+            Console.Error.WriteLine("ZEMAX_MCP_STATUS:ZEMAX_DATA_DIR:" + (ZemaxDataDir ?? string.Empty));
 
             if (_primarySystem == null)
             {

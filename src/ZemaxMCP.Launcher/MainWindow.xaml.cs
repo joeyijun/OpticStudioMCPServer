@@ -29,7 +29,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        _trayIcon = new Forms.NotifyIcon { Icon = System.Drawing.SystemIcons.Application, Text = "Zemax MCP", Visible = true };
+        var applicationIcon = GetApplicationIcon();
+        _trayIcon = new Forms.NotifyIcon { Icon = applicationIcon, Text = "Zemax MCP", Visible = true };
         _trayIcon.DoubleClick += (_, _) => RestoreWindow();
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Open Zemax MCP", null, (_, _) => RestoreWindow());
@@ -37,6 +38,18 @@ public partial class MainWindow : Window
         _trayIcon.ContextMenuStrip = menu;
         _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _statusTimer.Tick += async (_, _) => await RefreshStatusAsync();
+    }
+
+    private static System.Drawing.Icon GetApplicationIcon()
+    {
+        try
+        {
+            var executable = Process.GetCurrentProcess().MainModule?.FileName;
+            return string.IsNullOrWhiteSpace(executable)
+                ? System.Drawing.SystemIcons.Application
+                : System.Drawing.Icon.ExtractAssociatedIcon(executable) ?? System.Drawing.SystemIcons.Application;
+        }
+        catch { return System.Drawing.SystemIcons.Application; }
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -118,7 +131,7 @@ public partial class MainWindow : Window
         var bridge = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZemaxMCP.HttpBridge.exe");
         var server = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZemaxMCP.Server.exe");
         if (!File.Exists(bridge) || !File.Exists(server)) { Report("Release package is incomplete: ZemaxMCP.HttpBridge.exe and ZemaxMCP.Server.exe must be beside this launcher."); return; }
-        if (!EnsureZosApiBootstrap(Installation.Root)) return;
+        if (!EnsureZosApiBootstrap(Installation)) return;
         // URL ACL/firewall setup is a user-approved configuration step, not
         // something an automatic recovery attempt should prompt for again.
         var firewallReady = automaticRestart || ShareOnLan.IsChecked != true || FirewallRule.TryEnsure(port);
@@ -163,7 +176,7 @@ public partial class MainWindow : Window
         _refreshingStatus = true;
         var root = Installation?.Root;
         var endpoint = McpUrl;
-        var apiFiles = root != null && new[] { "ZOSAPI.dll", "ZOSAPI_Interfaces.dll", "ZOSAPI_NetHelper.dll" }.All(x => File.Exists(Path.Combine(root, x)));
+        var apiFiles = Installation?.ApiFilesPresent == true;
         var localBridge = _bridge != null && !_bridge.HasExited;
         ConnectionSummary.Text = "Checking " + endpoint + "…";
         SetIndicatorsChecking();
@@ -172,12 +185,17 @@ public partial class MainWindow : Window
             var health = await Task.Run(() => GetHealth(endpoint));
             var apiLoaded = health["zosApiLoaded"]?.Value<bool>() == true;
             var apiConnected = health["zosApiConnected"]?.Value<bool>() == true;
+            var licenseStatus = health["licenseStatus"]?.ToString() ?? "Not checked";
             var bridgeRunning = health["bridgeRunning"]?.Value<bool>() == true;
             var serverRunning = health["mcpServerRunning"]?.Value<bool>() == true;
             var activeRequests = health["activeRequests"]?.Value<int>() ?? 0;
             var restartCount = health["serverRestartCount"]?.Value<int>() ?? 0;
             var uptime = FormatUptime(health["bridgeUptimeSeconds"]?.Value<long?>());
             var lastServerError = health["lastServerError"]?.ToString();
+            var reportedRoot = health["zemaxRoot"]?.ToString();
+            var reportedApi = health["zosApiFiles"] as JObject;
+            var loadedApi = health["loadedZosApiFiles"] as JObject;
+            var reportedData = health["zemaxDataDirectory"]?.ToString();
             var activeClients = RefreshClientDashboard(health);
             ConnectionSummary.Text = "MCP endpoint: reachable\n" +
                 "Bridge: " + (bridgeRunning ? "running" : "not running") +
@@ -185,7 +203,9 @@ public partial class MainWindow : Window
                 "; uptime: " + uptime + "; restarts: " + restartCount + "\n" +
                 "ZOS-API files: " + (apiFiles ? "found" : root == null ? "remote endpoint" : "missing") +
                 "; loaded: " + (apiLoaded ? "yes" : "not yet") +
-                "; OpticStudio connected: " + (apiConnected ? "yes" : "not yet") + "\n" +
+                "; OpticStudio connected: " + (apiConnected ? "yes" : "not yet") +
+                "; license: " + licenseStatus + "\n" +
+                FormatZemaxPaths(Installation, reportedRoot, reportedApi, loadedApi, reportedData) + "\n" +
                 "AI clients active recently: " + activeClients + "; requests in progress: " + activeRequests +
                 (string.IsNullOrWhiteSpace(lastServerError) ? "" : "\nLast MCP server error: " + lastServerError) +
                 (localBridge ? "\nLocal launcher bridge process: running" : "");
@@ -231,7 +251,7 @@ public partial class MainWindow : Window
         var activities = ReadClientActivities(health);
         var rows = new List<AiClientStatusView>();
         var activeNames = new List<string>();
-        foreach (var client in Configurator.GetClientStatuses())
+        foreach (var client in Configurator.GetClientStatuses(McpUrl))
         {
             var activity = activities.FirstOrDefault(x => client.Aliases.Any(alias => x.Name.IndexOf(alias, StringComparison.OrdinalIgnoreCase) >= 0));
             var recent = activity != null && DateTime.Now - activity.LastRequest.ToLocalTime() < TimeSpan.FromMinutes(5);
@@ -263,10 +283,10 @@ public partial class MainWindow : Window
                 state = "Not detected";
                 brush = System.Windows.Media.Brushes.SlateGray;
             }
-            rows.Add(new AiClientStatusView(client.Name, state, brush));
+            rows.Add(new AiClientStatusView(client.Name, state, client.ConfigPath, brush));
         }
         foreach (var activity in activities.Where(x => !Configurator.KnownAliases.Any(alias => x.Name.IndexOf(alias, StringComparison.OrdinalIgnoreCase) >= 0)))
-            rows.Add(new AiClientStatusView(activity.Name, "Other MCP client · " + FormatActivity(activity), System.Windows.Media.Brushes.SteelBlue));
+            rows.Add(new AiClientStatusView(activity.Name, "Other MCP client · " + FormatActivity(activity), "Client-defined configuration", System.Windows.Media.Brushes.SteelBlue));
         AiClientsList.ItemsSource = rows;
         if (activeNames.Count > 0) SetIndicator(AiStateDot, AiState, activeNames.Count + " active: " + string.Join(", ", activeNames), System.Windows.Media.Brushes.SeaGreen);
         else if (activities.Count > 0) SetIndicator(AiStateDot, AiState, "No recent AI call; " + activities.Count + " client(s) seen earlier", System.Windows.Media.Brushes.SteelBlue);
@@ -299,6 +319,45 @@ public partial class MainWindow : Window
         var value = TimeSpan.FromSeconds(Math.Max(0, totalSeconds.Value));
         return value.TotalDays >= 1 ? ((int)value.TotalDays) + "d " + value.ToString(@"hh\:mm\:ss") : value.ToString(@"hh\:mm\:ss");
     }
+    private static string FormatZemaxPaths(ZemaxInstallation? installation, string? remoteRoot, JObject? remoteApi, JObject? loadedApi, string? runtimeData)
+    {
+        if (installation != null)
+        {
+            var lines = new List<string>
+            {
+                "OpticStudio folder: " + installation.Root + " (" + installation.DiscoverySource + ")",
+                "ZOS-API: " + installation.ZosApiPath,
+                "NetHelper: " + installation.NetHelperPath,
+                "Detected Zemax data: " + (string.IsNullOrWhiteSpace(installation.DataDirectory) ? "not found" : installation.DataDirectory + " (" + installation.DataDirectorySource + ")")
+            };
+            AddLoadedApiPaths(lines, loadedApi);
+            if (!string.IsNullOrWhiteSpace(runtimeData) && runtimeData != "Not reported") lines.Add("Runtime Zemax data: " + runtimeData);
+            lines.Add("License setup: " + installation.LicenseEvidence);
+            return string.Join("\n", lines);
+        }
+        if (!string.IsNullOrWhiteSpace(remoteRoot))
+        {
+            var lines = new List<string>
+            {
+                "Remote OpticStudio folder: " + remoteRoot,
+                "Remote ZOS-API: " + (remoteApi?["zosApi"]?.ToString() ?? "not found"),
+                "Remote NetHelper: " + (remoteApi?["netHelper"]?.ToString() ?? "not found")
+            };
+            AddLoadedApiPaths(lines, loadedApi);
+            lines.Add("Remote Zemax data: " + (string.IsNullOrWhiteSpace(runtimeData) ? "not reported" : runtimeData));
+            return string.Join("\n", lines);
+        }
+        return "OpticStudio and ZOS-API paths are reported by the Zemax computer after its bridge is updated.";
+    }
+    private static void AddLoadedApiPaths(ICollection<string> lines, JObject? loadedApi)
+    {
+        if (loadedApi == null) return;
+        foreach (var item in new[] { ("Loaded ZOS-API", "zosApi"), ("Loaded Interfaces", "interfaces"), ("Loaded NetHelper", "netHelper") })
+        {
+            var path = loadedApi[item.Item2]?.ToString();
+            if (!string.IsNullOrWhiteSpace(path)) lines.Add(item.Item1 + ": " + path);
+        }
+    }
     private static JObject GetHealth(string endpoint)
     {
         var request = (HttpWebRequest)WebRequest.Create(endpoint.TrimEnd('/') + "/health");
@@ -326,7 +385,7 @@ public partial class MainWindow : Window
         if (process == null) return;
         try { if (!process.HasExited) process.Kill(); } catch { }
     }
-    private bool EnsureZosApiBootstrap(string zemaxRoot)
+    private bool EnsureZosApiBootstrap(ZemaxInstallation installation)
     {
         try
         {
@@ -334,9 +393,9 @@ public partial class MainWindow : Window
             // the public ZIP. Copy the current user's own installed copy only
             // when launching locally; ZOSAPI itself continues to load from
             // ZEMAX_ROOT through the server resolver.
-            var source = Path.Combine(zemaxRoot, "ZOSAPI_NetHelper.dll");
+            var source = installation.NetHelperPath;
             var target = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZOSAPI_NetHelper.dll");
-            if (!File.Exists(source)) { Report("The selected OpticStudio installation is missing ZOSAPI_NetHelper.dll."); return false; }
+            if (!File.Exists(source)) { Report("The selected OpticStudio installation is missing ZOSAPI_NetHelper.dll in both the program folder and ZOS-API/Libraries."); return false; }
             if (!File.Exists(target) || File.GetLastWriteTimeUtc(source) != File.GetLastWriteTimeUtc(target) || new FileInfo(source).Length != new FileInfo(target).Length)
                 File.Copy(source, target, true);
             return true;
@@ -348,6 +407,13 @@ public partial class MainWindow : Window
         }
     }
     private void CopyEndpoint_Click(object sender, RoutedEventArgs e) { System.Windows.Clipboard.SetText(McpUrl); Report("MCP address copied: " + McpUrl); }
+    private void CopyDiagnostics_Click(object sender, RoutedEventArgs e)
+    {
+        var diagnostics = "Zemax MCP diagnostics — " + DateTimeOffset.Now.ToString("O") + "\r\n\r\n" +
+                          ConnectionSummary.Text + "\r\n\r\nLauncher messages:\r\n" + Status.Text;
+        System.Windows.Clipboard.SetText(diagnostics);
+        Report("Connection diagnostics copied to the clipboard.");
+    }
     private async void TestMcp_Click(object sender, RoutedEventArgs e)
     {
         var endpoint = McpUrl;
@@ -427,7 +493,7 @@ public partial class MainWindow : Window
     private List<(string Name, Action Configure)> DetectedClientConfigurations()
     {
         var clients = new List<(string, Action)>();
-        foreach (var status in Configurator.GetClientStatuses().Where(x => x.Detected && x.Configure != null))
+        foreach (var status in Configurator.GetClientStatuses(McpUrl).Where(x => x.Detected && x.Configure != null))
             clients.Add((status.Name, () => status.Configure!(McpUrl)));
         return clients;
     }
@@ -548,9 +614,10 @@ public partial class MainWindow : Window
 
 internal sealed class AiClientStatusView
 {
-    public AiClientStatusView(string name, string state, System.Windows.Media.Brush statusBrush) { Name = name; State = state; StatusBrush = statusBrush; }
+    public AiClientStatusView(string name, string state, string configPath, System.Windows.Media.Brush statusBrush) { Name = name; State = state; ConfigPath = configPath; StatusBrush = statusBrush; }
     public string Name { get; }
     public string State { get; }
+    public string ConfigPath { get; }
     public System.Windows.Media.Brush StatusBrush { get; }
 }
 
@@ -585,67 +652,48 @@ internal static class FirewallRule
     }
 }
 
-public sealed class ZemaxInstallation
-{
-    public string Root { get; set; } = "";
-    public string DisplayName { get; set; } = "";
-    public static List<ZemaxInstallation> FindAll()
-    {
-        var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var programFiles in new[] { Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86) }.Where(Directory.Exists))
-        {
-            try { foreach (var folder in Directory.GetDirectories(programFiles, "*Zemax*")) roots.Add(folder); }
-            catch (UnauthorizedAccessException) { }
-        }
-        foreach (var keyPath in new[] { @"SOFTWARE\Zemax", @"SOFTWARE\WOW6432Node\Zemax" })
-        {
-            try { CollectRegistryFolders(Registry.LocalMachine.OpenSubKey(keyPath), roots); }
-            catch { }
-        }
-        try { CollectRegistryFolders(Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Zemax"), roots); }
-        catch { }
-        return roots.Where(p => File.Exists(Path.Combine(p, "ZOSAPI.dll")) && File.Exists(Path.Combine(p, "ZOSAPI_NetHelper.dll")))
-            .Select(p => new ZemaxInstallation { Root = p, DisplayName = Path.GetFileName(p) + " — " + p }).OrderByDescending(x => x.DisplayName).ToList();
-    }
-    private static void CollectRegistryFolders(RegistryKey? key, ISet<string> roots)
-    {
-        if (key == null) return;
-        using (key)
-        {
-            foreach (var name in key.GetValueNames())
-                if (key.GetValue(name) is string value && Directory.Exists(value)) roots.Add(value);
-            foreach (var subKeyName in key.GetSubKeyNames()) CollectRegistryFolders(key.OpenSubKey(subKeyName), roots);
-        }
-    }
-}
-
 internal static class Configurator
 {
     private static string UserProfile => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     private static string AppData => Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
     private static string LocalAppData => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-    private static string ClaudeDesktopPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Claude", "claude_desktop_config.json");
+    private static string EnvironmentPathOrDefault(string variable, string fallback)
+    {
+        var configured = Environment.GetEnvironmentVariable(variable);
+        return string.IsNullOrWhiteSpace(configured) ? fallback : Environment.ExpandEnvironmentVariables(configured.Trim().Trim('"'));
+    }
+    private static string CodexHome => EnvironmentPathOrDefault("CODEX_HOME", Path.Combine(UserProfile, ".codex"));
+    private static string CodexPath => Path.Combine(CodexHome, "config.toml");
+    private static string ClaudeDesktopPath => Path.Combine(AppData, "Claude", "claude_desktop_config.json");
     private static string CursorPath => Path.Combine(UserProfile, ".cursor", "mcp.json");
-    private static string KimiHome => Environment.GetEnvironmentVariable("KIMI_CODE_HOME") ?? Path.Combine(UserProfile, ".kimi-code");
+    private static string KimiHome => EnvironmentPathOrDefault("KIMI_CODE_HOME", Path.Combine(UserProfile, ".kimi-code"));
     private static string KimiPath => Path.Combine(KimiHome, "mcp.json");
     private static string WorkBuddyPath => Path.Combine(UserProfile, ".workbuddy", "mcp.json");
+    private static string VsCodeDefaultPath => Path.Combine(AppData, "Code", "User", "mcp.json");
     public static readonly string[] KnownAliases = { "codex", "claude", "cursor", "kimi", "workbuddy", "codebuddy", "vscode", "visual studio", "copilot" };
 
-    public static void ConfigureClaudeDesktop(string url) => ConfigureJson(ClaudeDesktopPath, "mcpServers", url);
+    public static void ConfigureClaudeDesktop(string url)
+    {
+        ValidateUrl(url);
+        var proxy = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZemaxMCP.ClientProxy.exe");
+        if (!File.Exists(proxy)) throw new FileNotFoundException("The release package is missing ZemaxMCP.ClientProxy.exe, which Claude Desktop needs for a private HTTP/LAN endpoint.", proxy);
+        ConfigureStdioProxyJson(ClaudeDesktopPath, proxy, url);
+    }
     public static void ConfigureCursor(string url) => ConfigureJson(CursorPath, "mcpServers", url);
     public static void ConfigureKimi(string url) => ConfigureJson(KimiPath, "mcpServers", url, false, true);
     public static void ConfigureWorkBuddy(string url) => ConfigureJson(WorkBuddyPath, "mcpServers", url, false, false);
 
-    public static List<ClientConfigurationStatus> GetClientStatuses()
+    public static List<ClientConfigurationStatus> GetClientStatuses(string expectedUrl)
     {
+        var vsCodePaths = GetVsCodeConfigPaths().ToArray();
         return new List<ClientConfigurationStatus>
         {
-            new ClientConfigurationStatus("Codex", new[] { "codex" }, Directory.Exists(Path.Combine(UserProfile, ".codex")), IsCodexConfigured(), ConfigureCodex),
-            new ClientConfigurationStatus("Claude Desktop", new[] { "claude" }, Directory.Exists(Path.Combine(AppData, "Claude")), IsJsonConfigured(ClaudeDesktopPath), ConfigureClaudeDesktop),
-            new ClientConfigurationStatus("Cursor", new[] { "cursor" }, Directory.Exists(Path.Combine(UserProfile, ".cursor")) || Directory.Exists(Path.Combine(AppData, "Cursor")) || Directory.Exists(Path.Combine(LocalAppData, "Cursor")), IsJsonConfigured(CursorPath), ConfigureCursor),
-            new ClientConfigurationStatus("Kimi Code", new[] { "kimi" }, Directory.Exists(KimiHome), IsJsonConfigured(KimiPath), ConfigureKimi),
-            new ClientConfigurationStatus("WorkBuddy", new[] { "workbuddy", "codebuddy" }, Directory.Exists(Path.Combine(UserProfile, ".workbuddy")) || Directory.Exists(Path.Combine(AppData, "WorkBuddy")) || Directory.Exists(Path.Combine(LocalAppData, "WorkBuddy")), IsJsonConfigured(WorkBuddyPath), ConfigureWorkBuddy),
-            new ClientConfigurationStatus("VS Code / Copilot", new[] { "vscode", "visual studio", "copilot" }, Directory.Exists(Path.Combine(AppData, "Code")) || Directory.Exists(Path.Combine(LocalAppData, "Programs", "Microsoft VS Code")), false, null)
+            new ClientConfigurationStatus("Codex", new[] { "codex" }, Directory.Exists(CodexHome), IsCodexConfigured(expectedUrl), CodexPath, ConfigureCodex),
+            new ClientConfigurationStatus("Claude Desktop", new[] { "claude" }, Directory.Exists(Path.Combine(AppData, "Claude")), IsClaudeConfigured(expectedUrl), ClaudeDesktopPath, ConfigureClaudeDesktop),
+            new ClientConfigurationStatus("Cursor", new[] { "cursor" }, Directory.Exists(Path.Combine(UserProfile, ".cursor")) || Directory.Exists(Path.Combine(AppData, "Cursor")) || Directory.Exists(Path.Combine(LocalAppData, "Cursor")), IsJsonConfigured(CursorPath, "mcpServers", expectedUrl), CursorPath, ConfigureCursor),
+            new ClientConfigurationStatus("Kimi Code", new[] { "kimi" }, Directory.Exists(KimiHome), IsJsonConfigured(KimiPath, "mcpServers", expectedUrl), KimiPath, ConfigureKimi),
+            new ClientConfigurationStatus("WorkBuddy", new[] { "workbuddy", "codebuddy" }, Directory.Exists(Path.Combine(UserProfile, ".workbuddy")) || Directory.Exists(Path.Combine(AppData, "WorkBuddy")) || Directory.Exists(Path.Combine(LocalAppData, "WorkBuddy")), IsJsonConfigured(WorkBuddyPath, "mcpServers", expectedUrl), WorkBuddyPath, ConfigureWorkBuddy),
+            new ClientConfigurationStatus("VS Code / Copilot", new[] { "vscode", "visual studio", "copilot" }, Directory.Exists(Path.Combine(AppData, "Code")) || Directory.Exists(Path.Combine(LocalAppData, "Programs", "Microsoft VS Code")), vsCodePaths.Any(x => IsJsonConfigured(x, "servers", expectedUrl)), string.Join("; ", vsCodePaths), null)
         };
     }
 
@@ -678,7 +726,12 @@ internal static class Configurator
         ValidateUrl(url);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var root = File.Exists(path) ? JObject.Parse(File.ReadAllText(path)) : new JObject();
-        var servers = root[property] as JObject ?? new JObject(); root[property] = servers;
+        var servers = root[property] as JObject;
+        if (servers == null)
+        {
+            servers = new JObject();
+            root[property] = servers;
+        }
         var entry = new JObject { ["url"] = url };
         if (includeType) entry.AddFirst(new JProperty("type", "http"));
         if (includeKimiTimeouts)
@@ -689,10 +742,29 @@ internal static class Configurator
         servers["zemax-mcp"] = entry;
         WriteAtomically(path, root.ToString());
     }
+
+    private static void ConfigureStdioProxyJson(string path, string proxyPath, string url)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var root = File.Exists(path) ? JObject.Parse(File.ReadAllText(path)) : new JObject();
+        var servers = root["mcpServers"] as JObject;
+        if (servers == null)
+        {
+            servers = new JObject();
+            root["mcpServers"] = servers;
+        }
+        servers["zemax-mcp"] = new JObject
+        {
+            ["command"] = proxyPath,
+            ["args"] = new JArray("--url", url)
+        };
+        WriteAtomically(path, root.ToString());
+    }
+
     public static void ConfigureCodex(string url)
     {
         ValidateUrl(url);
-        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "config.toml");
+        var path = CodexPath;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var content = File.Exists(path) ? File.ReadAllText(path) : "";
         var block = "[mcp_servers.zemax]\r\nurl = \"" + url + "\"\r\n";
@@ -701,19 +773,52 @@ internal static class Configurator
         WriteAtomically(path, content);
     }
 
-    private static bool IsJsonConfigured(string path)
-    {
-        try { return File.Exists(path) && JObject.Parse(File.ReadAllText(path))["mcpServers"]?["zemax-mcp"] != null; }
-        catch { return false; }
-    }
-    private static bool IsCodexConfigured()
+    private static bool IsJsonConfigured(string path, string property, string expectedUrl)
     {
         try
         {
-            var path = Path.Combine(UserProfile, ".codex", "config.toml");
-            return File.Exists(path) && Regex.IsMatch(File.ReadAllText(path), @"(?m)^\[mcp_servers\.zemax\]\s*$");
+            var entry = File.Exists(path) ? JObject.Parse(File.ReadAllText(path))[property]?["zemax-mcp"] : null;
+            return entry != null && UrlsEqual(entry["url"]?.ToString(), expectedUrl);
         }
         catch { return false; }
+    }
+    private static bool IsClaudeConfigured(string expectedUrl)
+    {
+        try
+        {
+            var entry = File.Exists(ClaudeDesktopPath) ? JObject.Parse(File.ReadAllText(ClaudeDesktopPath))["mcpServers"]?["zemax-mcp"] : null;
+            var args = entry?["args"] as JArray;
+            return entry != null && string.Equals(Path.GetFileName(entry["command"]?.ToString()), "ZemaxMCP.ClientProxy.exe", StringComparison.OrdinalIgnoreCase) &&
+                   args != null && args.Any(x => UrlsEqual(x?.ToString(), expectedUrl));
+        }
+        catch { return false; }
+    }
+    private static bool IsCodexConfigured(string expectedUrl)
+    {
+        try
+        {
+            if (!File.Exists(CodexPath)) return false;
+            var match = Regex.Match(File.ReadAllText(CodexPath), @"(?ms)^\[mcp_servers\.zemax\]\s*(.*?)(?=^\[|\z)");
+            if (!match.Success) return false;
+            var url = Regex.Match(match.Groups[1].Value, "(?m)^url\\s*=\\s*[\"']([^\"']+)[\"']").Groups[1].Value;
+            return UrlsEqual(url, expectedUrl);
+        }
+        catch { return false; }
+    }
+    private static IEnumerable<string> GetVsCodeConfigPaths()
+    {
+        yield return VsCodeDefaultPath;
+        var profiles = Path.Combine(AppData, "Code", "User", "profiles");
+        if (!Directory.Exists(profiles)) yield break;
+        string[] profileFolders;
+        try { profileFolders = Directory.GetDirectories(profiles); }
+        catch { yield break; }
+        foreach (var folder in profileFolders) yield return Path.Combine(folder, "mcp.json");
+    }
+    private static bool UrlsEqual(string? left, string? right)
+    {
+        if (!Uri.TryCreate(left, UriKind.Absolute, out var a) || !Uri.TryCreate(right, UriKind.Absolute, out var b)) return false;
+        return a.AbsoluteUri.TrimEnd('/').Equals(b.AbsoluteUri.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
     }
     private static void ValidateUrl(string url)
     {
@@ -749,11 +854,12 @@ internal static class Configurator
 
 internal sealed class ClientConfigurationStatus
 {
-    public ClientConfigurationStatus(string name, string[] aliases, bool detected, bool configured, Action<string>? configure)
-    { Name = name; Aliases = aliases; Detected = detected || configured; Configured = configured; Configure = configure; }
+    public ClientConfigurationStatus(string name, string[] aliases, bool detected, bool configured, string configPath, Action<string>? configure)
+    { Name = name; Aliases = aliases; Detected = detected || configured; Configured = configured; ConfigPath = configPath; Configure = configure; }
     public string Name { get; }
     public string[] Aliases { get; }
     public bool Detected { get; }
     public bool Configured { get; }
+    public string ConfigPath { get; }
     public Action<string>? Configure { get; }
 }

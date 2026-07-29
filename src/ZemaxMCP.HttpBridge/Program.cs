@@ -108,6 +108,11 @@ internal sealed class StdioMcpBridge : IDisposable
     private string _lastClient = "None yet";
     private bool _zosApiLoaded;
     private bool _zosApiConnected;
+    private string _licenseStatus = "Not checked";
+    private string _zemaxDataDirectory = "Not reported";
+    private string? _loadedZosApiPath;
+    private string? _loadedInterfacesPath;
+    private string? _loadedNetHelperPath;
     private DateTimeOffset? _serverStartedAt;
     private string? _lastServerError;
     private int _serverRestartCount;
@@ -159,6 +164,11 @@ internal sealed class StdioMcpBridge : IDisposable
         {
             _zosApiLoaded = false;
             _zosApiConnected = false;
+            _licenseStatus = "Not checked";
+            _zemaxDataDirectory = "Not reported";
+            _loadedZosApiPath = null;
+            _loadedInterfacesPath = null;
+            _loadedNetHelperPath = null;
             _serverStartedAt = DateTimeOffset.UtcNow;
             if (isRestart) _serverRestartCount++;
         }
@@ -169,19 +179,60 @@ internal sealed class StdioMcpBridge : IDisposable
     private void HandleServerStatus(string? message)
     {
         if (string.IsNullOrEmpty(message)) return;
-        if (message == "ZEMAX_MCP_STATUS:ZOS_API_LOADED")
+        var statusMessage = message!;
+        if (statusMessage == "ZEMAX_MCP_STATUS:ZOS_API_LOADED")
         {
             lock (_stateLock) { _zosApiLoaded = true; _consecutiveServerFailures = 0; _lastServerError = null; }
             Log.Information("ZOS-API assemblies loaded from the local OpticStudio installation.");
             return;
         }
-        if (message == "ZEMAX_MCP_STATUS:ZOS_API_CONNECTED")
+        if (statusMessage == "ZEMAX_MCP_STATUS:ZOS_API_CONNECTED")
         {
             lock (_stateLock) { _zosApiConnected = true; _consecutiveServerFailures = 0; _lastServerError = null; }
             Log.Information("Connected to OpticStudio through ZOS-API.");
             return;
         }
-        Log.Warning("Server: {Message}", message);
+        const string licenseValid = "ZEMAX_MCP_STATUS:ZOS_LICENSE_VALID:";
+        const string licenseInvalid = "ZEMAX_MCP_STATUS:ZOS_LICENSE_INVALID:";
+        const string dataDirectory = "ZEMAX_MCP_STATUS:ZEMAX_DATA_DIR:";
+        const string zosApiAssembly = "ZEMAX_MCP_STATUS:ZOSAPI_ASSEMBLY:";
+        const string interfacesAssembly = "ZEMAX_MCP_STATUS:ZOSAPI_INTERFACES_ASSEMBLY:";
+        const string netHelperAssembly = "ZEMAX_MCP_STATUS:ZOSAPI_NETHELPER_ASSEMBLY:";
+        if (statusMessage.StartsWith(licenseValid, StringComparison.Ordinal))
+        {
+            lock (_stateLock) _licenseStatus = "Valid — " + statusMessage.Substring(licenseValid.Length);
+            Log.Information("ZOS-API license validated.");
+            return;
+        }
+        if (statusMessage.StartsWith(licenseInvalid, StringComparison.Ordinal))
+        {
+            lock (_stateLock) _licenseStatus = "Invalid — " + statusMessage.Substring(licenseInvalid.Length);
+            Log.Warning("ZOS-API reported an invalid license.");
+            return;
+        }
+        if (statusMessage.StartsWith(dataDirectory, StringComparison.Ordinal))
+        {
+            var reported = statusMessage.Substring(dataDirectory.Length);
+            lock (_stateLock) _zemaxDataDirectory = string.IsNullOrWhiteSpace(reported) ? "Not reported" : reported;
+            Log.Information("OpticStudio reported its runtime Data directory.");
+            return;
+        }
+        if (statusMessage.StartsWith(zosApiAssembly, StringComparison.Ordinal))
+        {
+            lock (_stateLock) _loadedZosApiPath = statusMessage.Substring(zosApiAssembly.Length);
+            return;
+        }
+        if (statusMessage.StartsWith(interfacesAssembly, StringComparison.Ordinal))
+        {
+            lock (_stateLock) _loadedInterfacesPath = statusMessage.Substring(interfacesAssembly.Length);
+            return;
+        }
+        if (statusMessage.StartsWith(netHelperAssembly, StringComparison.Ordinal))
+        {
+            lock (_stateLock) _loadedNetHelperPath = statusMessage.Substring(netHelperAssembly.Length);
+            return;
+        }
+        Log.Warning("Server: {Message}", statusMessage);
     }
 
     private void HandleServerExited(Process process)
@@ -194,6 +245,11 @@ internal sealed class StdioMcpBridge : IDisposable
         {
             _zosApiLoaded = false;
             _zosApiConnected = false;
+            _licenseStatus = "Not checked";
+            _zemaxDataDirectory = "Not reported";
+            _loadedZosApiPath = null;
+            _loadedInterfacesPath = null;
+            _loadedNetHelperPath = null;
             _lastServerError = error;
             _consecutiveServerFailures++;
             _clients.Clear(); // Force HTTP clients to initialize again after recovery.
@@ -376,6 +432,8 @@ internal sealed class StdioMcpBridge : IDisposable
                 }));
             int? pid = null;
             try { if (IsServerRunning()) pid = _server!.Id; } catch { }
+            var zemaxRoot = _options.ZemaxRoot ?? "";
+            var netHelperPath = FindNetHelper(zemaxRoot);
             return new JObject
             {
                 ["bridgeRunning"] = true,
@@ -388,6 +446,21 @@ internal sealed class StdioMcpBridge : IDisposable
                 ["activeRequests"] = _activeRequests,
                 ["zosApiLoaded"] = _zosApiLoaded,
                 ["zosApiConnected"] = _zosApiConnected,
+                ["zemaxRoot"] = zemaxRoot,
+                ["zosApiFiles"] = new JObject
+                {
+                    ["zosApi"] = ExistingPath(zemaxRoot, "ZOSAPI.dll"),
+                    ["interfaces"] = ExistingPath(zemaxRoot, "ZOSAPI_Interfaces.dll"),
+                    ["netHelper"] = netHelperPath
+                },
+                ["loadedZosApiFiles"] = new JObject
+                {
+                    ["zosApi"] = _loadedZosApiPath,
+                    ["interfaces"] = _loadedInterfacesPath,
+                    ["netHelper"] = _loadedNetHelperPath
+                },
+                ["licenseStatus"] = _licenseStatus,
+                ["zemaxDataDirectory"] = _zemaxDataDirectory,
                 ["lastServerError"] = _lastServerError,
                 ["lastRequestAt"] = _lastRequestAt?.ToString("O"),
                 ["lastClient"] = _lastClient,
@@ -441,6 +514,24 @@ internal sealed class StdioMcpBridge : IDisposable
 
     private static bool IsLauncherClient(string name) => name.Equals("zemax-mcp-launcher", StringComparison.OrdinalIgnoreCase);
 
+    private static string? ExistingPath(string root, string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(root)) return null;
+        var path = System.IO.Path.Combine(root, fileName);
+        return File.Exists(path) ? path : null;
+    }
+
+    private static string? FindNetHelper(string root)
+    {
+        if (string.IsNullOrWhiteSpace(root)) return null;
+        foreach (var relative in new[] { "ZOSAPI_NetHelper.dll", @"ZOS-API\Libraries\ZOSAPI_NetHelper.dll", @"ZOS_API\Libraries\ZOSAPI_NetHelper.dll" })
+        {
+            var path = System.IO.Path.Combine(root, relative);
+            if (File.Exists(path)) return path;
+        }
+        return null;
+    }
+
     private static async Task WriteJsonAsync(HttpListenerContext context, JObject payload, HttpStatusCode status = HttpStatusCode.OK)
     {
         var bytes = Encoding.UTF8.GetBytes(payload.ToString(Newtonsoft.Json.Formatting.None));
@@ -493,7 +584,17 @@ internal sealed class StdioMcpBridge : IDisposable
         var message = $"MCP request timed out after {_options.RequestTimeoutSeconds} seconds. The server is restarting automatically.";
         lock (_stateLock) _lastServerError = message;
         DisposeServerProcess();
-        lock (_stateLock) { _clients.Clear(); _zosApiLoaded = false; _zosApiConnected = false; }
+        lock (_stateLock)
+        {
+            _clients.Clear();
+            _zosApiLoaded = false;
+            _zosApiConnected = false;
+            _licenseStatus = "Not checked";
+            _zemaxDataDirectory = "Not reported";
+            _loadedZosApiPath = null;
+            _loadedInterfacesPath = null;
+            _loadedNetHelperPath = null;
+        }
         StartServer(isRestart: true);
         throw new BridgeRequestTimeoutException(message);
     }

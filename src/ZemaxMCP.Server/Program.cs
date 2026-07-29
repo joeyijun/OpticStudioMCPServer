@@ -32,7 +32,13 @@ var initialized = string.IsNullOrWhiteSpace(zemaxRoot)
     ? ZOSAPI_NetHelper.ZOSAPI_Initializer.Initialize()
     : ZOSAPI_NetHelper.ZOSAPI_Initializer.Initialize(zemaxRoot);
 
-if (initialized) Console.Error.WriteLine("ZEMAX_MCP_STATUS:ZOS_API_LOADED");
+if (initialized)
+{
+    Console.Error.WriteLine("ZEMAX_MCP_STATUS:ZOS_API_LOADED");
+    Console.Error.WriteLine("ZEMAX_MCP_STATUS:ZOSAPI_ASSEMBLY:" + typeof(ZOSAPI.ZOSAPI_Connection).Assembly.Location);
+    Console.Error.WriteLine("ZEMAX_MCP_STATUS:ZOSAPI_INTERFACES_ASSEMBLY:" + typeof(ZOSAPI.IZOSAPI_Application).Assembly.Location);
+    Console.Error.WriteLine("ZEMAX_MCP_STATUS:ZOSAPI_NETHELPER_ASSEMBLY:" + typeof(ZOSAPI_NetHelper.ZOSAPI_Initializer).Assembly.Location);
+}
 
 if (!initialized)
 {

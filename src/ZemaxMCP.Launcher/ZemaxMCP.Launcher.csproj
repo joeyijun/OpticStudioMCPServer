@@ -6,9 +6,11 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>Start-Zemax-MCP</AssemblyName>
     <RootNamespace>ZemaxMCP.Launcher</RootNamespace>
+    <ApplicationIcon>Assets\ZemaxMCP.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" />
     <Reference Include="System.IO.Compression.FileSystem" />
+    <Resource Include="Assets\ZemaxMCP.ico" />
   </ItemGroup>
 </Project>
