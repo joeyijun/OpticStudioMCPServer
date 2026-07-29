@@ -1,15 +1,15 @@
 # OpticStudio MCP Server
 
-**A GUI-first Windows HTTP MCP server for Zemax OpticStudio.** It detects installed OpticStudio versions, starts a local or trusted-LAN MCP endpoint, and configures **Codex**, **Claude Desktop**, **Cursor**, and **VS Code / GitHub Copilot** without manual configuration-file editing.
+**A GUI-first Windows HTTP MCP server for Zemax OpticStudio.** It detects installed OpticStudio versions, starts a resilient local or trusted-LAN MCP endpoint, and configures **Codex**, **Claude Desktop**, **Cursor**, **Kimi Code**, **WorkBuddy**, and **VS Code / GitHub Copilot** without manual configuration-file editing.
 
 ## Windows quick start
 
 1. Download and extract `ZemaxMCP-win-x64.zip` from [Releases](../../releases).
 2. Double-click **Install.exe**. It installs for the current Windows user, creates a desktop shortcut, and starts the launcher.
 3. At first launch, accept the detected AI-client setup prompt, or choose **Configure AI clients** and select the desired client.
-4. Restart the configured AI client once. The status dashboard shows whether MCP, ZOS-API/OpticStudio, and recent AI activity are ready.
+4. Restart the configured AI client once. The status dashboard distinguishes installed, configured, previously seen, and recently active clients.
 
-The launcher refreshes status every 10 seconds. No Node.js, Supergateway, command line, source checkout, or manual ZOS-API DLL copying is needed for normal use.
+The launcher refreshes status every 5 seconds. No Node.js, Supergateway, command line, source checkout, or manual ZOS-API DLL copying is needed for normal use.
 
 For the complete one- and two-computer guide, see [Windows Quick Start](docs/QUICKSTART_WINDOWS.md).
 
@@ -19,7 +19,7 @@ For the complete one- and two-computer guide, see [Windows Quick Start](docs/QUI
 flowchart LR
   A["OpticStudio computer\nInstall.exe → Start-Zemax-MCP.exe"] --> B["Built-in HTTP MCP bridge\n/mcp"]
   B --> C["ZOS-API + licensed\nOpticStudio"]
-  D["Codex / Claude Desktop / Cursor / VS Code Copilot\nlocal or trusted LAN computer"] -->|"HTTP MCP"| B
+  D["Codex / Claude / Cursor / Kimi / WorkBuddy / Copilot\nlocal or trusted LAN computer"] -->|"HTTP MCP"| B
   B --> E["Live dashboard\nMCP · ZOS-API · AI activity"]
 ```
 
@@ -28,11 +28,11 @@ For a single computer, the AI client uses the local MCP address. For two compute
 ## Highlights
 
 - **Graphical install and update** — `Install.exe` installs or updates the per-user application. `Portable-Install.cmd` is available where an organisation blocks the installer executable.
-- **Built-in HTTP MCP** — The release includes its own .NET HTTP-to-stdio bridge; no external bridge process or Node.js setup is required.
+- **Resilient built-in HTTP MCP** — The .NET bridge applies request timeouts, tracks independent MCP sessions, and automatically recovers its server subprocess after an unexpected failure.
 - **Trusted LAN use** — Enable LAN sharing on the OpticStudio computer, copy its address, and configure the AI-client computer graphically.
-- **Live status dashboard** — Colour-coded status cards distinguish the MCP service, ZOS-API/OpticStudio connection, and recent AI-client calls.
+- **Per-client live dashboard** — Colour-coded cards distinguish installation, configuration, historical activity, and a real request made within the last five minutes. The launcher health check is excluded from AI activity.
 - **Multi-version OpticStudio detection** — Choose from detected installations; the launcher remembers the choice and can start at sign-in.
-- **One AI configuration menu** — Configure detected Codex, Claude Desktop, and Cursor clients directly. VS Code / GitHub Copilot uses its native MCP review and trust flow, so its own profile and workspace configuration remain intact.
+- **One AI configuration menu** — Configure detected Codex, Claude Desktop, Cursor, Kimi Code, and WorkBuddy clients directly. VS Code / GitHub Copilot uses its native MCP review and trust flow. A generic HTTP MCP JSON entry covers other compatible agents.
 - **Safe public package** — The ZIP does not redistribute proprietary ZOS-API DLLs. It uses the licensed OpticStudio installation at runtime on the Zemax computer.
 
 ## Connection modes
@@ -45,6 +45,21 @@ The server supports the following OpticStudio connection modes:
 | **Extension** | Connects to an already-running OpticStudio session for interactive work. |
 
 Use the launcher status dashboard to confirm that ZOS-API is loaded and OpticStudio is connected before asking the AI to work on a design.
+
+## AI client configuration
+
+Use **Configure AI clients** in the launcher. Existing unrelated MCP entries are preserved and a backup is kept when an existing configuration is replaced.
+
+| Client | Configuration used by the launcher | Connection confirmation |
+|---|---|---|
+| Codex | `~/.codex/config.toml` | The client card turns green after an actual request. |
+| Claude Desktop | `%APPDATA%/Claude/claude_desktop_config.json` | The client card turns green after an actual request. |
+| Cursor | `~/.cursor/mcp.json` | The client card turns green after an actual request. |
+| Kimi Code | `$KIMI_CODE_HOME/mcp.json`, or `~/.kimi-code/mcp.json` | Run `/mcp` in Kimi Code or watch the launcher client card. See the [official Kimi MCP guide](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/mcp.html). |
+| WorkBuddy | `~/.workbuddy/mcp.json` | WorkBuddy shows its own green/red MCP status; the launcher also records real requests. See the [official WorkBuddy MCP guide](https://www.workbuddy.ai/docs/zh/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide). |
+| VS Code / Copilot | Native `vscode:mcp/install` review flow | Approve the server in VS Code, then make a request. |
+
+“Configured” does not claim that an AI process is currently connected. “Active now” is shown only when the bridge identifies that client and receives a request within five minutes. Client names depend on the identification string sent by each agent; unrecognised implementations appear as **Other MCP client**.
 
 ## MCP capabilities
 

@@ -20,7 +20,7 @@ namespace ZemaxMCP.Launcher;
 public partial class MainWindow : Window
 {
     private Process? _bridge;
-    private bool _stoppingBridge;
+    private int _bridgeRestartAttempts;
     private bool _exitRequested;
     private bool _clientSetupPrompted;
     private bool _refreshingStatus;
@@ -35,7 +35,7 @@ public partial class MainWindow : Window
         menu.Items.Add("Open Zemax MCP", null, (_, _) => RestoreWindow());
         menu.Items.Add("Exit", null, (_, _) => ExitApplication());
         _trayIcon.ContextMenuStrip = menu;
-        _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
+        _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _statusTimer.Tick += async (_, _) => await RefreshStatusAsync();
     }
 
@@ -57,6 +57,7 @@ public partial class MainWindow : Window
         if (installs.Count > 0 && !hasRemoteEndpoint) StartBridge();
         SetIndicatorsChecking();
         _statusTimer.Start();
+        RefreshClientDashboard(null);
         OfferFirstRunClientSetup();
     }
     private void ZemaxVersions_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) { RefreshEndpoint(); SaveSettings(); }
@@ -102,8 +103,8 @@ public partial class MainWindow : Window
         catch (Exception ex) { Report("Could not change sign-in startup: " + ex.Message); }
     }
 
-    private void Start_Click(object sender, RoutedEventArgs e) => StartBridge();
-    private void StartBridge()
+    private void Start_Click(object sender, RoutedEventArgs e) => StartBridge(false);
+    private void StartBridge(bool automaticRestart = false)
     {
         if (Installation == null) { Report("Choose a detected OpticStudio installation first."); return; }
         if (!int.TryParse(Port.Text, out var port) || port < 1 || port > 65535)
@@ -112,25 +113,47 @@ public partial class MainWindow : Window
             return;
         }
         StopBridge();
+        if (!automaticRestart) _bridgeRestartAttempts = 0;
         SaveSettings();
         var bridge = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZemaxMCP.HttpBridge.exe");
         var server = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZemaxMCP.Server.exe");
         if (!File.Exists(bridge) || !File.Exists(server)) { Report("Release package is incomplete: ZemaxMCP.HttpBridge.exe and ZemaxMCP.Server.exe must be beside this launcher."); return; }
         if (!EnsureZosApiBootstrap(Installation.Root)) return;
-        var firewallReady = ShareOnLan.IsChecked != true || FirewallRule.TryEnsure(port);
-        _bridge = Process.Start(new ProcessStartInfo(bridge, $"--server \"{server}\" --zemax-root \"{Installation.Root}\" --host {HostName} --port {port}") { UseShellExecute = false, CreateNoWindow = true });
-        if (_bridge != null)
+        // URL ACL/firewall setup is a user-approved configuration step, not
+        // something an automatic recovery attempt should prompt for again.
+        var firewallReady = automaticRestart || ShareOnLan.IsChecked != true || FirewallRule.TryEnsure(port);
+        Process? process;
+        try
         {
-            _bridge.EnableRaisingEvents = true;
-            _bridge.Exited += (_, _) =>
-            {
-                if (_stoppingBridge) { _stoppingBridge = false; return; }
-                Dispatcher.BeginInvoke(new Action(() => Report("MCP bridge stopped unexpectedly. Use Open logs to see why (common causes: port in use, firewall/URL permission, or OpticStudio initialization).")));
-            };
+            process = Process.Start(new ProcessStartInfo(bridge, $"--server \"{server}\" --zemax-root \"{Installation.Root}\" --host {HostName} --port {port}") { UseShellExecute = false, CreateNoWindow = true });
         }
+        catch (Exception ex)
+        {
+            Report("Could not start the MCP bridge: " + ex.Message);
+            return;
+        }
+        if (process == null) { Report("Windows did not create the MCP bridge process."); return; }
+        _bridge = process;
+        process.EnableRaisingEvents = true;
+        process.Exited += async (_, _) => await Dispatcher.InvokeAsync(() => HandleBridgeExitAsync(process));
         Report("HTTP MCP started: " + Url + Environment.NewLine + "Logs: " + Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs") +
             (firewallReady ? "" : Environment.NewLine + "Firewall permission was not granted; another PC may not reach this endpoint."));
         ScheduleStatusRefresh();
+    }
+    private async Task HandleBridgeExitAsync(Process exitedProcess)
+    {
+        if (!ReferenceEquals(_bridge, exitedProcess) || _exitRequested || IsRemoteEndpointConfigured) return;
+        _bridge = null;
+        if (_bridgeRestartAttempts >= 3)
+        {
+            Report("MCP bridge stopped repeatedly. Automatic recovery is paused; open Logs, then use Start service after correcting the cause.");
+            return;
+        }
+        _bridgeRestartAttempts++;
+        var delay = Math.Min(8, 1 << _bridgeRestartAttempts);
+        Report("MCP bridge stopped unexpectedly. Automatic recovery attempt " + _bridgeRestartAttempts + "/3 starts in " + delay + " seconds…");
+        await Task.Delay(TimeSpan.FromSeconds(delay));
+        if (_bridge == null && !_exitRequested && !IsRemoteEndpointConfigured) StartBridge(true);
     }
     private void Stop_Click(object sender, RoutedEventArgs e) { StopBridge(); Report("HTTP MCP stopped."); SetIndicator(McpStateDot, McpState, "Stopped", System.Windows.Media.Brushes.IndianRed); SetIndicator(AiStateDot, AiState, "No client activity while stopped", System.Windows.Media.Brushes.SlateGray); }
     private async void RefreshStatus_Click(object sender, RoutedEventArgs e) => await RefreshStatusAsync();
@@ -147,20 +170,24 @@ public partial class MainWindow : Window
         try
         {
             var health = await Task.Run(() => GetHealth(endpoint));
-            var lastRequest = health["lastRequestAt"]?.ToString();
             var apiLoaded = health["zosApiLoaded"]?.Value<bool>() == true;
             var apiConnected = health["zosApiConnected"]?.Value<bool>() == true;
             var bridgeRunning = health["bridgeRunning"]?.Value<bool>() == true;
             var serverRunning = health["mcpServerRunning"]?.Value<bool>() == true;
-            var client = health["lastClient"]?.ToString() ?? "";
+            var activeRequests = health["activeRequests"]?.Value<int>() ?? 0;
+            var restartCount = health["serverRestartCount"]?.Value<int>() ?? 0;
+            var uptime = FormatUptime(health["bridgeUptimeSeconds"]?.Value<long?>());
+            var lastServerError = health["lastServerError"]?.ToString();
+            var activeClients = RefreshClientDashboard(health);
             ConnectionSummary.Text = "MCP endpoint: reachable\n" +
                 "Bridge: " + (bridgeRunning ? "running" : "not running") +
-                "; MCP server: " + (serverRunning ? "running" : "not running") + "\n" +
+                "; MCP server: " + (serverRunning ? "running" : "not running") +
+                "; uptime: " + uptime + "; restarts: " + restartCount + "\n" +
                 "ZOS-API files: " + (apiFiles ? "found" : root == null ? "remote endpoint" : "missing") +
                 "; loaded: " + (apiLoaded ? "yes" : "not yet") +
                 "; OpticStudio connected: " + (apiConnected ? "yes" : "not yet") + "\n" +
-                "Last MCP client: " + (string.IsNullOrWhiteSpace(client) ? "none" : client) +
-                "; last request: " + (string.IsNullOrWhiteSpace(lastRequest) ? "none" : lastRequest) +
+                "AI clients active recently: " + activeClients + "; requests in progress: " + activeRequests +
+                (string.IsNullOrWhiteSpace(lastServerError) ? "" : "\nLast MCP server error: " + lastServerError) +
                 (localBridge ? "\nLocal launcher bridge process: running" : "");
             if (bridgeRunning && serverRunning) SetIndicator(McpStateDot, McpState, "Online — MCP server is accepting connections", System.Windows.Media.Brushes.SeaGreen);
             else SetIndicator(McpStateDot, McpState, "Endpoint reachable, but a service is not running", System.Windows.Media.Brushes.DarkOrange);
@@ -169,8 +196,8 @@ public partial class MainWindow : Window
             else if (root == null) SetIndicator(ZosStateDot, ZosState, "Checked on the remote Zemax computer", System.Windows.Media.Brushes.SlateGray);
             else if (apiFiles) SetIndicator(ZosStateDot, ZosState, "Files found — not loaded yet", System.Windows.Media.Brushes.DarkOrange);
             else SetIndicator(ZosStateDot, ZosState, "ZOS-API files are missing", System.Windows.Media.Brushes.IndianRed);
-            SetAiIndicator(client, lastRequest);
-            LastStatusCheck.Text = "Updated " + DateTime.Now.ToString("HH:mm:ss") + " · automatic refresh every 10 seconds";
+            if (bridgeRunning && serverRunning) _bridgeRestartAttempts = 0;
+            LastStatusCheck.Text = "Updated " + DateTime.Now.ToString("HH:mm:ss") + " · automatic refresh every 5 seconds";
         }
         catch (Exception ex)
         {
@@ -182,6 +209,7 @@ public partial class MainWindow : Window
             else if (apiFiles) SetIndicator(ZosStateDot, ZosState, "Files found — service is unavailable", System.Windows.Media.Brushes.DarkOrange);
             else SetIndicator(ZosStateDot, ZosState, "ZOS-API files are missing", System.Windows.Media.Brushes.IndianRed);
             SetIndicator(AiStateDot, AiState, "Unknown until the MCP service responds", System.Windows.Media.Brushes.SlateGray);
+            RefreshClientDashboard(null);
             LastStatusCheck.Text = "Last checked " + DateTime.Now.ToString("HH:mm:ss") + " · endpoint unavailable; retrying automatically";
         }
         finally { _refreshingStatus = false; }
@@ -198,21 +226,78 @@ public partial class MainWindow : Window
         label.Text = text;
         label.Foreground = brush;
     }
-    private void SetAiIndicator(string client, string? lastRequest)
+    private int RefreshClientDashboard(JObject? health)
     {
-        if (string.IsNullOrWhiteSpace(client) || client.Equals("None yet", StringComparison.OrdinalIgnoreCase))
+        var activities = ReadClientActivities(health);
+        var rows = new List<AiClientStatusView>();
+        var activeNames = new List<string>();
+        foreach (var client in Configurator.GetClientStatuses())
         {
-            SetIndicator(AiStateDot, AiState, "No AI client call recorded yet", System.Windows.Media.Brushes.SlateGray);
-            return;
+            var activity = activities.FirstOrDefault(x => client.Aliases.Any(alias => x.Name.IndexOf(alias, StringComparison.OrdinalIgnoreCase) >= 0));
+            var recent = activity != null && DateTime.Now - activity.LastRequest.ToLocalTime() < TimeSpan.FromMinutes(5);
+            string state;
+            System.Windows.Media.Brush brush;
+            if (recent)
+            {
+                state = "Active now · " + FormatActivity(activity!);
+                brush = System.Windows.Media.Brushes.SeaGreen;
+                activeNames.Add(client.Name);
+            }
+            else if (activity != null)
+            {
+                state = "Last seen · " + FormatActivity(activity);
+                brush = System.Windows.Media.Brushes.SteelBlue;
+            }
+            else if (client.Configured)
+            {
+                state = "Configured · waiting for first call";
+                brush = System.Windows.Media.Brushes.DarkOrange;
+            }
+            else if (client.Detected)
+            {
+                state = "Installed · not configured";
+                brush = System.Windows.Media.Brushes.DarkOrange;
+            }
+            else
+            {
+                state = "Not detected";
+                brush = System.Windows.Media.Brushes.SlateGray;
+            }
+            rows.Add(new AiClientStatusView(client.Name, state, brush));
         }
-        if (client.Equals("zemax-mcp-launcher", StringComparison.OrdinalIgnoreCase))
+        foreach (var activity in activities.Where(x => !Configurator.KnownAliases.Any(alias => x.Name.IndexOf(alias, StringComparison.OrdinalIgnoreCase) >= 0)))
+            rows.Add(new AiClientStatusView(activity.Name, "Other MCP client · " + FormatActivity(activity), System.Windows.Media.Brushes.SteelBlue));
+        AiClientsList.ItemsSource = rows;
+        if (activeNames.Count > 0) SetIndicator(AiStateDot, AiState, activeNames.Count + " active: " + string.Join(", ", activeNames), System.Windows.Media.Brushes.SeaGreen);
+        else if (activities.Count > 0) SetIndicator(AiStateDot, AiState, "No recent AI call; " + activities.Count + " client(s) seen earlier", System.Windows.Media.Brushes.SteelBlue);
+        else if (rows.Any(x => x.State.StartsWith("Configured", StringComparison.Ordinal))) SetIndicator(AiStateDot, AiState, "Configured clients are waiting for a real call", System.Windows.Media.Brushes.DarkOrange);
+        else SetIndicator(AiStateDot, AiState, "No AI client call recorded", System.Windows.Media.Brushes.SlateGray);
+        return activeNames.Count;
+    }
+    private static List<ClientActivityView> ReadClientActivities(JObject? health)
+    {
+        var result = new List<ClientActivityView>();
+        foreach (var item in health?["clients"] as JArray ?? new JArray())
         {
-            SetIndicator(AiStateDot, AiState, "Launcher test succeeded; no AI call yet", System.Windows.Media.Brushes.DarkOrange);
-            return;
+            var name = item["name"]?.ToString() ?? "";
+            if (string.IsNullOrWhiteSpace(name) || name.Equals("zemax-mcp-launcher", StringComparison.OrdinalIgnoreCase)) continue;
+            if (DateTime.TryParse(item["lastRequestAt"]?.ToString(), out var when))
+                result.Add(new ClientActivityView(name, when, item["lastMethod"]?.ToString() ?? "request"));
         }
-        var when = DateTime.TryParse(lastRequest, out var parsed) ? parsed : DateTime.MinValue;
-        var recent = when != DateTime.MinValue && DateTime.Now - when < TimeSpan.FromMinutes(5);
-        SetIndicator(AiStateDot, AiState, (recent ? "Active" : "Last seen") + ": " + client + (string.IsNullOrWhiteSpace(lastRequest) ? "" : " — " + lastRequest), recent ? System.Windows.Media.Brushes.SeaGreen : System.Windows.Media.Brushes.SteelBlue);
+        if (result.Count == 0)
+        {
+            var name = health?["lastClient"]?.ToString() ?? "";
+            if (!string.IsNullOrWhiteSpace(name) && !name.Equals("zemax-mcp-launcher", StringComparison.OrdinalIgnoreCase) && DateTime.TryParse(health?["lastRequestAt"]?.ToString(), out var when))
+                result.Add(new ClientActivityView(name, when, "request"));
+        }
+        return result;
+    }
+    private static string FormatActivity(ClientActivityView activity) => activity.LastMethod + " · " + activity.LastRequest.ToLocalTime().ToString("MM-dd HH:mm:ss");
+    private static string FormatUptime(long? totalSeconds)
+    {
+        if (totalSeconds == null) return "unknown";
+        var value = TimeSpan.FromSeconds(Math.Max(0, totalSeconds.Value));
+        return value.TotalDays >= 1 ? ((int)value.TotalDays) + "d " + value.ToString(@"hh\:mm\:ss") : value.ToString(@"hh\:mm\:ss");
     }
     private static JObject GetHealth(string endpoint)
     {
@@ -236,10 +321,10 @@ public partial class MainWindow : Window
     }
     private void StopBridge()
     {
-        if (_bridge == null) return;
-        _stoppingBridge = true;
-        try { if (_bridge != null && !_bridge.HasExited) _bridge.Kill(); } catch { }
+        var process = _bridge;
         _bridge = null;
+        if (process == null) return;
+        try { if (!process.HasExited) process.Kill(); } catch { }
     }
     private bool EnsureZosApiBootstrap(string zemaxRoot)
     {
@@ -341,12 +426,9 @@ public partial class MainWindow : Window
     }
     private List<(string Name, Action Configure)> DetectedClientConfigurations()
     {
-        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var clients = new List<(string, Action)>();
-        if (Directory.Exists(Path.Combine(profile, ".codex"))) clients.Add(("Codex", () => Configurator.ConfigureCodex(McpUrl)));
-        if (Directory.Exists(Path.Combine(appData, "Claude"))) clients.Add(("Claude Desktop", () => Configurator.ConfigureClaudeDesktop(McpUrl)));
-        if (Directory.Exists(Path.Combine(profile, ".cursor")) || Directory.Exists(Path.Combine(appData, "Cursor")) || Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Cursor"))) clients.Add(("Cursor", () => Configurator.ConfigureCursor(McpUrl)));
+        foreach (var status in Configurator.GetClientStatuses().Where(x => x.Detected && x.Configure != null))
+            clients.Add((status.Name, () => status.Configure!(McpUrl)));
         return clients;
     }
     private void ConfigureClient(string name, Action configure)
@@ -357,6 +439,13 @@ public partial class MainWindow : Window
     private void Codex_Click(object sender, RoutedEventArgs e) => ConfigureClient("Codex", () => Configurator.ConfigureCodex(McpUrl));
     private void Claude_Click(object sender, RoutedEventArgs e) => ConfigureClient("Claude Desktop", () => Configurator.ConfigureClaudeDesktop(McpUrl));
     private void Cursor_Click(object sender, RoutedEventArgs e) => ConfigureClient("Cursor", () => Configurator.ConfigureCursor(McpUrl));
+    private void Kimi_Click(object sender, RoutedEventArgs e) => ConfigureClient("Kimi Code", () => Configurator.ConfigureKimi(McpUrl));
+    private void WorkBuddy_Click(object sender, RoutedEventArgs e) => ConfigureClient("WorkBuddy", () => Configurator.ConfigureWorkBuddy(McpUrl));
+    private void CopyGenericConfig_Click(object sender, RoutedEventArgs e)
+    {
+        System.Windows.Clipboard.SetText(Configurator.GenericHttpJson(McpUrl));
+        Report("Generic HTTP MCP JSON copied. Paste it into an agent's MCP configuration and restart that agent.");
+    }
     private void VsCode_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -457,6 +546,22 @@ public partial class MainWindow : Window
     }
 }
 
+internal sealed class AiClientStatusView
+{
+    public AiClientStatusView(string name, string state, System.Windows.Media.Brush statusBrush) { Name = name; State = state; StatusBrush = statusBrush; }
+    public string Name { get; }
+    public string State { get; }
+    public System.Windows.Media.Brush StatusBrush { get; }
+}
+
+internal sealed class ClientActivityView
+{
+    public ClientActivityView(string name, DateTime lastRequest, string lastMethod) { Name = name; LastRequest = lastRequest; LastMethod = lastMethod; }
+    public string Name { get; }
+    public DateTime LastRequest { get; }
+    public string LastMethod { get; }
+}
+
 internal static class FirewallRule
 {
     public static bool TryEnsure(int port)
@@ -517,12 +622,37 @@ public sealed class ZemaxInstallation
 internal static class Configurator
 {
     private static string UserProfile => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    private static string AppData => Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+    private static string LocalAppData => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
     private static string ClaudeDesktopPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Claude", "claude_desktop_config.json");
-    // Cursor's documented global MCP configuration is ~/.cursor/mcp.json.
     private static string CursorPath => Path.Combine(UserProfile, ".cursor", "mcp.json");
+    private static string KimiHome => Environment.GetEnvironmentVariable("KIMI_CODE_HOME") ?? Path.Combine(UserProfile, ".kimi-code");
+    private static string KimiPath => Path.Combine(KimiHome, "mcp.json");
+    private static string WorkBuddyPath => Path.Combine(UserProfile, ".workbuddy", "mcp.json");
+    public static readonly string[] KnownAliases = { "codex", "claude", "cursor", "kimi", "workbuddy", "codebuddy", "vscode", "visual studio", "copilot" };
 
     public static void ConfigureClaudeDesktop(string url) => ConfigureJson(ClaudeDesktopPath, "mcpServers", url);
     public static void ConfigureCursor(string url) => ConfigureJson(CursorPath, "mcpServers", url);
+    public static void ConfigureKimi(string url) => ConfigureJson(KimiPath, "mcpServers", url, false, true);
+    public static void ConfigureWorkBuddy(string url) => ConfigureJson(WorkBuddyPath, "mcpServers", url, false, false);
+
+    public static List<ClientConfigurationStatus> GetClientStatuses()
+    {
+        return new List<ClientConfigurationStatus>
+        {
+            new ClientConfigurationStatus("Codex", new[] { "codex" }, Directory.Exists(Path.Combine(UserProfile, ".codex")), IsCodexConfigured(), ConfigureCodex),
+            new ClientConfigurationStatus("Claude Desktop", new[] { "claude" }, Directory.Exists(Path.Combine(AppData, "Claude")), IsJsonConfigured(ClaudeDesktopPath), ConfigureClaudeDesktop),
+            new ClientConfigurationStatus("Cursor", new[] { "cursor" }, Directory.Exists(Path.Combine(UserProfile, ".cursor")) || Directory.Exists(Path.Combine(AppData, "Cursor")) || Directory.Exists(Path.Combine(LocalAppData, "Cursor")), IsJsonConfigured(CursorPath), ConfigureCursor),
+            new ClientConfigurationStatus("Kimi Code", new[] { "kimi" }, Directory.Exists(KimiHome), IsJsonConfigured(KimiPath), ConfigureKimi),
+            new ClientConfigurationStatus("WorkBuddy", new[] { "workbuddy", "codebuddy" }, Directory.Exists(Path.Combine(UserProfile, ".workbuddy")) || Directory.Exists(Path.Combine(AppData, "WorkBuddy")) || Directory.Exists(Path.Combine(LocalAppData, "WorkBuddy")), IsJsonConfigured(WorkBuddyPath), ConfigureWorkBuddy),
+            new ClientConfigurationStatus("VS Code / Copilot", new[] { "vscode", "visual studio", "copilot" }, Directory.Exists(Path.Combine(AppData, "Code")) || Directory.Exists(Path.Combine(LocalAppData, "Programs", "Microsoft VS Code")), false, null)
+        };
+    }
+
+    public static string GenericHttpJson(string url) => new JObject
+    {
+        ["mcpServers"] = new JObject { ["zemax-mcp"] = new JObject { ["url"] = url } }
+    }.ToString();
 
     public static void ConfigureVsCode(string url)
     {
@@ -543,16 +673,25 @@ internal static class Configurator
         Process.Start(new ProcessStartInfo(installUri) { UseShellExecute = true });
     }
 
-    public static void ConfigureJson(string path, string property, string url)
+    public static void ConfigureJson(string path, string property, string url, bool includeType = true, bool includeKimiTimeouts = false)
     {
+        ValidateUrl(url);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var root = File.Exists(path) ? JObject.Parse(File.ReadAllText(path)) : new JObject();
         var servers = root[property] as JObject ?? new JObject(); root[property] = servers;
-        servers["zemax-mcp"] = new JObject { ["type"] = "http", ["url"] = url };
+        var entry = new JObject { ["url"] = url };
+        if (includeType) entry.AddFirst(new JProperty("type", "http"));
+        if (includeKimiTimeouts)
+        {
+            entry["startupTimeoutMs"] = 60000;
+            entry["toolTimeoutMs"] = 300000;
+        }
+        servers["zemax-mcp"] = entry;
         WriteAtomically(path, root.ToString());
     }
     public static void ConfigureCodex(string url)
     {
+        ValidateUrl(url);
         var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "config.toml");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var content = File.Exists(path) ? File.ReadAllText(path) : "";
@@ -560,6 +699,26 @@ internal static class Configurator
         content = Regex.Replace(content, @"(?ms)^\[mcp_servers\.zemax\].*?(?=^\[|\z)", block);
         if (!content.Contains("[mcp_servers.zemax]")) content += (content.EndsWith("\n") || content.Length == 0 ? "" : "\r\n") + block;
         WriteAtomically(path, content);
+    }
+
+    private static bool IsJsonConfigured(string path)
+    {
+        try { return File.Exists(path) && JObject.Parse(File.ReadAllText(path))["mcpServers"]?["zemax-mcp"] != null; }
+        catch { return false; }
+    }
+    private static bool IsCodexConfigured()
+    {
+        try
+        {
+            var path = Path.Combine(UserProfile, ".codex", "config.toml");
+            return File.Exists(path) && Regex.IsMatch(File.ReadAllText(path), @"(?m)^\[mcp_servers\.zemax\]\s*$");
+        }
+        catch { return false; }
+    }
+    private static void ValidateUrl(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var endpoint) || (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps))
+            throw new ArgumentException("The MCP endpoint must be an absolute HTTP or HTTPS address.", nameof(url));
     }
 
     private static void WriteAtomically(string path, string content)
@@ -586,4 +745,15 @@ internal static class Configurator
             try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
         }
     }
+}
+
+internal sealed class ClientConfigurationStatus
+{
+    public ClientConfigurationStatus(string name, string[] aliases, bool detected, bool configured, Action<string>? configure)
+    { Name = name; Aliases = aliases; Detected = detected || configured; Configured = configured; Configure = configure; }
+    public string Name { get; }
+    public string[] Aliases { get; }
+    public bool Detected { get; }
+    public bool Configured { get; }
+    public Action<string>? Configure { get; }
 }
