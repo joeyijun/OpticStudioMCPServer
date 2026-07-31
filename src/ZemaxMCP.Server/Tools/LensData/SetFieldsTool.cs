@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
+using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
@@ -29,6 +30,29 @@ public class SetFieldsTool
     {
         try
         {
+            if (fields == null || fields.Count == 0)
+                throw new ArgumentException("At least one field is required.", nameof(fields));
+            for (var i = 0; i < fields.Count; i++)
+            {
+                var definition = fields[i];
+                if (new[] { definition.X, definition.Y, definition.Weight }.Any(double.IsNaN) ||
+                    new[] { definition.X, definition.Y, definition.Weight }.Any(double.IsInfinity))
+                    throw new ArgumentException($"Field {i + 1} values must be finite.", nameof(fields));
+                if (definition.Weight < 0)
+                    throw new ArgumentException($"Field {i + 1} weight must be non-negative.", nameof(fields));
+            }
+
+            if (string.IsNullOrWhiteSpace(fieldType))
+                throw new ArgumentException("Field type is required.", nameof(fieldType));
+            var fType = fieldType.Trim().ToLowerInvariant() switch
+            {
+                "angle" => ZOSAPI.SystemData.FieldType.Angle,
+                "objectheight" => ZOSAPI.SystemData.FieldType.ObjectHeight,
+                "paraxialimageheight" => ZOSAPI.SystemData.FieldType.ParaxialImageHeight,
+                "realimageheight" => ZOSAPI.SystemData.FieldType.RealImageHeight,
+                _ => throw new ArgumentException("Field type must be Angle, ObjectHeight, ParaxialImageHeight, or RealImageHeight.", nameof(fieldType))
+            };
+
             var parameters = new Dictionary<string, object?>
             {
                 ["fieldCount"] = fields.Count,
@@ -40,14 +64,6 @@ public class SetFieldsTool
                 var sysFields = system.SystemData.Fields;
 
                 // Set field type
-                var fType = fieldType.ToLower() switch
-                {
-                    "angle" => ZOSAPI.SystemData.FieldType.Angle,
-                    "objectheight" => ZOSAPI.SystemData.FieldType.ObjectHeight,
-                    "paraxialimageheight" => ZOSAPI.SystemData.FieldType.ParaxialImageHeight,
-                    "realimageheight" => ZOSAPI.SystemData.FieldType.RealImageHeight,
-                    _ => ZOSAPI.SystemData.FieldType.Angle
-                };
                 sysFields.SetFieldType(fType);
 
                 // Add fields if needed
@@ -74,9 +90,9 @@ public class SetFieldsTool
                     resultFields.Add(new Field
                     {
                         Number = i + 1,
-                        X = field.X,
-                        Y = field.Y,
-                        Weight = field.Weight
+                        X = field.X.Sanitize(),
+                        Y = field.Y.Sanitize(),
+                        Weight = field.Weight.Sanitize()
                     });
                 }
 

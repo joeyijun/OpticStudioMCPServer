@@ -340,6 +340,10 @@ public class ZemaxSession : IZemaxSession
                 }
 
                 system.SaveAs(path);
+                if (!File.Exists(path))
+                {
+                    throw new IOException($"OpticStudio SaveAs returned without creating the requested file: {path}");
+                }
                 CurrentFilePath = path;
                 _logger.LogInformation("Saved file: {FilePath}", path);
                 return true;

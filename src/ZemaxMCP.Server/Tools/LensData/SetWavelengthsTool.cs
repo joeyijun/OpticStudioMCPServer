@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
+using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
@@ -29,6 +30,19 @@ public class SetWavelengthsTool
     {
         try
         {
+            if (wavelengths == null || wavelengths.Count == 0)
+                throw new ArgumentException("At least one wavelength is required.", nameof(wavelengths));
+            if (primaryWavelength < 1 || primaryWavelength > wavelengths.Count)
+                throw new ArgumentOutOfRangeException(nameof(primaryWavelength), $"Primary wavelength must be between 1 and {wavelengths.Count}.");
+            for (var i = 0; i < wavelengths.Count; i++)
+            {
+                var definition = wavelengths[i];
+                if (double.IsNaN(definition.Wavelength) || double.IsInfinity(definition.Wavelength) || definition.Wavelength <= 0)
+                    throw new ArgumentException($"Wavelength {i + 1} must be finite and positive.", nameof(wavelengths));
+                if (double.IsNaN(definition.Weight) || double.IsInfinity(definition.Weight) || definition.Weight < 0)
+                    throw new ArgumentException($"Weight {i + 1} must be finite and non-negative.", nameof(wavelengths));
+            }
+
             var parameters = new Dictionary<string, object?>
             {
                 ["wavelengthCount"] = wavelengths.Count,
@@ -51,23 +65,26 @@ public class SetWavelengthsTool
                     sysWaves.RemoveWavelength(sysWaves.NumberOfWavelengths);
                 }
 
-                // Set primary wavelength by getting and modifying the wavelength
-                // Note: Primary wavelength is set implicitly via the wavelength order
-
                 // Configure all wavelengths
-                var resultWaves = new List<Wavelength>();
                 for (int i = 0; i < wavelengths.Count; i++)
                 {
                     var wl = sysWaves.GetWavelength(i + 1);
                     wl.Wavelength = wavelengths[i].Wavelength;
                     wl.Weight = wavelengths[i].Weight;
+                }
 
+                sysWaves.GetWavelength(primaryWavelength).MakePrimary();
+
+                var resultWaves = new List<Wavelength>();
+                for (int i = 0; i < wavelengths.Count; i++)
+                {
+                    var wl = sysWaves.GetWavelength(i + 1);
                     resultWaves.Add(new Wavelength
                     {
                         Number = i + 1,
-                        Value = wl.Wavelength,
-                        Weight = wl.Weight,
-                        IsPrimary = (i + 1) == primaryWavelength
+                        Value = wl.Wavelength.Sanitize(),
+                        Weight = wl.Weight.Sanitize(),
+                        IsPrimary = wl.IsPrimary
                     });
                 }
 
