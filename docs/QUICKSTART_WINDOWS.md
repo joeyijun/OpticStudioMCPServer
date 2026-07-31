@@ -16,6 +16,14 @@ On the AI-client computer, extract the same release, double-click `Install.exe`,
 
 Kimi Code uses `~/.kimi-code/mcp.json` (or `$KIMI_CODE_HOME/mcp.json`) and WorkBuddy uses `~/.workbuddy/mcp.json`. The launcher edits only its `zemax-mcp` entry and preserves other servers. For another HTTP-capable agent, choose **Copy generic HTTP MCP JSON** and paste the result into that agent's documented MCP settings.
 
+Claude Desktop is configured through the packaged `ZemaxMCP.ClientProxy.exe`. Claude starts this small local stdio process, which forwards requests to the HTTP endpoint shown in the launcher; this also works when OpticStudio is on the second computer. Codex honors `$CODEX_HOME`, Kimi honors `$KIMI_CODE_HOME`, and the launcher displays the exact configuration file inspected for every supported client. A client is marked **Configured** only when that file points to the current endpoint.
+
+## Zemax paths and license status
+
+The live status area shows the detected OpticStudio directory, discovery source, candidate ZOS-API files, each assembly's actual CLR load path after startup, Data directory, and runtime license result. Current Ansys layouts with `ZOSAPI_NetHelper.dll` under `ZOS-API\Libraries` are supported as well as classic installations with all three files in the program directory.
+
+The launcher checks `ZEMAX_ROOT`, Windows installation/product registry entries, classic Zemax folders, and versioned `Program Files\ANSYS Inc\v*` folders. For the Data directory it checks `ZEMAX_DATA_ROOT`, OpticStudio's `HKCU\SOFTWARE\Zemax\ZemaxRoot` setting, redirected Documents, and the default `Documents\Zemax` folder. License folders and environment settings are diagnostic clues only; a valid/invalid result appears only after ZOS-API creates an OpticStudio application. No license-server value is printed to logs.
+
 ## Updates and logs
 
 Use **Updates** in the launcher to download and apply the current GitHub release, then restart it. Each release includes the server, HTTP bridge, launcher, and installer. Logs are created in the application's `logs` folder; your OpticStudio installation and client configuration are retained. The launcher retries its bridge after an unexpected exit, while the bridge separately restarts a failed MCP server subprocess and reports restart/error information in the dashboard.
@@ -24,7 +32,7 @@ The public ZIP intentionally contains no `ZOSAPI*.dll` files. On the computer th
 
 ### Maintainers: publishing an update
 
-The full ZIP is published from a trusted self-hosted Windows GitHub Actions runner that has a licensed OpticStudio installation. Give that runner the labels `self-hosted`, `windows`, and `zemax`, and set its machine-level `ZEMAX_ROOT` environment variable to the OpticStudio directory. Pushing a `v*` tag then creates the GitHub Release and uploads `ZemaxMCP-win-x64.zip`; installed launchers will discover it through **Check updates**. This keeps proprietary ZOS-API files out of source control and public hosted runners.
+The full ZIP is published from a trusted self-hosted Windows GitHub Actions runner that has a licensed OpticStudio installation. Give that runner the labels `self-hosted`, `windows`, and `zemax`, and set its machine-level `ZEMAX_ROOT` environment variable to the OpticStudio directory. The publishing script accepts NetHelper in either the program root or `ZOS-API\Libraries`. Pushing a `v*` tag then creates the GitHub Release and uploads `ZemaxMCP-win-x64.zip`; installed launchers will discover it through **Check updates**. This keeps proprietary ZOS-API files out of source control and public hosted runners.
 
 Use **Open logs** in the launcher for both bridge and server diagnostics; no command prompt is needed to locate or inspect logs.
 

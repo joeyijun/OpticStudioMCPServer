@@ -14,6 +14,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ZemaxMCP.Launcher", "src\Ze
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ZemaxMCP.Installer", "src\ZemaxMCP.Installer\ZemaxMCP.Installer.csproj", "{4EF3C2EB-BB2C-46B9-9825-DAE6377E1B7D}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ZemaxMCP.ClientProxy", "src\ZemaxMCP.ClientProxy\ZemaxMCP.ClientProxy.csproj", "{7A9DA03D-83D6-4B5B-8E92-AB2E61F66355}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -44,6 +46,10 @@ Global
 		{4EF3C2EB-BB2C-46B9-9825-DAE6377E1B7D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{4EF3C2EB-BB2C-46B9-9825-DAE6377E1B7D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{4EF3C2EB-BB2C-46B9-9825-DAE6377E1B7D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7A9DA03D-83D6-4B5B-8E92-AB2E61F66355}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7A9DA03D-83D6-4B5B-8E92-AB2E61F66355}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7A9DA03D-83D6-4B5B-8E92-AB2E61F66355}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7A9DA03D-83D6-4B5B-8E92-AB2E61F66355}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

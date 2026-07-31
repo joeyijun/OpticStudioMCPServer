@@ -20,5 +20,9 @@ jobs:
         shell: pwsh
         run: |
           dotnet build src/ZemaxMCP.HttpBridge/ZemaxMCP.HttpBridge.csproj -c Release
+          dotnet build src/ZemaxMCP.ClientProxy/ZemaxMCP.ClientProxy.csproj -c Release
           dotnet build src/ZemaxMCP.Launcher/ZemaxMCP.Launcher.csproj -c Release
           dotnet build src/ZemaxMCP.Installer/ZemaxMCP.Installer.csproj -c Release
+      - name: Verify discovery, configuration paths, and icons
+        shell: pwsh
+        run: ./scripts/verify-desktop-components.ps1 -Configuration Release

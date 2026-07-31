@@ -8,6 +8,9 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <UseWindowsForms>false</UseWindowsForms>
+    <ZOSAPI_PATH Condition="'$(ZOSAPI_PATH)' == ''">$(ZEMAX_ROOT)\ZOSAPI.dll</ZOSAPI_PATH>
+    <ZOSAPI_INTERFACES_PATH Condition="'$(ZOSAPI_INTERFACES_PATH)' == ''">$(ZEMAX_ROOT)\ZOSAPI_Interfaces.dll</ZOSAPI_INTERFACES_PATH>
+    <ZOSAPI_NETHELPER_PATH Condition="'$(ZOSAPI_NETHELPER_PATH)' == ''">$(ZEMAX_ROOT)\ZOSAPI_NetHelper.dll</ZOSAPI_NETHELPER_PATH>
     <!-- The server project requires ZEMAX_ROOT. Set it in the environment,
          pass /p:ZEMAX_ROOT=... on the command line, or create an untracked
          ZemaxPaths.props for a local licensed OpticStudio installation. -->
