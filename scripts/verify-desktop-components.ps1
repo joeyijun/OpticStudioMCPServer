@@ -27,6 +27,9 @@ if ($launcherXaml -match 'AiClientsList' -or
     $launcherXaml -notmatch '(?s)AiStateDot.*AI client setup.*AiState') {
   throw "AI connection state must be a compact indicator inside AI client setup, without the old full client list."
 }
+if ($launcherXaml -notmatch 'Choose folder…' -or $launcherXaml -match 'Connection details') {
+  throw "The launcher must provide a manual OpticStudio folder fallback and a compact status overview."
+}
 $publishScript = Get-Content -Raw (Join-Path $root "scripts\publish-windows.ps1")
 foreach ($forbiddenPattern in '"*.log"', '"*.pdb"', '"ZOSAPI*.dll"') {
   if ($publishScript -notmatch [regex]::Escape($forbiddenPattern)) {
@@ -62,6 +65,9 @@ try {
   $installation = $installationType.GetMethod("FindAll").Invoke($null, @()) | Where-Object Root -eq $programRoot
   if (-not $installation) { throw "Synthetic modern Ansys installation was not detected." }
   if (-not $installation.ApiFilesPresent) { throw "The complete synthetic ZOS-API set was not recognized." }
+  $manualInstallation = $installationType.GetMethod("FromFolder").Invoke($null, [object[]]@([string]$programRoot))
+  if (-not $manualInstallation -or $manualInstallation.DiscoverySource -ne "manually selected folder" -or -not $manualInstallation.ApiFilesPresent) { throw "A valid manually selected OpticStudio folder was not accepted." }
+  if ($installationType.GetMethod("FromFolder").Invoke($null, [object[]]@([string]$dataRoot))) { throw "An invalid manually selected folder was accepted." }
   if ($installation.NetHelperPath -ne (Join-Path $programRoot "ZOS-API\Libraries\ZOSAPI_NetHelper.dll")) { throw "The nested ZOS-API NetHelper location was not selected." }
   if ($installation.DataDirectory -ne $dataRoot -or $installation.DataDirectorySource -ne "ZEMAX_DATA_ROOT environment variable") { throw "The configured Zemax data root was not selected." }
   if ($installation.LicenseEvidence -notmatch "environment configured" -or $installation.LicenseEvidence -notmatch "configuration found") { throw "License configuration evidence was not reported." }

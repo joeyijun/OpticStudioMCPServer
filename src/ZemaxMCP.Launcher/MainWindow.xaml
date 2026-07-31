@@ -50,7 +50,7 @@
           <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="255"/></Grid.ColumnDefinitions>
           <StackPanel>
             <TextBlock Text="OpticStudio installation" Style="{StaticResource SectionLabel}"/>
-            <ComboBox x:Name="ZemaxVersions" DisplayMemberPath="DisplayName" SelectionChanged="ZemaxVersions_SelectionChanged"/>
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><ComboBox x:Name="ZemaxVersions" DisplayMemberPath="DisplayName" SelectionChanged="ZemaxVersions_SelectionChanged"/><Button Grid.Column="1" Content="Choose folder…" Style="{StaticResource ActionButton}" Margin="10,0,0,0" ToolTip="Use only when automatic OpticStudio detection misses a custom installation folder" Click="ChooseZemaxFolder_Click"/></Grid>
             <CheckBox x:Name="StartOnLogin" Content="Start Zemax MCP when I sign in" Margin="0,10,0,0" Checked="StartOnLogin_Changed" Unchecked="StartOnLogin_Changed"/>
           </StackPanel>
           <StackPanel Grid.Column="1" Margin="20,0,0,0">
@@ -80,8 +80,8 @@
         <StackPanel Grid.Column="2" VerticalAlignment="Bottom" Orientation="Horizontal"><Button Content="Logs" Style="{StaticResource ActionButton}" Click="OpenLogs_Click"/><Button Content="Updates" Style="{StaticResource ActionButton}" Margin="0" Click="Update_Click"/></StackPanel>
       </Grid>
 
-      <Border Grid.Row="5" Style="{StaticResource Card}" Margin="0,14,0,0" MinHeight="140">
-        <StackPanel><Grid Margin="0,0,0,8"><TextBlock Text="Connection details" FontWeight="SemiBold" Foreground="#27364A" VerticalAlignment="Center"/><Button Content="Copy diagnostics" Style="{StaticResource ActionButton}" HorizontalAlignment="Right" Margin="0" Padding="10,4" MinWidth="0" Click="CopyDiagnostics_Click"/></Grid><TextBlock x:Name="ConnectionSummary" Text="Checking status automatically…" TextWrapping="Wrap" Foreground="#475569"/><TextBox x:Name="Status" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MinHeight="62" Margin="0,10,0,0"/></StackPanel>
+      <Border Grid.Row="5" Style="{StaticResource Card}" Margin="0,14,0,0" MinHeight="125">
+        <StackPanel><Grid Margin="0,0,0,8"><TextBlock Text="Status overview" FontWeight="SemiBold" Foreground="#27364A" VerticalAlignment="Center"/><Button Content="Copy full diagnostics" Style="{StaticResource ActionButton}" HorizontalAlignment="Right" Margin="0" Padding="10,4" MinWidth="0" Click="CopyDiagnostics_Click"/></Grid><TextBlock x:Name="ConnectionSummary" Text="Checking status automatically…" TextWrapping="Wrap" Foreground="#475569"/><TextBox x:Name="Status" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MinHeight="48" Margin="0,10,0,0"/></StackPanel>
       </Border>
       <TextBlock Grid.Row="6" Text="Green: ready or recently active · Amber: waiting or needs attention · Red: unavailable. Closing hides this window; Exit service stops it." Foreground="#64748B" TextWrapping="Wrap" Margin="0,14,0,0"/>
     </Grid>

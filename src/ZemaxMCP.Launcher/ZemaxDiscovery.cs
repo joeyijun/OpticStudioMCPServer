@@ -27,6 +27,7 @@ public sealed class ZemaxInstallation
     public bool ApiFilesPresent => File.Exists(ZosApiPath) && File.Exists(ZosApiInterfacesPath) && File.Exists(NetHelperPath);
 
     public static List<ZemaxInstallation> FindAll() => ZemaxDiscovery.FindAll();
+    public static ZemaxInstallation? FromFolder(string folder) => ZemaxDiscovery.FromFolder(folder);
 }
 
 internal static class ZemaxDiscovery
@@ -54,6 +55,12 @@ internal static class ZemaxDiscovery
             .OrderByDescending(x => ExtractVersion(x.DisplayName))
             .ThenBy(x => x.Root, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    public static ZemaxInstallation? FromFolder(string folder)
+    {
+        var dataDirectory = FindDataDirectory(out var dataDirectorySource);
+        return CreateInstallation(folder, "manually selected folder", dataDirectory, dataDirectorySource);
     }
 
     private static ZemaxInstallation? CreateInstallation(string rawRoot, string source, string dataDirectory, string dataDirectorySource)

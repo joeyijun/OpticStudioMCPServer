@@ -24,6 +24,8 @@ public partial class MainWindow : Window
     private bool _exitRequested;
     private bool _clientSetupPrompted;
     private bool _refreshingStatus;
+    private bool _windowLoaded;
+    private string _fullDiagnostics = "Status has not been checked yet.";
     private readonly Forms.NotifyIcon _trayIcon;
     private readonly DispatcherTimer _statusTimer;
     public MainWindow()
@@ -56,8 +58,13 @@ public partial class MainWindow : Window
     {
         LoadSettings();
         var installs = ZemaxInstallation.FindAll();
-        ZemaxVersions.ItemsSource = installs;
         var savedRoot = ReadSetting("zemaxRoot");
+        if (!string.IsNullOrWhiteSpace(savedRoot) && installs.All(x => !x.Root.Equals(savedRoot, StringComparison.OrdinalIgnoreCase)))
+        {
+            var savedManual = ZemaxInstallation.FromFolder(savedRoot!);
+            if (savedManual != null) installs.Add(savedManual);
+        }
+        ZemaxVersions.ItemsSource = installs;
         ZemaxVersions.SelectedItem = installs.FirstOrDefault(x => x.Root.Equals(savedRoot, StringComparison.OrdinalIgnoreCase));
         if (ZemaxVersions.SelectedItem == null) ZemaxVersions.SelectedIndex = installs.Count > 0 ? 0 : -1;
         var hasRemoteEndpoint = IsRemoteEndpointConfigured;
@@ -67,13 +74,49 @@ public partial class MainWindow : Window
             ? "No local OpticStudio installation detected. To use this computer as an AI client, paste the MCP address from the OpticStudio computer, then click Test MCP connection and Configure installed AI clients."
             : "Starting local MCP endpoint automatically…");
         RefreshEndpoint();
+        _windowLoaded = true;
         if (installs.Count > 0 && !hasRemoteEndpoint) StartBridge();
         SetIndicatorsChecking();
         _statusTimer.Start();
         RefreshClientDashboard(null);
         OfferFirstRunClientSetup();
     }
-    private void ZemaxVersions_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) { RefreshEndpoint(); SaveSettings(); }
+    private void ZemaxVersions_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (!_windowLoaded) return;
+        RefreshEndpoint();
+        SaveSettings();
+        if (IsRemoteEndpointConfigured) return;
+        StopBridge();
+        if (Installation != null) StartBridge();
+    }
+    private void ChooseZemaxFolder_Click(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new Forms.FolderBrowserDialog
+        {
+            Description = "Select the OpticStudio installation folder containing ZOSAPI.dll",
+            SelectedPath = Installation?.Root ?? Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            ShowNewFolderButton = false
+        };
+        if (dialog.ShowDialog() != Forms.DialogResult.OK) return;
+        var manual = ZemaxInstallation.FromFolder(dialog.SelectedPath);
+        if (manual == null)
+        {
+            Report("That folder is not a usable OpticStudio installation. It must contain ZOSAPI.dll, ZOSAPI_Interfaces.dll, and ZOSAPI_NetHelper.dll (the NetHelper may also be under ZOS-API\\Libraries). No setting was changed.");
+            return;
+        }
+        var installs = (ZemaxVersions.ItemsSource as IEnumerable<ZemaxInstallation> ?? Array.Empty<ZemaxInstallation>()).ToList();
+        var selected = installs.FirstOrDefault(x => x.Root.Equals(manual.Root, StringComparison.OrdinalIgnoreCase));
+        if (selected == null)
+        {
+            installs.Add(manual);
+            installs = installs.OrderByDescending(x => x.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
+            selected = manual;
+            ZemaxVersions.ItemsSource = installs;
+        }
+        ZemaxVersions.SelectedItem = selected;
+        Report("Using manually selected OpticStudio folder: " + selected.Root);
+    }
     private void Port_LostFocus(object sender, RoutedEventArgs e) { RefreshEndpoint(); SaveSettings(); }
     private async void RemoteEndpoint_LostFocus(object sender, RoutedEventArgs e)
     {
@@ -197,7 +240,8 @@ public partial class MainWindow : Window
             var loadedApi = health["loadedZosApiFiles"] as JObject;
             var reportedData = health["zemaxDataDirectory"]?.ToString();
             var activeClients = RefreshClientDashboard(health);
-            ConnectionSummary.Text = "MCP endpoint: reachable\n" +
+            var pathDetails = FormatZemaxPaths(Installation, reportedRoot, reportedApi, loadedApi, reportedData);
+            _fullDiagnostics = "MCP endpoint: reachable\n" +
                 "Bridge: " + (bridgeRunning ? "running" : "not running") +
                 "; MCP server: " + (serverRunning ? "running" : "not running") +
                 "; uptime: " + uptime + "; restarts: " + restartCount + "\n" +
@@ -205,10 +249,17 @@ public partial class MainWindow : Window
                 "; loaded: " + (apiLoaded ? "yes" : "not yet") +
                 "; OpticStudio connected: " + (apiConnected ? "yes" : "not yet") +
                 "; license: " + licenseStatus + "\n" +
-                FormatZemaxPaths(Installation, reportedRoot, reportedApi, loadedApi, reportedData) + "\n" +
+                pathDetails + "\n" +
                 "AI clients active recently: " + activeClients + "; requests in progress: " + activeRequests +
                 (string.IsNullOrWhiteSpace(lastServerError) ? "" : "\nLast MCP server error: " + lastServerError) +
                 (localBridge ? "\nLocal launcher bridge process: running" : "");
+            var ready = bridgeRunning && serverRunning && apiConnected;
+            ConnectionSummary.Text = (ready ? "Ready" : "Needs attention") + " — MCP " +
+                (bridgeRunning && serverRunning ? "online" : "not ready") + ", OpticStudio " +
+                (apiConnected ? "connected" : apiLoaded ? "waiting" : "not connected") + ", license " + licenseStatus + "\n" +
+                endpoint + " · AI active: " + activeClients + " · requests: " + activeRequests +
+                (restartCount > 0 ? " · restarts: " + restartCount : "") +
+                (string.IsNullOrWhiteSpace(lastServerError) ? "" : "\nLast error: " + lastServerError);
             if (bridgeRunning && serverRunning) SetIndicator(McpStateDot, McpState, "Online — MCP server is accepting connections", System.Windows.Media.Brushes.SeaGreen);
             else SetIndicator(McpStateDot, McpState, "Endpoint reachable, but a service is not running", System.Windows.Media.Brushes.DarkOrange);
             if (apiConnected) SetIndicator(ZosStateDot, ZosState, "Connected to OpticStudio", System.Windows.Media.Brushes.SeaGreen);
@@ -221,7 +272,8 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            ConnectionSummary.Text = "MCP endpoint: not reachable\n" +
+            ConnectionSummary.Text = "Offline — MCP endpoint is not reachable\n" + endpoint;
+            _fullDiagnostics = "MCP endpoint: not reachable\n" +
                 "ZOS-API files: " + (apiFiles ? "found" : root == null ? "remote endpoint" : "missing") +
                 (localBridge ? "\nLocal launcher bridge process is running, but the HTTP health check failed: " + ex.Message : "\n" + ex.Message);
             SetIndicator(McpStateDot, McpState, "Offline — endpoint cannot be reached", System.Windows.Media.Brushes.IndianRed);
@@ -282,7 +334,6 @@ public partial class MainWindow : Window
         }
         return result;
     }
-    private static string FormatActivity(ClientActivityView activity) => activity.LastMethod + " · " + activity.LastRequest.ToLocalTime().ToString("MM-dd HH:mm:ss");
     private static string FormatUptime(long? totalSeconds)
     {
         if (totalSeconds == null) return "unknown";
@@ -380,7 +431,7 @@ public partial class MainWindow : Window
     private void CopyDiagnostics_Click(object sender, RoutedEventArgs e)
     {
         var diagnostics = "Zemax MCP diagnostics — " + DateTimeOffset.Now.ToString("O") + "\r\n\r\n" +
-                          ConnectionSummary.Text + "\r\n\r\nLauncher messages:\r\n" + Status.Text;
+                          _fullDiagnostics + "\r\n\r\nLauncher messages:\r\n" + Status.Text;
         System.Windows.Clipboard.SetText(diagnostics);
         Report("Connection diagnostics copied to the clipboard.");
     }
@@ -580,15 +631,6 @@ public partial class MainWindow : Window
         _trayIcon.Dispose();
         base.OnClosed(e);
     }
-}
-
-internal sealed class AiClientStatusView
-{
-    public AiClientStatusView(string name, string state, string configPath, System.Windows.Media.Brush statusBrush) { Name = name; State = state; ConfigPath = configPath; StatusBrush = statusBrush; }
-    public string Name { get; }
-    public string State { get; }
-    public string ConfigPath { get; }
-    public System.Windows.Media.Brush StatusBrush { get; }
 }
 
 internal sealed class ClientActivityView
