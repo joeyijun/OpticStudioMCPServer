@@ -2,6 +2,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>ZemaxMCP.Server</RootNamespace>
+    <StartupObject>ZemaxMCP.Server.BootstrapProgram</StartupObject>
   </PropertyGroup>
 
   <ItemGroup>

@@ -249,48 +249,18 @@ public partial class MainWindow : Window
     private int RefreshClientDashboard(JObject? health)
     {
         var activities = ReadClientActivities(health);
-        var rows = new List<AiClientStatusView>();
         var activeNames = new List<string>();
-        foreach (var client in Configurator.GetClientStatuses(McpUrl))
+        var clientStatuses = Configurator.GetClientStatuses(McpUrl);
+        foreach (var client in clientStatuses)
         {
             var activity = activities.FirstOrDefault(x => client.Aliases.Any(alias => x.Name.IndexOf(alias, StringComparison.OrdinalIgnoreCase) >= 0));
             var recent = activity != null && DateTime.Now - activity.LastRequest.ToLocalTime() < TimeSpan.FromMinutes(5);
-            string state;
-            System.Windows.Media.Brush brush;
-            if (recent)
-            {
-                state = "Active now · " + FormatActivity(activity!);
-                brush = System.Windows.Media.Brushes.SeaGreen;
-                activeNames.Add(client.Name);
-            }
-            else if (activity != null)
-            {
-                state = "Last seen · " + FormatActivity(activity);
-                brush = System.Windows.Media.Brushes.SteelBlue;
-            }
-            else if (client.Configured)
-            {
-                state = "Configured · waiting for first call";
-                brush = System.Windows.Media.Brushes.DarkOrange;
-            }
-            else if (client.Detected)
-            {
-                state = "Installed · not configured";
-                brush = System.Windows.Media.Brushes.DarkOrange;
-            }
-            else
-            {
-                state = "Not detected";
-                brush = System.Windows.Media.Brushes.SlateGray;
-            }
-            rows.Add(new AiClientStatusView(client.Name, state, client.ConfigPath, brush));
+            if (recent) activeNames.Add(client.Name);
         }
-        foreach (var activity in activities.Where(x => !Configurator.KnownAliases.Any(alias => x.Name.IndexOf(alias, StringComparison.OrdinalIgnoreCase) >= 0)))
-            rows.Add(new AiClientStatusView(activity.Name, "Other MCP client · " + FormatActivity(activity), "Client-defined configuration", System.Windows.Media.Brushes.SteelBlue));
-        AiClientsList.ItemsSource = rows;
         if (activeNames.Count > 0) SetIndicator(AiStateDot, AiState, activeNames.Count + " active: " + string.Join(", ", activeNames), System.Windows.Media.Brushes.SeaGreen);
         else if (activities.Count > 0) SetIndicator(AiStateDot, AiState, "No recent AI call; " + activities.Count + " client(s) seen earlier", System.Windows.Media.Brushes.SteelBlue);
-        else if (rows.Any(x => x.State.StartsWith("Configured", StringComparison.Ordinal))) SetIndicator(AiStateDot, AiState, "Configured clients are waiting for a real call", System.Windows.Media.Brushes.DarkOrange);
+        else if (clientStatuses.Any(x => x.Configured)) SetIndicator(AiStateDot, AiState, clientStatuses.Count(x => x.Configured) + " configured · waiting for a call", System.Windows.Media.Brushes.DarkOrange);
+        else if (clientStatuses.Any(x => x.Detected)) SetIndicator(AiStateDot, AiState, clientStatuses.Count(x => x.Detected) + " detected · setup needed", System.Windows.Media.Brushes.DarkOrange);
         else SetIndicator(AiStateDot, AiState, "No AI client call recorded", System.Windows.Media.Brushes.SlateGray);
         return activeNames.Count;
     }

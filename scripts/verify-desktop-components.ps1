@@ -12,6 +12,28 @@ foreach ($path in $launcherExe, $installerExe, $proxyExe, $bridgeExe) {
   if (-not (Test-Path -LiteralPath $path)) { throw "Build output is missing: $path" }
 }
 
+$serverProject = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\ZemaxMCP.Server.csproj")
+$serverBootstrap = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\BootstrapProgram.cs")
+if ($serverProject -notmatch '<StartupObject>ZemaxMCP\.Server\.BootstrapProgram</StartupObject>') {
+  throw "The ZOS-API-safe server bootstrap is not configured as the executable entry point."
+}
+if ($serverBootstrap -match '(?m)^\s*using\s+ZOSAPI' -or
+    $serverBootstrap -notmatch 'AssemblyResolve' -or
+    $serverBootstrap -notmatch 'ServerApplication') {
+  throw "The server bootstrap can bind ZOS-API too early or does not hand off to ServerApplication."
+}
+$launcherXaml = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Launcher\MainWindow.xaml")
+if ($launcherXaml -match 'AiClientsList' -or
+    $launcherXaml -notmatch '(?s)AiStateDot.*AI client setup.*AiState') {
+  throw "AI connection state must be a compact indicator inside AI client setup, without the old full client list."
+}
+$publishScript = Get-Content -Raw (Join-Path $root "scripts\publish-windows.ps1")
+foreach ($forbiddenPattern in '"*.log"', '"*.pdb"', '"ZOSAPI*.dll"') {
+  if ($publishScript -notmatch [regex]::Escape($forbiddenPattern)) {
+    throw "The release script does not exclude $forbiddenPattern."
+  }
+}
+
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("ZemaxMCP-desktop-test-" + [guid]::NewGuid().ToString("N"))
 $programRoot = Join-Path $testRoot "ANSYS Inc\v261\Zemax OpticStudio"
 $dataRoot = Join-Path $testRoot "redirected-data"

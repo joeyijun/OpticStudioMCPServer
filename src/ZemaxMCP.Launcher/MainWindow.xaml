@@ -30,8 +30,8 @@
     <Grid Margin="24">
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-        <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-        <RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/>
+        <RowDefinition Height="Auto"/>
       </Grid.RowDefinitions>
 
       <Grid>
@@ -68,34 +68,22 @@
       </Grid>
 
       <Grid Grid.Row="3" Margin="0,14,0,0">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
         <Border Style="{StaticResource Card}" Margin="0,0,8,0"><StackPanel><StackPanel Orientation="Horizontal"><Ellipse x:Name="McpStateDot" Width="11" Height="11" Fill="#94A3B8" Margin="0,2,7,0"/><TextBlock Text="MCP service" FontWeight="SemiBold"/></StackPanel><TextBlock x:Name="McpState" Text="Not checked" Foreground="#64748B" Margin="18,5,0,0" TextWrapping="Wrap"/></StackPanel></Border>
-        <Border Grid.Column="1" Style="{StaticResource Card}" Margin="4,0"><StackPanel><StackPanel Orientation="Horizontal"><Ellipse x:Name="ZosStateDot" Width="11" Height="11" Fill="#94A3B8" Margin="0,2,7,0"/><TextBlock Text="OpticStudio / ZOS-API" FontWeight="SemiBold"/></StackPanel><TextBlock x:Name="ZosState" Text="Not checked" Foreground="#64748B" Margin="18,5,0,0" TextWrapping="Wrap"/></StackPanel></Border>
-        <Border Grid.Column="2" Style="{StaticResource Card}" Margin="8,0,0,0"><StackPanel><StackPanel Orientation="Horizontal"><Ellipse x:Name="AiStateDot" Width="11" Height="11" Fill="#94A3B8" Margin="0,2,7,0"/><TextBlock Text="AI connections" FontWeight="SemiBold"/></StackPanel><TextBlock x:Name="AiState" Text="No AI call recorded" Foreground="#64748B" Margin="18,5,0,0" TextWrapping="Wrap"/></StackPanel></Border>
+        <Border Grid.Column="1" Style="{StaticResource Card}" Margin="8,0,0,0"><StackPanel><StackPanel Orientation="Horizontal"><Ellipse x:Name="ZosStateDot" Width="11" Height="11" Fill="#94A3B8" Margin="0,2,7,0"/><TextBlock Text="OpticStudio / ZOS-API" FontWeight="SemiBold"/></StackPanel><TextBlock x:Name="ZosState" Text="Not checked" Foreground="#64748B" Margin="18,5,0,0" TextWrapping="Wrap"/></StackPanel></Border>
       </Grid>
 
       <Grid Grid.Row="4" Margin="0,14,0,0">
         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
         <Border Style="{StaticResource Card}" Margin="0,0,8,0"><StackPanel><TextBlock Text="Server control" Style="{StaticResource SectionLabel}"/><WrapPanel><Button Content="Start service" Style="{StaticResource PrimaryButton}" Click="Start_Click"/><Button Content="Stop" Style="{StaticResource StopButton}" Click="Stop_Click"/><Button Content="Refresh" Style="{StaticResource ActionButton}" Click="RefreshStatus_Click"/><Button Content="Test" Style="{StaticResource ActionButton}" Click="TestMcp_Click"/></WrapPanel></StackPanel></Border>
-        <Border Grid.Column="1" Style="{StaticResource Card}" Margin="4,0"><StackPanel><TextBlock Text="AI client setup" Style="{StaticResource SectionLabel}"/><Button x:Name="AiConfigButton" Content="Configure AI clients ▾" Style="{StaticResource ActionButton}" HorizontalAlignment="Left" Click="AiConfigMenu_Click"><Button.ContextMenu><ContextMenu><MenuItem Header="Configure all detected clients" Click="ConfigureDetected_Click"/><Separator/><MenuItem Header="Configure Codex" Click="Codex_Click"/><MenuItem Header="Configure Claude Desktop" Click="Claude_Click"/><MenuItem Header="Configure Cursor" Click="Cursor_Click"/><MenuItem Header="Configure Kimi Code" Click="Kimi_Click"/><MenuItem Header="Configure WorkBuddy" Click="WorkBuddy_Click"/><MenuItem Header="Configure VS Code / Copilot" Click="VsCode_Click"/><Separator/><MenuItem Header="Copy generic HTTP MCP JSON" Click="CopyGenericConfig_Click"/></ContextMenu></Button.ContextMenu></Button></StackPanel></Border>
+        <Border Grid.Column="1" Style="{StaticResource Card}" Margin="4,0"><StackPanel><StackPanel Orientation="Horizontal" Margin="0,0,0,8"><Ellipse x:Name="AiStateDot" Width="11" Height="11" Fill="#94A3B8" Margin="0,2,7,0"/><TextBlock Text="AI client setup" FontWeight="SemiBold" Foreground="#27364A"/><TextBlock x:Name="AiState" Text="Not checked" Foreground="#64748B" Margin="10,0,0,0" TextWrapping="Wrap"/></StackPanel><Button x:Name="AiConfigButton" Content="Configure AI clients ▾" Style="{StaticResource ActionButton}" HorizontalAlignment="Left" Click="AiConfigMenu_Click"><Button.ContextMenu><ContextMenu><MenuItem Header="Configure all detected clients" Click="ConfigureDetected_Click"/><Separator/><MenuItem Header="Configure Codex" Click="Codex_Click"/><MenuItem Header="Configure Claude Desktop" Click="Claude_Click"/><MenuItem Header="Configure Cursor" Click="Cursor_Click"/><MenuItem Header="Configure Kimi Code" Click="Kimi_Click"/><MenuItem Header="Configure WorkBuddy" Click="WorkBuddy_Click"/><MenuItem Header="Configure VS Code / Copilot" Click="VsCode_Click"/><Separator/><MenuItem Header="Copy generic HTTP MCP JSON" Click="CopyGenericConfig_Click"/></ContextMenu></Button.ContextMenu></Button></StackPanel></Border>
         <StackPanel Grid.Column="2" VerticalAlignment="Bottom" Orientation="Horizontal"><Button Content="Logs" Style="{StaticResource ActionButton}" Click="OpenLogs_Click"/><Button Content="Updates" Style="{StaticResource ActionButton}" Margin="0" Click="Update_Click"/></StackPanel>
       </Grid>
 
-      <Border Grid.Row="5" Style="{StaticResource Card}" Margin="0,14,0,0">
-        <StackPanel>
-          <TextBlock Text="AI client connections" Style="{StaticResource SectionLabel}"/>
-          <TextBlock Text="Green means that client made a real MCP request recently. Configured only means its settings contain this endpoint." Foreground="#64748B" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8"/>
-          <ItemsControl x:Name="AiClientsList">
-            <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-            <ItemsControl.ItemTemplate><DataTemplate><Border BorderBrush="#DCE3EC" BorderThickness="1" CornerRadius="6" Padding="9,7" Margin="0,0,8,8" MinWidth="280" MaxWidth="410"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Ellipse Width="9" Height="9" Fill="{Binding StatusBrush}" Margin="0,3,8,0" VerticalAlignment="Top"/><StackPanel Grid.Column="1"><TextBlock Text="{Binding Name}" FontWeight="SemiBold" Foreground="#27364A"/><TextBlock Text="{Binding State}" Foreground="{Binding StatusBrush}" FontSize="12" TextWrapping="Wrap"/><TextBlock Text="{Binding ConfigPath}" Foreground="#64748B" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding ConfigPath}" Margin="0,3,0,0"/></StackPanel></Grid></Border></DataTemplate></ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </StackPanel>
-      </Border>
-
-      <Border Grid.Row="6" Style="{StaticResource Card}" Margin="0,14,0,0" MinHeight="140">
+      <Border Grid.Row="5" Style="{StaticResource Card}" Margin="0,14,0,0" MinHeight="140">
         <StackPanel><Grid Margin="0,0,0,8"><TextBlock Text="Connection details" FontWeight="SemiBold" Foreground="#27364A" VerticalAlignment="Center"/><Button Content="Copy diagnostics" Style="{StaticResource ActionButton}" HorizontalAlignment="Right" Margin="0" Padding="10,4" MinWidth="0" Click="CopyDiagnostics_Click"/></Grid><TextBlock x:Name="ConnectionSummary" Text="Checking status automatically…" TextWrapping="Wrap" Foreground="#475569"/><TextBox x:Name="Status" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MinHeight="62" Margin="0,10,0,0"/></StackPanel>
       </Border>
-      <TextBlock Grid.Row="7" Text="Green: ready or recently active · Amber: waiting or needs attention · Red: unavailable. Closing hides this window; Exit service stops it." Foreground="#64748B" TextWrapping="Wrap" Margin="0,14,0,0"/>
+      <TextBlock Grid.Row="6" Text="Green: ready or recently active · Amber: waiting or needs attention · Red: unavailable. Closing hides this window; Exit service stops it." Foreground="#64748B" TextWrapping="Wrap" Margin="0,14,0,0"/>
     </Grid>
   </ScrollViewer>
 </Window>
