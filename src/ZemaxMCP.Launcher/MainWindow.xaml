@@ -119,6 +119,48 @@
       <Setter Property="FontWeight" Value="SemiBold"/>
       <Setter Property="Foreground" Value="{StaticResource HeadingBrush}"/>
     </Style>
+
+    <Style x:Key="ClientMenuItem" TargetType="MenuItem">
+      <Setter Property="Height" Value="38"/>
+      <Setter Property="Padding" Value="10,6"/>
+      <Setter Property="Margin" Value="5,1"/>
+      <Setter Property="Foreground" Value="{StaticResource HeadingBrush}"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="MenuItem">
+            <Border x:Name="MenuItemChrome" Background="{TemplateBinding Background}" CornerRadius="6"
+                    Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <ContentControl Content="{TemplateBinding Icon}" Width="10" Height="10"
+                                HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                <ContentPresenter Grid.Column="1" ContentSource="Header" VerticalAlignment="Center"
+                                  RecognizesAccessKey="True"/>
+              </Grid>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsHighlighted" Value="True">
+                <Setter TargetName="MenuItemChrome" Property="Background" Value="#EDF5FC"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="MenuItemChrome" Property="Opacity" Value="0.45"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="ClientStatusText" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+      <Setter Property="FontSize" Value="11.5"/>
+      <Setter Property="Margin" Value="12,0,0,0"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="Text" Value="Not detected"/>
+    </Style>
   </Window.Resources>
 
   <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -248,17 +290,56 @@
             <Button Grid.Column="1" x:Name="AiConfigButton" Content="Configure clients ▾" Style="{StaticResource ActionButton}"
                     MinWidth="138" VerticalAlignment="Center" Click="AiConfigMenu_Click">
               <Button.ContextMenu>
-                <ContextMenu>
-                  <MenuItem Header="Configure all detected clients" Click="ConfigureDetected_Click"/>
-                  <Separator/>
-                  <MenuItem Header="Configure Codex" Click="Codex_Click"/>
-                  <MenuItem Header="Configure Claude Desktop" Click="Claude_Click"/>
-                  <MenuItem Header="Configure Cursor" Click="Cursor_Click"/>
-                  <MenuItem Header="Configure Kimi Code" Click="Kimi_Click"/>
-                  <MenuItem Header="Configure WorkBuddy" Click="WorkBuddy_Click"/>
-                  <MenuItem Header="Configure VS Code / Copilot" Click="VsCode_Click"/>
-                  <Separator/>
-                  <MenuItem Header="Copy generic HTTP MCP JSON" Click="CopyGenericConfig_Click"/>
+                <ContextMenu x:Name="AiClientsMenu" MinWidth="330" Padding="0,6"
+                             Background="#FFFFFF" BorderBrush="#CBD7E5" BorderThickness="1"
+                             FontFamily="Segoe UI" HasDropShadow="True">
+                  <ContextMenu.Template>
+                    <ControlTemplate TargetType="ContextMenu">
+                      <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                              BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="10"
+                              Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                      </Border>
+                    </ControlTemplate>
+                  </ContextMenu.Template>
+                  <MenuItem Style="{StaticResource ClientMenuItem}" Click="ConfigureDetected_Click">
+                    <MenuItem.Header>
+                      <Grid Width="280">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <TextBlock Text="Configure detected clients" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <Border Grid.Column="1" Background="#E7F1FB" CornerRadius="9" Padding="8,2">
+                          <TextBlock Text="Set up all" Foreground="#155A91" FontSize="11.5"/>
+                        </Border>
+                      </Grid>
+                    </MenuItem.Header>
+                  </MenuItem>
+                  <Separator Margin="8,5" Background="#E2E8F0"/>
+                  <MenuItem Style="{StaticResource ClientMenuItem}" Click="Codex_Click">
+                    <MenuItem.Icon><Ellipse x:Name="CodexConfigDot" Width="9" Height="9" Fill="#94A3B8"/></MenuItem.Icon>
+                    <MenuItem.Header><Grid Width="252"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Codex"/><TextBlock Grid.Column="1" x:Name="CodexConfigState" Style="{StaticResource ClientStatusText}"/></Grid></MenuItem.Header>
+                  </MenuItem>
+                  <MenuItem Style="{StaticResource ClientMenuItem}" Click="Claude_Click">
+                    <MenuItem.Icon><Ellipse x:Name="ClaudeConfigDot" Width="9" Height="9" Fill="#94A3B8"/></MenuItem.Icon>
+                    <MenuItem.Header><Grid Width="252"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Claude Desktop"/><TextBlock Grid.Column="1" x:Name="ClaudeConfigState" Style="{StaticResource ClientStatusText}"/></Grid></MenuItem.Header>
+                  </MenuItem>
+                  <MenuItem Style="{StaticResource ClientMenuItem}" Click="Cursor_Click">
+                    <MenuItem.Icon><Ellipse x:Name="CursorConfigDot" Width="9" Height="9" Fill="#94A3B8"/></MenuItem.Icon>
+                    <MenuItem.Header><Grid Width="252"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Cursor"/><TextBlock Grid.Column="1" x:Name="CursorConfigState" Style="{StaticResource ClientStatusText}"/></Grid></MenuItem.Header>
+                  </MenuItem>
+                  <MenuItem Style="{StaticResource ClientMenuItem}" Click="Kimi_Click">
+                    <MenuItem.Icon><Ellipse x:Name="KimiConfigDot" Width="9" Height="9" Fill="#94A3B8"/></MenuItem.Icon>
+                    <MenuItem.Header><Grid Width="252"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Kimi Code"/><TextBlock Grid.Column="1" x:Name="KimiConfigState" Style="{StaticResource ClientStatusText}"/></Grid></MenuItem.Header>
+                  </MenuItem>
+                  <MenuItem Style="{StaticResource ClientMenuItem}" Click="WorkBuddy_Click">
+                    <MenuItem.Icon><Ellipse x:Name="WorkBuddyConfigDot" Width="9" Height="9" Fill="#94A3B8"/></MenuItem.Icon>
+                    <MenuItem.Header><Grid Width="252"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="WorkBuddy"/><TextBlock Grid.Column="1" x:Name="WorkBuddyConfigState" Style="{StaticResource ClientStatusText}"/></Grid></MenuItem.Header>
+                  </MenuItem>
+                  <MenuItem Style="{StaticResource ClientMenuItem}" Click="VsCode_Click">
+                    <MenuItem.Icon><Ellipse x:Name="VsCodeConfigDot" Width="9" Height="9" Fill="#94A3B8"/></MenuItem.Icon>
+                    <MenuItem.Header><Grid Width="252"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="VS Code / Copilot"/><TextBlock Grid.Column="1" x:Name="VsCodeConfigState" Style="{StaticResource ClientStatusText}"/></Grid></MenuItem.Header>
+                  </MenuItem>
+                  <Separator Margin="8,5" Background="#E2E8F0"/>
+                  <MenuItem Style="{StaticResource ClientMenuItem}" Header="Copy generic HTTP MCP JSON" Click="CopyGenericConfig_Click"/>
                 </ContextMenu>
               </Button.ContextMenu>
             </Button>

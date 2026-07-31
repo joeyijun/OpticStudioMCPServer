@@ -303,6 +303,7 @@ public partial class MainWindow : Window
         var activities = ReadClientActivities(health);
         var activeNames = new List<string>();
         var clientStatuses = Configurator.GetClientStatuses(McpUrl);
+        RefreshClientMenuIndicators(clientStatuses);
         foreach (var client in clientStatuses)
         {
             var activity = activities.FirstOrDefault(x => client.Aliases.Any(alias => x.Name.IndexOf(alias, StringComparison.OrdinalIgnoreCase) >= 0));
@@ -315,6 +316,28 @@ public partial class MainWindow : Window
         else if (clientStatuses.Any(x => x.Detected)) SetIndicator(AiStateDot, AiState, clientStatuses.Count(x => x.Detected) + " detected · setup needed", System.Windows.Media.Brushes.DarkOrange);
         else SetIndicator(AiStateDot, AiState, "No AI client call recorded", System.Windows.Media.Brushes.SlateGray);
         return activeNames.Count;
+    }
+    private void RefreshClientMenuIndicators(IReadOnlyCollection<ClientConfigurationStatus>? statuses = null)
+    {
+        statuses ??= Configurator.GetClientStatuses(McpUrl);
+        SetClientMenuIndicator(statuses, "Codex", CodexConfigDot, CodexConfigState);
+        SetClientMenuIndicator(statuses, "Claude Desktop", ClaudeConfigDot, ClaudeConfigState);
+        SetClientMenuIndicator(statuses, "Cursor", CursorConfigDot, CursorConfigState);
+        SetClientMenuIndicator(statuses, "Kimi Code", KimiConfigDot, KimiConfigState);
+        SetClientMenuIndicator(statuses, "WorkBuddy", WorkBuddyConfigDot, WorkBuddyConfigState);
+        SetClientMenuIndicator(statuses, "VS Code / Copilot", VsCodeConfigDot, VsCodeConfigState);
+    }
+    private static void SetClientMenuIndicator(IEnumerable<ClientConfigurationStatus> statuses, string name,
+        System.Windows.Shapes.Ellipse dot, System.Windows.Controls.TextBlock label)
+    {
+        var status = statuses.First(x => x.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        var brush = status.Configured ? System.Windows.Media.Brushes.SeaGreen
+            : status.Detected ? System.Windows.Media.Brushes.DarkOrange
+            : System.Windows.Media.Brushes.SlateGray;
+        dot.Fill = brush;
+        label.Foreground = brush;
+        label.Text = status.Configured ? "Configured" : status.Detected ? "Setup needed" : "Not detected";
+        dot.ToolTip = name + ": " + label.Text.ToLowerInvariant();
     }
     private static List<ClientActivityView> ReadClientActivities(JObject? health)
     {
@@ -475,6 +498,7 @@ public partial class MainWindow : Window
     }
     private void AiConfigMenu_Click(object sender, RoutedEventArgs e)
     {
+        RefreshClientMenuIndicators();
         AiConfigButton.ContextMenu.PlacementTarget = AiConfigButton;
         AiConfigButton.ContextMenu.IsOpen = true;
     }
@@ -493,6 +517,7 @@ public partial class MainWindow : Window
                 Report("Could not configure " + client.Name + ": " + ex.Message);
             }
         }
+        RefreshClientDashboard(null);
         return configured;
     }
     private void OfferFirstRunClientSetup()
@@ -520,7 +545,7 @@ public partial class MainWindow : Window
     }
     private void ConfigureClient(string name, Action configure)
     {
-        try { configure(); Report(name + " configured for " + McpUrl + ". Restart the client to connect."); }
+        try { configure(); RefreshClientDashboard(null); Report(name + " configured for " + McpUrl + ". Restart the client to connect."); }
         catch (Exception ex) { Report("Could not configure " + name + ": " + ex.Message); }
     }
     private void Codex_Click(object sender, RoutedEventArgs e) => ConfigureClient("Codex", () => Configurator.ConfigureCodex(McpUrl));
@@ -538,6 +563,7 @@ public partial class MainWindow : Window
         try
         {
             Configurator.ConfigureVsCode(McpUrl);
+            RefreshClientDashboard(null);
             Report("VS Code opened its MCP setup. Review and approve Zemax MCP there to finish configuration.");
         }
         catch (Exception ex) { Report("Could not open VS Code MCP setup: " + ex.Message); }
