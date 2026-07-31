@@ -39,3 +39,7 @@ finally {
   if (Test-Path -LiteralPath $testRoot) { Remove-Item -LiteralPath $testRoot -Recurse -Force }
 }
 Write-Host "Updater apply and rollback behavior verified."
+# The rollback scenario intentionally executes the updater once with exit code
+# 1. All assertions above have verified that failure and its recovery, so do
+# not leak the expected native exit code into the hosting PowerShell process.
+$global:LASTEXITCODE = 0
