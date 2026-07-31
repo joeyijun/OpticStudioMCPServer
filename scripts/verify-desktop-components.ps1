@@ -30,6 +30,15 @@ if ($launcherXaml -match 'AiClientsList' -or
 if ($launcherXaml -notmatch 'Choose folder…' -or $launcherXaml -match 'Connection details') {
   throw "The launcher must provide a manual OpticStudio folder fallback and a compact status overview."
 }
+if ($launcherXaml -match 'Green: ready' -or $launcherXaml -match 'Amber: waiting' -or $launcherXaml -match 'Red: unavailable') {
+  throw "The redundant status-color legend must not be shown at the bottom of the launcher."
+}
+foreach ($layoutMarker in 'Width="980" Height="800"', 'Property="Height" Value="36"', 'Property="CornerRadius" Value="12"', 'Stop service', 'Test MCP', 'Copy diagnostics') {
+  if ($launcherXaml -notmatch [regex]::Escape($layoutMarker)) { throw "The polished launcher layout is missing: $layoutMarker" }
+}
+if ($launcherXaml -notmatch '(?s)Status overview.*Logs.*Updates.*Copy diagnostics') {
+  throw "Status maintenance actions must remain grouped in the status overview card."
+}
 $publishScript = Get-Content -Raw (Join-Path $root "scripts\publish-windows.ps1")
 foreach ($forbiddenPattern in '"*.log"', '"*.pdb"', '"ZOSAPI*.dll"') {
   if ($publishScript -notmatch [regex]::Escape($forbiddenPattern)) {
