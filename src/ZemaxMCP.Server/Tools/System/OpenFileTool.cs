@@ -45,7 +45,11 @@ public class OpenFileTool
                 );
             }
 
-            await _session.OpenFileAsync(filePath);
+            var opened = await _session.OpenFileAsync(filePath);
+            if (!opened)
+            {
+                return new OpenFileResult(false, $"OpticStudio could not load the file: {filePath}", null, 0, null, 0);
+            }
 
             var result = await _session.ExecuteAsync("OpenFile",
                 new Dictionary<string, object?> { ["filePath"] = filePath },

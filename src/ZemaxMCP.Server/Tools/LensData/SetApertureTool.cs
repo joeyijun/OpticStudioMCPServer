@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
+using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
@@ -27,6 +28,19 @@ public class SetApertureTool
     {
         try
         {
+            if (double.IsNaN(value) || double.IsInfinity(value) || value <= 0)
+                throw new ArgumentOutOfRangeException(nameof(value), "Aperture value must be finite and positive.");
+            if (string.IsNullOrWhiteSpace(apertureType))
+                throw new ArgumentException("Aperture type is required.", nameof(apertureType));
+            var apType = apertureType.Trim().ToUpperInvariant() switch
+            {
+                "EPD" or "ENTRANCEPUPILDIAMETER" => ZOSAPI.SystemData.ZemaxApertureType.EntrancePupilDiameter,
+                "FNUMBER" or "IMAGESPACEFNUM" => ZOSAPI.SystemData.ZemaxApertureType.ImageSpaceFNum,
+                "OBJECTNA" or "OBJECTSPACENA" => ZOSAPI.SystemData.ZemaxApertureType.ObjectSpaceNA,
+                "FLOATBYSTOP" or "FLOATBYSTOPSIZE" => ZOSAPI.SystemData.ZemaxApertureType.FloatByStopSize,
+                _ => throw new ArgumentException("Aperture type must be EPD, FNumber, ObjectNA, or FloatByStop.", nameof(apertureType))
+            };
+
             var parameters = new Dictionary<string, object?>
             {
                 ["value"] = value,
@@ -37,15 +51,6 @@ public class SetApertureTool
             {
                 var aperture = system.SystemData.Aperture;
 
-                var apType = apertureType.ToUpper() switch
-                {
-                    "EPD" => ZOSAPI.SystemData.ZemaxApertureType.EntrancePupilDiameter,
-                    "FNUMBER" => ZOSAPI.SystemData.ZemaxApertureType.ImageSpaceFNum,
-                    "OBJECTNA" => ZOSAPI.SystemData.ZemaxApertureType.ObjectSpaceNA,
-                    "FLOATBYSTOP" => ZOSAPI.SystemData.ZemaxApertureType.FloatByStopSize,
-                    _ => ZOSAPI.SystemData.ZemaxApertureType.EntrancePupilDiameter
-                };
-
                 aperture.ApertureType = apType;
                 aperture.ApertureValue = value;
 
@@ -53,7 +58,7 @@ public class SetApertureTool
                     Success: true,
                     Error: null,
                     ApertureType: aperture.ApertureType.ToString(),
-                    ApertureValue: aperture.ApertureValue
+                    ApertureValue: aperture.ApertureValue.Sanitize()
                 );
             });
 

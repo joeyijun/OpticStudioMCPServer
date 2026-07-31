@@ -73,6 +73,8 @@ Each card displays the exact configuration path inspected by the launcher. “Co
 
 The server exposes a broad tool set. AI clients discover the exact, version-matched schemas through MCP `tools/list`, so this README does not become a stale duplicate of the running server.
 
+`zemax_get_system` reports both the ZOS-API system path and whether that file currently exists on disk, together with unsaved-change state, system mode, and system name. This distinguishes a named but not-yet-saved OpticStudio session from a loadable lens file.
+
 Major groups include:
 
 - System and file operations
@@ -106,6 +108,23 @@ The current Windows release also adds the following practical inspection and sys
 | `zemax_get_apodization` / `zemax_set_apodization` | Inspect or set pupil apodization type and factor. |
 | `zemax_get_clear_semi_diameter_margin` / `zemax_set_clear_semi_diameter_margin` | Inspect or set Clear Semi-Diameter Margin in millimetres and percent. Availability depends on the installed ZOS-API version. |
 | `zemax_get_mtf_units` / `zemax_set_mtf_units` | Inspect or set MTF units in cycles per millimetre or milliradian. |
+| `zemax_get_system_metadata` / `zemax_set_system_metadata` | Read or update the system title, author, and notes without saving automatically. |
+| `zemax_get_environment` / `zemax_set_environment` | Inspect or set temperature, pressure, and refractive-index environment adjustment. |
+| `zemax_get_polarization` / `zemax_set_polarization` | Inspect or set polarization amplitudes, phases, method, and thin-film phase handling. |
+| `zemax_get_units` | Inspect lens, analysis, source, MTF, and afocal unit settings. |
+| `zemax_get_system_files` | Inspect selected coating, scatter, ABg, and GRIN files, with optional available-file lists. |
+| `zemax_get_aperture_settings` | Inspect complete aperture, apodization, afocal/telecentric, and semi-diameter settings. |
+| `zemax_get_advanced_system_settings` | Inspect OPD, paraxial-ray, F-number, Huygens, threading, and session-file settings. |
+| `zemax_get_ray_aiming_settings` | Inspect pupil shifts, compression, cache, convergence, and enhanced/robust ray aiming. |
+| `zemax_get_material_catalog_settings` | Inspect catalogs used by the system, with an optional list of all available catalogs. |
+| `zemax_get_nonsequential_system_settings` | Inspect NSC ray limits, intensity thresholds, splitting, and source-file settings. |
+| `zemax_get_stop_surface` / `zemax_set_stop_surface` | Inspect or change the sequential aperture-stop surface. |
+| `zemax_get_first_order_data` | Calculate EFL, working F-numbers, paraxial image height, and magnification. |
+| `zemax_get_vignetting` / `zemax_set_vignetting` / `zemax_clear_vignetting` | Inspect, calculate, or clear per-field vignetting factors. |
+| `zemax_get_field_settings` | Inspect field type, normalization, comments, solves, activity, and vignetting factors. |
+| `zemax_get_wavelength_settings` | Inspect wavelength values, weights, activity, and the actual primary wavelength. |
+| `zemax_quick_focus` | Run Quick Focus with a selectable criterion and bounded timeout. |
+| `zemax_scale_lens` | Scale a complete sequential lens by a positive factor or convert its physical units. |
 
 The server also provides MCP resources for the current system, merit function, and operand documentation, plus prompt templates for design, optimisation, analysis, and design troubleshooting.
 

@@ -45,3 +45,11 @@ Release maintainers create the ZIP on a Windows computer that has OpticStudio in
 ```
 
 The script writes `artifacts/ZemaxMCP-win-x64.zip`.
+
+After deploying the package, maintainers can verify bridge health, the complete tool catalog, and a read-only smoke-test set from another trusted LAN computer:
+
+```powershell
+./scripts/verify-live-mcp.ps1 -Endpoint "http://192.168.8.1:8000/mcp"
+```
+
+The verifier never invokes tools that change or save the current optical system.

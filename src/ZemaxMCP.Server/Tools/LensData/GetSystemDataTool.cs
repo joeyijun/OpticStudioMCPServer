@@ -35,14 +35,18 @@ public class GetSystemDataTool
             var lensSystem = new LensSystem
             {
                 FilePath = system.SystemFile,
-                Title = Path.GetFileNameWithoutExtension(system.SystemFile),
-                Notes = "",
+                FileExists = !string.IsNullOrWhiteSpace(system.SystemFile) && File.Exists(system.SystemFile),
+                NeedsSave = system.NeedsSave,
+                SystemMode = system.Mode.ToString(),
+                SystemName = system.SystemName ?? "",
+                Title = sysProp.TitleNotes.Title ?? Path.GetFileNameWithoutExtension(system.SystemFile),
+                Notes = sysProp.TitleNotes.Notes ?? "",
                 NumberOfSurfaces = lde.NumberOfSurfaces,
-                Units = sysProp.Units.ToString(),
+                Units = sysProp.Units.LensUnits.ToString(),
                 Aperture = new ApertureData
                 {
                     Type = (ApertureType)(int)sysProp.Aperture.ApertureType,
-                    Value = sysProp.Aperture.ApertureValue
+                    Value = sysProp.Aperture.ApertureValue.Sanitize()
                 },
                 NumberOfConfigurations = system.MCE.NumberOfConfigurations,
                 CurrentConfiguration = system.MCE.CurrentConfiguration
@@ -123,13 +127,13 @@ public class GetSystemDataTool
             result.Add(new Field
             {
                 Number = i,
-                X = field.X,
-                Y = field.Y,
-                Weight = field.Weight,
-                VDX = field.VDX,
-                VDY = field.VDY,
-                VCX = field.VCX,
-                VCY = field.VCY
+                X = field.X.Sanitize(),
+                Y = field.Y.Sanitize(),
+                Weight = field.Weight.Sanitize(),
+                VDX = field.VDX.Sanitize(),
+                VDY = field.VDY.Sanitize(),
+                VCX = field.VCX.Sanitize(),
+                VCY = field.VCY.Sanitize()
             });
         }
 
@@ -146,9 +150,9 @@ public class GetSystemDataTool
             result.Add(new Wavelength
             {
                 Number = i,
-                Value = wl.Wavelength,
-                Weight = wl.Weight,
-                IsPrimary = false // Can't determine primary without additional API
+                Value = wl.Wavelength.Sanitize(),
+                Weight = wl.Weight.Sanitize(),
+                IsPrimary = wl.IsPrimary
             });
         }
 

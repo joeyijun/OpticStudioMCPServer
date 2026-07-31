@@ -170,6 +170,9 @@ internal static class ServerApplication
             .WithTools<ZemaxMCP.Server.Tools.LensData.SurfaceApertureTool>()
             .WithTools<ZemaxMCP.Server.Tools.LensData.OffAxisConicFreeformTool>()
             .WithTools<ZemaxMCP.Server.Tools.LensData.GetGlobalMatrixTool>()
+            .WithTools<ZemaxMCP.Server.Tools.LensData.StopAndFirstOrderTool>()
+            .WithTools<ZemaxMCP.Server.Tools.LensData.VignettingTool>()
+            .WithTools<ZemaxMCP.Server.Tools.LensData.FieldWavelengthStatusTool>()
             // Non-sequential and tolerancing tools
             .WithTools<ZemaxMCP.Server.Tools.NonSequential.GetNscObjectsTool>()
             .WithTools<ZemaxMCP.Server.Tools.NonSequential.GetNscDetectorTool>()
@@ -188,6 +191,8 @@ internal static class ServerApplication
             .WithTools<ZemaxMCP.Server.Tools.System.SaveFileTool>()
             .WithTools<ZemaxMCP.Server.Tools.System.NewSystemTool>()
             .WithTools<ZemaxMCP.Server.Tools.System.ConnectTool>()
+            .WithTools<ZemaxMCP.Server.Tools.System.QuickFocusTool>()
+            .WithTools<ZemaxMCP.Server.Tools.System.ScaleLensTool>()
             // System Settings Tools
             .WithTools<ZemaxMCP.Server.Tools.SystemSettings.GetRayAimingTool>()
             .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SetRayAimingTool>()
@@ -199,6 +204,13 @@ internal static class ServerApplication
             .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SetClearSemiDiameterMarginTool>()
             .WithTools<ZemaxMCP.Server.Tools.SystemSettings.GetMtfUnitsTool>()
             .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SetMtfUnitsTool>()
+            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SystemMetadataTool>()
+            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.EnvironmentTool>()
+            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.PolarizationTool>()
+            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.UnitsTool>()
+            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SystemFilesTool>()
+            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.ApertureSettingsTool>()
+            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SystemExplorerStatusTool>()
             // Glass Catalog Tools
             .WithTools<ZemaxMCP.Server.Tools.GlassCatalog.GetGlassCatalogsTool>()
             .WithTools<ZemaxMCP.Server.Tools.GlassCatalog.GetGlassesTool>()

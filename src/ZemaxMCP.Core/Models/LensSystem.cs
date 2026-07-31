@@ -3,6 +3,10 @@ namespace ZemaxMCP.Core.Models;
 public record LensSystem
 {
     public string? FilePath { get; init; }
+    public bool FileExists { get; init; }
+    public bool NeedsSave { get; init; }
+    public string SystemMode { get; init; } = "";
+    public string SystemName { get; init; } = "";
     public string Title { get; init; } = "";
     public string Notes { get; init; } = "";
     public int NumberOfSurfaces { get; init; }
