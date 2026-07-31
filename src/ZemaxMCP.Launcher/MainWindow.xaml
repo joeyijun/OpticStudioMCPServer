@@ -32,6 +32,17 @@
       <Setter Property="FontSize" Value="13"/>
     </Style>
 
+    <Style x:Key="PasswordInputBox" TargetType="PasswordBox">
+      <Setter Property="Height" Value="36"/>
+      <Setter Property="Padding" Value="10,5"/>
+      <Setter Property="Background" Value="#FBFCFE"/>
+      <Setter Property="Foreground" Value="{StaticResource HeadingBrush}"/>
+      <Setter Property="BorderBrush" Value="#C9D4E2"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="VerticalContentAlignment" Value="Center"/>
+      <Setter Property="FontSize" Value="13"/>
+    </Style>
+
     <Style TargetType="ComboBox">
       <Setter Property="Height" Value="36"/>
       <Setter Property="Padding" Value="8,4"/>
@@ -192,7 +203,7 @@
 
       <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,18,0,0">
         <Grid>
-          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="290"/></Grid.ColumnDefinitions>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="330"/></Grid.ColumnDefinitions>
           <StackPanel>
             <TextBlock Text="OpticStudio installation" Style="{StaticResource SectionLabel}"/>
             <Grid>
@@ -208,11 +219,15 @@
             <TextBlock Text="Network access" Style="{StaticResource SectionLabel}"/>
             <CheckBox x:Name="ShareOnLan" Content="Share with a trusted LAN computer"
                       Checked="ShareOnLan_Changed" Unchecked="ShareOnLan_Changed"/>
+            <CheckBox x:Name="ReadOnlyMode" Content="Read-only mode (block lens changes)" Margin="0,8,0,0"
+                      Checked="ReadOnlyMode_Changed" Unchecked="ReadOnlyMode_Changed"/>
             <Grid Margin="0,9,0,0">
-              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="88"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="70"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
               <TextBlock Text="Port" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}"/>
               <TextBox Grid.Column="1" x:Name="Port" Text="8000" Style="{StaticResource InputBox}" Margin="10,0,0,0"
                        LostFocus="Port_LostFocus"/>
+              <Button Grid.Column="2" Content="Copy secure setup" Style="{StaticResource SmallButton}" Margin="9,2,0,2" Click="CopySecureSetup_Click"/>
+              <Button Grid.Column="3" Content="New token" Style="{StaticResource SmallButton}" Margin="7,2,0,2" Click="RegenerateToken_Click"/>
             </Grid>
           </StackPanel>
         </Grid>
@@ -236,6 +251,12 @@
             <TextBlock Text="AI computer (optional remote address)" Style="{StaticResource SectionLabel}"/>
             <TextBox x:Name="RemoteEndpoint" Style="{StaticResource InputBox}"
                      ToolTip="Paste the MCP address copied from the OpticStudio computer" LostFocus="RemoteEndpoint_LostFocus"/>
+            <Grid Margin="0,8,0,0">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <TextBlock Text="Token" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,0,9,0"/>
+              <PasswordBox Grid.Column="1" x:Name="RemoteAccessToken" Style="{StaticResource PasswordInputBox}" PasswordChar="●"
+                           ToolTip="Paste the access token from the OpticStudio computer" LostFocus="RemoteAccessToken_LostFocus"/>
+            </Grid>
           </StackPanel>
         </Border>
       </Grid>

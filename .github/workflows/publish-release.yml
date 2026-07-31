@@ -21,15 +21,24 @@ jobs:
       - name: Build the end-user package
         shell: pwsh
         run: ./scripts/publish-windows.ps1 -Configuration Release -ZemaxRoot $env:ZEMAX_ROOT
+      - name: Sign the update manifest
+        shell: pwsh
+        env:
+          UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY_B64 }}
+        run: ./scripts/New-UpdateManifest.ps1 -PackagePath artifacts/ZemaxMCP-win-x64.zip -Version "${{ github.ref_name }}"
       - name: Upload the verified package
         uses: actions/upload-artifact@v4
         with:
           name: ZemaxMCP-win-x64
-          path: artifacts/ZemaxMCP-win-x64.zip
+          path: |
+            artifacts/ZemaxMCP-win-x64.zip
+            artifacts/release-manifest.json
           if-no-files-found: error
       - name: Publish ZIP for automatic updates
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: artifacts/ZemaxMCP-win-x64.zip
+          files: |
+            artifacts/ZemaxMCP-win-x64.zip
+            artifacts/release-manifest.json

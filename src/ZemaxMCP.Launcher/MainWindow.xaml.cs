@@ -6,6 +6,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -25,6 +26,7 @@ public partial class MainWindow : Window
     private bool _clientSetupPrompted;
     private bool _refreshingStatus;
     private bool _windowLoaded;
+    private string _localAccessToken = "";
     private string _fullDiagnostics = "Status has not been checked yet.";
     private readonly Forms.NotifyIcon _trayIcon;
     private readonly DispatcherTimer _statusTimer;
@@ -120,6 +122,7 @@ public partial class MainWindow : Window
     private void Port_LostFocus(object sender, RoutedEventArgs e) { RefreshEndpoint(); SaveSettings(); }
     private async void RemoteEndpoint_LostFocus(object sender, RoutedEventArgs e)
     {
+        TryApplySecureSetup(RemoteEndpoint.Text);
         SaveSettings();
         if (!string.IsNullOrWhiteSpace(RemoteEndpoint.Text) && !IsRemoteEndpointConfigured)
         {
@@ -130,6 +133,11 @@ public partial class MainWindow : Window
         else if (Installation != null && (_bridge == null || _bridge.HasExited)) StartBridge();
         await RefreshStatusAsync();
     }
+    private async void RemoteAccessToken_LostFocus(object sender, RoutedEventArgs e)
+    {
+        SaveSettings();
+        await RefreshStatusAsync();
+    }
     private string HostName => ShareOnLan.IsChecked == true ? "0.0.0.0" : "127.0.0.1";
     private void RefreshEndpoint() => Endpoint.Text = Url;
     private ZemaxInstallation? Installation => ZemaxVersions.SelectedItem as ZemaxInstallation;
@@ -138,10 +146,19 @@ public partial class MainWindow : Window
         (remote.Scheme == Uri.UriSchemeHttp || remote.Scheme == Uri.UriSchemeHttps);
     private string McpUrl => Uri.TryCreate(RemoteEndpoint.Text, UriKind.Absolute, out var remote) &&
         (remote.Scheme == Uri.UriSchemeHttp || remote.Scheme == Uri.UriSchemeHttps) ? remote.ToString().TrimEnd('/') : Url;
+    private string McpToken => IsRemoteEndpointConfigured ? RemoteAccessToken.Password.Trim() : _localAccessToken;
 
     private void ShareOnLan_Changed(object sender, RoutedEventArgs e)
     {
         RefreshEndpoint();
+        SaveSettings();
+        if (IsRemoteEndpointConfigured) return;
+        StopBridge();
+        if (Installation != null) StartBridge();
+    }
+    private void ReadOnlyMode_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_windowLoaded) return;
         SaveSettings();
         if (IsRemoteEndpointConfigured) return;
         StopBridge();
@@ -181,7 +198,12 @@ public partial class MainWindow : Window
         Process? process;
         try
         {
-            process = Process.Start(new ProcessStartInfo(bridge, $"--server \"{server}\" --zemax-root \"{Installation.Root}\" --host {HostName} --port {port}") { UseShellExecute = false, CreateNoWindow = true });
+            var snapshots = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZemaxMCP", "snapshots");
+            var startInfo = new ProcessStartInfo(bridge,
+                $"--server \"{server}\" --zemax-root \"{Installation.Root}\" --host {HostName} --port {port} --read-only {(ReadOnlyMode.IsChecked == true ? "true" : "false")} --snapshot-dir \"{snapshots}\"")
+            { UseShellExecute = false, CreateNoWindow = true };
+            startInfo.EnvironmentVariables["ZEMAX_MCP_TOKEN"] = _localAccessToken;
+            process = Process.Start(startInfo);
         }
         catch (Exception ex)
         {
@@ -225,7 +247,7 @@ public partial class MainWindow : Window
         SetIndicatorsChecking();
         try
         {
-            var health = await Task.Run(() => GetHealth(endpoint));
+            var health = await Task.Run(() => GetHealth(endpoint, McpToken));
             var apiLoaded = health["zosApiLoaded"]?.Value<bool>() == true;
             var apiConnected = health["zosApiConnected"]?.Value<bool>() == true;
             var licenseStatus = health["licenseStatus"]?.ToString() ?? "Not checked";
@@ -234,6 +256,11 @@ public partial class MainWindow : Window
             var activeRequests = health["activeRequests"]?.Value<int>() ?? 0;
             var restartCount = health["serverRestartCount"]?.Value<int>() ?? 0;
             var uptime = FormatUptime(health["bridgeUptimeSeconds"]?.Value<long?>());
+            var authenticationRequired = health["authenticationRequired"]?.Value<bool>() == true;
+            var originValidationEnabled = health["originValidationEnabled"]?.Value<bool>() == true;
+            var readOnly = health["readOnly"]?.Value<bool>() == true;
+            var snapshotDirectory = health["snapshotDirectory"]?.ToString();
+            var lastSnapshotPath = health["lastSnapshotPath"]?.ToString();
             var lastServerError = health["lastServerError"]?.ToString();
             var reportedRoot = health["zemaxRoot"]?.ToString();
             var reportedApi = health["zosApiFiles"] as JObject;
@@ -249,6 +276,11 @@ public partial class MainWindow : Window
                 "; loaded: " + (apiLoaded ? "yes" : "not yet") +
                 "; OpticStudio connected: " + (apiConnected ? "yes" : "not yet") +
                 "; license: " + licenseStatus + "\n" +
+                "Security: " + (authenticationRequired ? "Bearer token required" : "no token") +
+                "; Origin validation: " + (originValidationEnabled ? "enabled" : "not reported") +
+                "; lens access: " + (readOnly ? "read-only" : "read/write with pre-change snapshots") + "\n" +
+                "Snapshot folder: " + (string.IsNullOrWhiteSpace(snapshotDirectory) ? "not reported" : snapshotDirectory) +
+                "; latest snapshot: " + (string.IsNullOrWhiteSpace(lastSnapshotPath) ? "none this session" : lastSnapshotPath) + "\n" +
                 pathDetails + "\n" +
                 "AI clients active recently: " + activeClients + "; requests in progress: " + activeRequests +
                 (string.IsNullOrWhiteSpace(lastServerError) ? "" : "\nLast MCP server error: " + lastServerError) +
@@ -257,7 +289,9 @@ public partial class MainWindow : Window
             ConnectionSummary.Text = (ready ? "Ready" : "Needs attention") + " — MCP " +
                 (bridgeRunning && serverRunning ? "online" : "not ready") + ", OpticStudio " +
                 (apiConnected ? "connected" : apiLoaded ? "waiting" : "not connected") + ", license " + licenseStatus + "\n" +
-                endpoint + " · AI active: " + activeClients + " · requests: " + activeRequests +
+                endpoint + " · " + (authenticationRequired ? "token protected" : "unprotected") +
+                " · " + (readOnly ? "read-only" : "snapshot protected") +
+                " · AI active: " + activeClients + " · requests: " + activeRequests +
                 (restartCount > 0 ? " · restarts: " + restartCount : "") +
                 (string.IsNullOrWhiteSpace(lastServerError) ? "" : "\nLast error: " + lastServerError);
             if (bridgeRunning && serverRunning) SetIndicator(McpStateDot, McpState, "Online — MCP server is accepting connections", System.Windows.Media.Brushes.SeaGreen);
@@ -302,7 +336,7 @@ public partial class MainWindow : Window
     {
         var activities = ReadClientActivities(health);
         var activeNames = new List<string>();
-        var clientStatuses = Configurator.GetClientStatuses(McpUrl);
+        var clientStatuses = Configurator.GetClientStatuses(McpUrl, McpToken);
         RefreshClientMenuIndicators(clientStatuses);
         foreach (var client in clientStatuses)
         {
@@ -319,7 +353,7 @@ public partial class MainWindow : Window
     }
     private void RefreshClientMenuIndicators(IReadOnlyCollection<ClientConfigurationStatus>? statuses = null)
     {
-        statuses ??= Configurator.GetClientStatuses(McpUrl);
+        statuses ??= Configurator.GetClientStatuses(McpUrl, McpToken);
         SetClientMenuIndicator(statuses, "Codex", CodexConfigDot, CodexConfigState);
         SetClientMenuIndicator(statuses, "Claude Desktop", ClaudeConfigDot, ClaudeConfigState);
         SetClientMenuIndicator(statuses, "Cursor", CursorConfigDot, CursorConfigState);
@@ -402,11 +436,12 @@ public partial class MainWindow : Window
             if (!string.IsNullOrWhiteSpace(path)) lines.Add(item.Item1 + ": " + path);
         }
     }
-    private static JObject GetHealth(string endpoint)
+    private static JObject GetHealth(string endpoint, string accessToken)
     {
         var request = (HttpWebRequest)WebRequest.Create(endpoint.TrimEnd('/') + "/health");
         request.Method = "GET";
         request.Timeout = 5000;
+        AddAuthorization(request, accessToken);
         using var response = (HttpWebResponse)request.GetResponse();
         using var reader = new StreamReader(response.GetResponseStream());
         return JObject.Parse(reader.ReadToEnd());
@@ -451,6 +486,49 @@ public partial class MainWindow : Window
         }
     }
     private void CopyEndpoint_Click(object sender, RoutedEventArgs e) { System.Windows.Clipboard.SetText(McpUrl); Report("MCP address copied: " + McpUrl); }
+    private void CopySecureSetup_Click(object sender, RoutedEventArgs e)
+    {
+        var setup = new JObject { ["endpoint"] = Url, ["accessToken"] = _localAccessToken }.ToString(Newtonsoft.Json.Formatting.None);
+        System.Windows.Clipboard.SetText(setup);
+        Report("Secure connection setup copied. Treat it like a password and paste it into Remote MCP address on the AI computer.");
+    }
+    private void RegenerateToken_Click(object sender, RoutedEventArgs e)
+    {
+        if (System.Windows.MessageBox.Show("Create a new access token? Existing AI clients will stop connecting until they are configured again.",
+            "Regenerate Zemax MCP token", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        _localAccessToken = GenerateAccessToken();
+        SaveSettings();
+        if (!IsRemoteEndpointConfigured)
+        {
+            StopBridge();
+            if (Installation != null) StartBridge();
+        }
+        RefreshClientDashboard(null);
+        Report("A new access token was created. Copy secure setup and reconfigure AI clients.");
+    }
+    private bool TryApplySecureSetup(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || !text.TrimStart().StartsWith("{", StringComparison.Ordinal)) return false;
+        try
+        {
+            var setup = JObject.Parse(text);
+            var endpoint = setup["endpoint"]?.ToString();
+            var token = setup["accessToken"]?.ToString();
+            if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ||
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) || string.IsNullOrWhiteSpace(token)) return false;
+            RemoteEndpoint.Text = uri.ToString().TrimEnd('/');
+            RemoteAccessToken.Password = token;
+            Report("Secure connection setup accepted for " + RemoteEndpoint.Text + ".");
+            return true;
+        }
+        catch { return false; }
+    }
+    private static string GenerateAccessToken()
+    {
+        var bytes = new byte[32];
+        using (var random = RandomNumberGenerator.Create()) random.GetBytes(bytes);
+        return Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    }
     private void CopyDiagnostics_Click(object sender, RoutedEventArgs e)
     {
         var diagnostics = "Zemax MCP diagnostics — " + DateTimeOffset.Now.ToString("O") + "\r\n\r\n" +
@@ -462,17 +540,18 @@ public partial class MainWindow : Window
     {
         var endpoint = McpUrl;
         Report("Testing MCP handshake: " + endpoint + "…");
-        try { Report(await Task.Run(() => TestMcp(endpoint))); }
+        try { Report(await Task.Run(() => TestMcp(endpoint, McpToken))); }
         catch (Exception ex) { Report("MCP connection failed: " + ex.Message + Environment.NewLine + "On the OpticStudio computer, keep Start-Zemax-MCP open, start the bridge, then enable Share with a trusted LAN computer."); }
         await RefreshStatusAsync();
     }
-    private static string TestMcp(string endpoint)
+    private static string TestMcp(string endpoint, string accessToken)
     {
         var request = (HttpWebRequest)WebRequest.Create(endpoint);
         request.Method = "POST";
         request.ContentType = "application/json";
         request.Accept = "application/json, text/event-stream";
         request.Timeout = 10000;
+        AddAuthorization(request, accessToken);
         var payload = "{\"jsonrpc\":\"2.0\",\"id\":\"zemax-mcp-healthcheck\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"zemax-mcp-launcher\",\"version\":\"1.0\"}}}";
         var bytes = Encoding.UTF8.GetBytes(payload);
         using (var stream = request.GetRequestStream()) stream.Write(bytes, 0, bytes.Length);
@@ -484,6 +563,10 @@ public partial class MainWindow : Window
             if (response.StatusCode != HttpStatusCode.OK || string.IsNullOrWhiteSpace(name)) throw new InvalidOperationException("the endpoint did not return an MCP initialize response.");
             return "MCP connection succeeded: " + name + " responded at " + endpoint;
         }
+    }
+    private static void AddAuthorization(HttpWebRequest request, string accessToken)
+    {
+        if (!string.IsNullOrWhiteSpace(accessToken)) request.Headers[HttpRequestHeader.Authorization] = "Bearer " + accessToken;
     }
     private void OpenLogs_Click(object sender, RoutedEventArgs e)
     {
@@ -539,8 +622,8 @@ public partial class MainWindow : Window
     private List<(string Name, Action Configure)> DetectedClientConfigurations()
     {
         var clients = new List<(string, Action)>();
-        foreach (var status in Configurator.GetClientStatuses(McpUrl).Where(x => x.Detected && x.Configure != null))
-            clients.Add((status.Name, () => status.Configure!(McpUrl)));
+        foreach (var status in Configurator.GetClientStatuses(McpUrl, McpToken).Where(x => x.Detected && x.Configure != null))
+            clients.Add((status.Name, () => status.Configure!(McpUrl, McpToken)));
         return clients;
     }
     private void ConfigureClient(string name, Action configure)
@@ -548,21 +631,21 @@ public partial class MainWindow : Window
         try { configure(); RefreshClientDashboard(null); Report(name + " configured for " + McpUrl + ". Restart the client to connect."); }
         catch (Exception ex) { Report("Could not configure " + name + ": " + ex.Message); }
     }
-    private void Codex_Click(object sender, RoutedEventArgs e) => ConfigureClient("Codex", () => Configurator.ConfigureCodex(McpUrl));
-    private void Claude_Click(object sender, RoutedEventArgs e) => ConfigureClient("Claude Desktop", () => Configurator.ConfigureClaudeDesktop(McpUrl));
-    private void Cursor_Click(object sender, RoutedEventArgs e) => ConfigureClient("Cursor", () => Configurator.ConfigureCursor(McpUrl));
-    private void Kimi_Click(object sender, RoutedEventArgs e) => ConfigureClient("Kimi Code", () => Configurator.ConfigureKimi(McpUrl));
-    private void WorkBuddy_Click(object sender, RoutedEventArgs e) => ConfigureClient("WorkBuddy", () => Configurator.ConfigureWorkBuddy(McpUrl));
+    private void Codex_Click(object sender, RoutedEventArgs e) => ConfigureClient("Codex", () => Configurator.ConfigureCodex(McpUrl, McpToken));
+    private void Claude_Click(object sender, RoutedEventArgs e) => ConfigureClient("Claude Desktop", () => Configurator.ConfigureClaudeDesktop(McpUrl, McpToken));
+    private void Cursor_Click(object sender, RoutedEventArgs e) => ConfigureClient("Cursor", () => Configurator.ConfigureCursor(McpUrl, McpToken));
+    private void Kimi_Click(object sender, RoutedEventArgs e) => ConfigureClient("Kimi Code", () => Configurator.ConfigureKimi(McpUrl, McpToken));
+    private void WorkBuddy_Click(object sender, RoutedEventArgs e) => ConfigureClient("WorkBuddy", () => Configurator.ConfigureWorkBuddy(McpUrl, McpToken));
     private void CopyGenericConfig_Click(object sender, RoutedEventArgs e)
     {
-        System.Windows.Clipboard.SetText(Configurator.GenericHttpJson(McpUrl));
+        System.Windows.Clipboard.SetText(Configurator.GenericHttpJson(McpUrl, McpToken));
         Report("Generic HTTP MCP JSON copied. Paste it into an agent's MCP configuration and restart that agent.");
     }
     private void VsCode_Click(object sender, RoutedEventArgs e)
     {
         try
         {
-            Configurator.ConfigureVsCode(McpUrl);
+            Configurator.ConfigureVsCode(McpUrl, McpToken);
             RefreshClientDashboard(null);
             Report("VS Code opened its MCP setup. Review and approve Zemax MCP there to finish configuration.");
         }
@@ -576,24 +659,47 @@ public partial class MainWindow : Window
             {
                 client.Headers.Add("User-Agent", "ZemaxMCP-Launcher");
                 var release = JObject.Parse(client.DownloadString("https://api.github.com/repos/joeyijun/OpticStudioMCPServer/releases/latest"));
+                var releaseTag = release["tag_name"]?.ToString() ?? throw new InvalidDataException("The latest GitHub release has no version tag.");
+                var releaseVersion = ParseReleaseVersion(releaseTag);
+                var installedVersion = NormalizeVersion(typeof(MainWindow).Assembly.GetName().Version ?? new Version(0, 0));
+                if (releaseVersion <= installedVersion)
+                {
+                    Report("Already up to date (installed " + installedVersion.ToString(3) + ", latest " + releaseTag + ").");
+                    return;
+                }
                 var asset = release["assets"]?.FirstOrDefault(x => x["name"]?.ToString().Equals("ZemaxMCP-win-x64.zip", StringComparison.OrdinalIgnoreCase) == true);
-                if (asset == null) { Report("Latest release " + release["tag_name"] + " has no Windows package yet."); return; }
+                var manifestAsset = release["assets"]?.FirstOrDefault(x => x["name"]?.ToString().Equals("release-manifest.json", StringComparison.OrdinalIgnoreCase) == true);
+                if (asset == null || manifestAsset == null) { Report("Latest release " + release["tag_name"] + " does not contain a signed Windows update package."); return; }
                 var staging = Path.Combine(Path.GetTempPath(), "ZemaxMCP-update-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(staging);
                 var zip = Path.Combine(staging, "release.zip");
+                var manifest = Path.Combine(staging, "release-manifest.json");
                 Report("Downloading " + release["tag_name"] + "…");
                 client.DownloadFile(asset["browser_download_url"]!.ToString(), zip);
+                client.DownloadFile(manifestAsset["browser_download_url"]!.ToString(), manifest);
+                UpdateManifestVerifier.Verify(File.ReadAllText(manifest), release["tag_name"]?.ToString() ?? "", "ZemaxMCP-win-x64.zip", zip);
                 ZipFile.ExtractToDirectory(zip, staging);
                 var install = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
-                var script = Path.Combine(staging, "apply-update.cmd");
-                File.WriteAllText(script, "@echo off\r\nping 127.0.0.1 -n 4 > nul\r\nrobocopy \"" + staging + "\" \"" + install + "\" /E /MOV /XF release.zip apply-update.cmd > nul\r\nstart \"\" \"" + Path.Combine(install, "Start-Zemax-MCP.exe") + "\"\r\n");
-                Process.Start(new ProcessStartInfo("cmd.exe", "/c \"" + script + "\"") { CreateNoWindow = true, UseShellExecute = false });
+                var updater = Path.Combine(staging, "ZemaxMCP.Updater.exe");
+                if (!File.Exists(updater)) throw new FileNotFoundException("The signed update package does not contain ZemaxMCP.Updater.exe.", updater);
+                var arguments = "--staging \"" + staging + "\" --install \"" + install + "\" --parent-pid " + Process.GetCurrentProcess().Id;
+                Process.Start(new ProcessStartInfo(updater, arguments) { CreateNoWindow = true, UseShellExecute = false });
                 Report("Update downloaded. Restarting with " + release["tag_name"] + "…");
                 System.Windows.Application.Current.Shutdown();
             }
         }
         catch (Exception ex) { Report("Could not check GitHub releases: " + ex.Message); }
     }
+    internal static Version ParseReleaseVersion(string tag)
+    {
+        var value = tag.Trim().TrimStart('v', 'V');
+        var suffix = value.IndexOf('-');
+        if (suffix >= 0) value = value.Substring(0, suffix);
+        if (!Version.TryParse(value, out var parsed)) throw new InvalidDataException("The release tag is not a supported version: " + tag);
+        return NormalizeVersion(parsed);
+    }
+    private static Version NormalizeVersion(Version version) =>
+        new Version(version.Major, version.Minor, Math.Max(0, version.Build), Math.Max(0, version.Revision));
     private void Report(string text) => Status.Text = DateTime.Now.ToString("HH:mm:ss") + "  " + text;
     private static string SettingsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZemaxMCP", "launcher-settings.json");
     private string? ReadSetting(string key)
@@ -605,15 +711,22 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (!File.Exists(SettingsPath)) return;
-            var settings = JObject.Parse(File.ReadAllText(SettingsPath));
+            var settings = File.Exists(SettingsPath) ? JObject.Parse(File.ReadAllText(SettingsPath)) : new JObject();
             Port.Text = settings["port"]?.ToString() ?? Port.Text;
             RemoteEndpoint.Text = settings["remoteEndpoint"]?.ToString() ?? "";
+            RemoteAccessToken.Password = UnprotectSecret(settings["remoteTokenProtected"]?.ToString());
+            _localAccessToken = UnprotectSecret(settings["localTokenProtected"]?.ToString());
+            if (string.IsNullOrWhiteSpace(_localAccessToken)) _localAccessToken = GenerateAccessToken();
             ShareOnLan.IsChecked = settings["shareOnLan"]?.Value<bool>() ?? false;
+            ReadOnlyMode.IsChecked = settings["readOnly"]?.Value<bool>() ?? false;
             StartOnLogin.IsChecked = settings["startOnLogin"]?.Value<bool>() ?? false;
             _clientSetupPrompted = settings["clientSetupPrompted"]?.Value<bool>() ?? false;
         }
-        catch { /* A malformed optional preference file must never prevent startup. */ }
+        catch
+        {
+            _localAccessToken = GenerateAccessToken();
+            RemoteAccessToken.Password = "";
+        }
     }
     private void SaveSettings()
     {
@@ -625,12 +738,26 @@ public partial class MainWindow : Window
                 ["zemaxRoot"] = Installation?.Root ?? "",
                 ["port"] = Port.Text,
                 ["remoteEndpoint"] = RemoteEndpoint.Text,
+                ["localTokenProtected"] = ProtectSecret(_localAccessToken),
+                ["remoteTokenProtected"] = ProtectSecret(RemoteAccessToken.Password),
                 ["shareOnLan"] = ShareOnLan.IsChecked == true,
+                ["readOnly"] = ReadOnlyMode.IsChecked == true,
                 ["startOnLogin"] = StartOnLogin.IsChecked == true,
                 ["clientSetupPrompted"] = _clientSetupPrompted
             }.ToString());
         }
         catch { /* Preferences are non-essential. */ }
+    }
+    private static string ProtectSecret(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "";
+        return Convert.ToBase64String(ProtectedData.Protect(Encoding.UTF8.GetBytes(value), null, DataProtectionScope.CurrentUser));
+    }
+    private static string UnprotectSecret(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "";
+        try { return Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(value), null, DataProtectionScope.CurrentUser)); }
+        catch { return ""; }
     }
     private static string GetLanAddress() => Dns.GetHostEntry(Dns.GetHostName()).AddressList.FirstOrDefault(x => x.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !IPAddress.IsLoopback(x))?.ToString() ?? "127.0.0.1";
     private void RestoreWindow()
@@ -710,37 +837,42 @@ internal static class Configurator
     private static string VsCodeDefaultPath => Path.Combine(AppData, "Code", "User", "mcp.json");
     public static readonly string[] KnownAliases = { "codex", "claude", "cursor", "kimi", "workbuddy", "codebuddy", "vscode", "visual studio", "copilot" };
 
-    public static void ConfigureClaudeDesktop(string url)
+    public static void ConfigureClaudeDesktop(string url) => ConfigureClaudeDesktop(url, "");
+    public static void ConfigureClaudeDesktop(string url, string token)
     {
         ValidateUrl(url);
         var proxy = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZemaxMCP.ClientProxy.exe");
         if (!File.Exists(proxy)) throw new FileNotFoundException("The release package is missing ZemaxMCP.ClientProxy.exe, which Claude Desktop needs for a private HTTP/LAN endpoint.", proxy);
-        ConfigureStdioProxyJson(ClaudeDesktopPath, proxy, url);
+        ConfigureStdioProxyJson(ClaudeDesktopPath, proxy, url, token);
     }
-    public static void ConfigureCursor(string url) => ConfigureJson(CursorPath, "mcpServers", url);
-    public static void ConfigureKimi(string url) => ConfigureJson(KimiPath, "mcpServers", url, false, true);
-    public static void ConfigureWorkBuddy(string url) => ConfigureJson(WorkBuddyPath, "mcpServers", url, false, false);
+    public static void ConfigureCursor(string url) => ConfigureCursor(url, "");
+    public static void ConfigureCursor(string url, string token) => ConfigureJson(CursorPath, "mcpServers", url, token);
+    public static void ConfigureKimi(string url) => ConfigureKimi(url, "");
+    public static void ConfigureKimi(string url, string token) => ConfigureJson(KimiPath, "mcpServers", url, token, false, true);
+    public static void ConfigureWorkBuddy(string url) => ConfigureWorkBuddy(url, "");
+    public static void ConfigureWorkBuddy(string url, string token) => ConfigureJson(WorkBuddyPath, "mcpServers", url, token, false, false);
 
-    public static List<ClientConfigurationStatus> GetClientStatuses(string expectedUrl)
+    public static List<ClientConfigurationStatus> GetClientStatuses(string expectedUrl) => GetClientStatuses(expectedUrl, "");
+    public static List<ClientConfigurationStatus> GetClientStatuses(string expectedUrl, string expectedToken)
     {
         var vsCodePaths = GetVsCodeConfigPaths().ToArray();
         return new List<ClientConfigurationStatus>
         {
-            new ClientConfigurationStatus("Codex", new[] { "codex" }, Directory.Exists(CodexHome), IsCodexConfigured(expectedUrl), CodexPath, ConfigureCodex),
-            new ClientConfigurationStatus("Claude Desktop", new[] { "claude" }, Directory.Exists(Path.Combine(AppData, "Claude")), IsClaudeConfigured(expectedUrl), ClaudeDesktopPath, ConfigureClaudeDesktop),
-            new ClientConfigurationStatus("Cursor", new[] { "cursor" }, Directory.Exists(Path.Combine(UserProfile, ".cursor")) || Directory.Exists(Path.Combine(AppData, "Cursor")) || Directory.Exists(Path.Combine(LocalAppData, "Cursor")), IsJsonConfigured(CursorPath, "mcpServers", expectedUrl), CursorPath, ConfigureCursor),
-            new ClientConfigurationStatus("Kimi Code", new[] { "kimi" }, Directory.Exists(KimiHome), IsJsonConfigured(KimiPath, "mcpServers", expectedUrl), KimiPath, ConfigureKimi),
-            new ClientConfigurationStatus("WorkBuddy", new[] { "workbuddy", "codebuddy" }, Directory.Exists(Path.Combine(UserProfile, ".workbuddy")) || Directory.Exists(Path.Combine(AppData, "WorkBuddy")) || Directory.Exists(Path.Combine(LocalAppData, "WorkBuddy")), IsJsonConfigured(WorkBuddyPath, "mcpServers", expectedUrl), WorkBuddyPath, ConfigureWorkBuddy),
-            new ClientConfigurationStatus("VS Code / Copilot", new[] { "vscode", "visual studio", "copilot" }, Directory.Exists(Path.Combine(AppData, "Code")) || Directory.Exists(Path.Combine(LocalAppData, "Programs", "Microsoft VS Code")), vsCodePaths.Any(x => IsJsonConfigured(x, "servers", expectedUrl)), string.Join("; ", vsCodePaths), null)
+            new ClientConfigurationStatus("Codex", new[] { "codex" }, Directory.Exists(CodexHome), IsCodexConfigured(expectedUrl, expectedToken), CodexPath, ConfigureCodex),
+            new ClientConfigurationStatus("Claude Desktop", new[] { "claude" }, Directory.Exists(Path.Combine(AppData, "Claude")), IsClaudeConfigured(expectedUrl, expectedToken), ClaudeDesktopPath, ConfigureClaudeDesktop),
+            new ClientConfigurationStatus("Cursor", new[] { "cursor" }, Directory.Exists(Path.Combine(UserProfile, ".cursor")) || Directory.Exists(Path.Combine(AppData, "Cursor")) || Directory.Exists(Path.Combine(LocalAppData, "Cursor")), IsJsonConfigured(CursorPath, "mcpServers", expectedUrl, expectedToken), CursorPath, ConfigureCursor),
+            new ClientConfigurationStatus("Kimi Code", new[] { "kimi" }, Directory.Exists(KimiHome), IsJsonConfigured(KimiPath, "mcpServers", expectedUrl, expectedToken), KimiPath, ConfigureKimi),
+            new ClientConfigurationStatus("WorkBuddy", new[] { "workbuddy", "codebuddy" }, Directory.Exists(Path.Combine(UserProfile, ".workbuddy")) || Directory.Exists(Path.Combine(AppData, "WorkBuddy")) || Directory.Exists(Path.Combine(LocalAppData, "WorkBuddy")), IsJsonConfigured(WorkBuddyPath, "mcpServers", expectedUrl, expectedToken), WorkBuddyPath, ConfigureWorkBuddy),
+            new ClientConfigurationStatus("VS Code / Copilot", new[] { "vscode", "visual studio", "copilot" }, Directory.Exists(Path.Combine(AppData, "Code")) || Directory.Exists(Path.Combine(LocalAppData, "Programs", "Microsoft VS Code")), vsCodePaths.Any(x => IsJsonConfigured(x, "servers", expectedUrl, expectedToken)), string.Join("; ", vsCodePaths), null)
         };
     }
 
-    public static string GenericHttpJson(string url) => new JObject
+    public static string GenericHttpJson(string url, string token) => new JObject
     {
-        ["mcpServers"] = new JObject { ["zemax-mcp"] = new JObject { ["url"] = url } }
+        ["mcpServers"] = new JObject { ["zemax-mcp"] = CreateHttpEntry(url, token, true) }
     }.ToString();
 
-    public static void ConfigureVsCode(string url)
+    public static void ConfigureVsCode(string url, string token)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var endpoint) ||
             (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps))
@@ -755,11 +887,12 @@ internal static class Configurator
             ["type"] = "http",
             ["url"] = endpoint.AbsoluteUri
         };
+        AddHeaders(server, token);
         var installUri = "vscode:mcp/install?" + Uri.EscapeDataString(server.ToString(Newtonsoft.Json.Formatting.None));
         Process.Start(new ProcessStartInfo(installUri) { UseShellExecute = true });
     }
 
-    public static void ConfigureJson(string path, string property, string url, bool includeType = true, bool includeKimiTimeouts = false)
+    public static void ConfigureJson(string path, string property, string url, string token, bool includeType = true, bool includeKimiTimeouts = false)
     {
         ValidateUrl(url);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -770,8 +903,7 @@ internal static class Configurator
             servers = new JObject();
             root[property] = servers;
         }
-        var entry = new JObject { ["url"] = url };
-        if (includeType) entry.AddFirst(new JProperty("type", "http"));
+        var entry = CreateHttpEntry(url, token, includeType);
         if (includeKimiTimeouts)
         {
             entry["startupTimeoutMs"] = 60000;
@@ -781,7 +913,7 @@ internal static class Configurator
         WriteAtomically(path, root.ToString());
     }
 
-    private static void ConfigureStdioProxyJson(string path, string proxyPath, string url)
+    private static void ConfigureStdioProxyJson(string path, string proxyPath, string url, string token)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var root = File.Exists(path) ? JObject.Parse(File.ReadAllText(path)) : new JObject();
@@ -794,44 +926,66 @@ internal static class Configurator
         servers["zemax-mcp"] = new JObject
         {
             ["command"] = proxyPath,
-            ["args"] = new JArray("--url", url)
+            ["args"] = new JArray("--url", url),
+            ["env"] = string.IsNullOrWhiteSpace(token) ? new JObject() : new JObject { ["ZEMAX_MCP_TOKEN"] = token }
         };
         WriteAtomically(path, root.ToString());
     }
 
-    public static void ConfigureCodex(string url)
+    public static void ConfigureCodex(string url) => ConfigureCodex(url, "");
+    public static void ConfigureCodex(string url, string token)
     {
         ValidateUrl(url);
         var path = CodexPath;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var content = File.Exists(path) ? File.ReadAllText(path) : "";
-        var block = "[mcp_servers.zemax]\r\nurl = \"" + url + "\"\r\n";
+        var block = "[mcp_servers.zemax]\r\nurl = \"" + url + "\"\r\n" +
+                    (string.IsNullOrWhiteSpace(token) ? "" : "http_headers = { Authorization = \"Bearer " + EscapeToml(token) + "\" }\r\n");
         content = Regex.Replace(content, @"(?ms)^\[mcp_servers\.zemax\].*?(?=^\[|\z)", block);
         if (!content.Contains("[mcp_servers.zemax]")) content += (content.EndsWith("\n") || content.Length == 0 ? "" : "\r\n") + block;
         WriteAtomically(path, content);
     }
 
-    private static bool IsJsonConfigured(string path, string property, string expectedUrl)
+    private static JObject CreateHttpEntry(string url, string token, bool includeType)
+    {
+        var entry = new JObject { ["url"] = url };
+        if (includeType) entry.AddFirst(new JProperty("type", "http"));
+        AddHeaders(entry, token);
+        return entry;
+    }
+    private static void AddHeaders(JObject entry, string token)
+    {
+        if (!string.IsNullOrWhiteSpace(token)) entry["headers"] = new JObject { ["Authorization"] = "Bearer " + token };
+    }
+    private static bool HasExpectedToken(JToken? entry, string expectedToken)
+    {
+        if (string.IsNullOrWhiteSpace(expectedToken)) return true;
+        return string.Equals(entry?["headers"]?["Authorization"]?.ToString(), "Bearer " + expectedToken, StringComparison.Ordinal);
+    }
+    private static bool IsJsonConfigured(string path, string property, string expectedUrl, string expectedToken)
     {
         try
         {
             var entry = File.Exists(path) ? JObject.Parse(File.ReadAllText(path))[property]?["zemax-mcp"] : null;
-            return entry != null && UrlsEqual(entry["url"]?.ToString(), expectedUrl);
+            return entry != null && UrlsEqual(entry["url"]?.ToString(), expectedUrl) && HasExpectedToken(entry, expectedToken);
         }
         catch { return false; }
     }
-    private static bool IsClaudeConfigured(string expectedUrl)
+    private static bool IsClaudeConfigured(string expectedUrl, string expectedToken)
     {
         try
         {
             var entry = File.Exists(ClaudeDesktopPath) ? JObject.Parse(File.ReadAllText(ClaudeDesktopPath))["mcpServers"]?["zemax-mcp"] : null;
             var args = entry?["args"] as JArray;
+            var configuredToken = entry?["env"]?["ZEMAX_MCP_TOKEN"]?.ToString();
+            var tokenMatches = string.IsNullOrWhiteSpace(expectedToken) ||
+                string.Equals(configuredToken, expectedToken, StringComparison.Ordinal);
             return entry != null && string.Equals(Path.GetFileName(entry["command"]?.ToString()), "ZemaxMCP.ClientProxy.exe", StringComparison.OrdinalIgnoreCase) &&
-                   args != null && args.Any(x => UrlsEqual(x?.ToString(), expectedUrl));
+                   args != null && args.Any(x => UrlsEqual(x?.ToString(), expectedUrl)) && tokenMatches;
         }
         catch { return false; }
     }
-    private static bool IsCodexConfigured(string expectedUrl)
+    private static bool IsCodexConfigured(string expectedUrl, string expectedToken)
     {
         try
         {
@@ -839,7 +993,10 @@ internal static class Configurator
             var match = Regex.Match(File.ReadAllText(CodexPath), @"(?ms)^\[mcp_servers\.zemax\]\s*(.*?)(?=^\[|\z)");
             if (!match.Success) return false;
             var url = Regex.Match(match.Groups[1].Value, "(?m)^url\\s*=\\s*[\"']([^\"']+)[\"']").Groups[1].Value;
-            return UrlsEqual(url, expectedUrl);
+            if (!UrlsEqual(url, expectedUrl)) return false;
+            if (string.IsNullOrWhiteSpace(expectedToken)) return true;
+            var authorization = Regex.Match(match.Groups[1].Value, "Authorization\\s*=\\s*[\"']Bearer\\s+([^\"']+)[\"']").Groups[1].Value;
+            return string.Equals(authorization, expectedToken, StringComparison.Ordinal);
         }
         catch { return false; }
     }
@@ -863,6 +1020,7 @@ internal static class Configurator
         if (!Uri.TryCreate(url, UriKind.Absolute, out var endpoint) || (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps))
             throw new ArgumentException("The MCP endpoint must be an absolute HTTP or HTTPS address.", nameof(url));
     }
+    private static string EscapeToml(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
     private static void WriteAtomically(string path, string content)
     {
@@ -892,12 +1050,12 @@ internal static class Configurator
 
 internal sealed class ClientConfigurationStatus
 {
-    public ClientConfigurationStatus(string name, string[] aliases, bool detected, bool configured, string configPath, Action<string>? configure)
+    public ClientConfigurationStatus(string name, string[] aliases, bool detected, bool configured, string configPath, Action<string, string>? configure)
     { Name = name; Aliases = aliases; Detected = detected || configured; Configured = configured; ConfigPath = configPath; Configure = configure; }
     public string Name { get; }
     public string[] Aliases { get; }
     public bool Detected { get; }
     public bool Configured { get; }
     public string ConfigPath { get; }
-    public Action<string>? Configure { get; }
+    public Action<string, string>? Configure { get; }
 }

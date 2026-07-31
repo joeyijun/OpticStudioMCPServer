@@ -21,6 +21,8 @@ internal static class Program
     private static async Task RunAsync(string[] args)
     {
         var endpoint = ReadEndpoint(args);
+        var accessToken = ReadOption(args, "--token");
+        if (string.IsNullOrWhiteSpace(accessToken)) accessToken = Environment.GetEnvironmentVariable("ZEMAX_MCP_TOKEN") ?? "";
         using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(6) };
         string? sessionId = null;
         Log("Started local stdio proxy for " + endpoint);
@@ -35,6 +37,7 @@ internal static class Program
                 request = JObject.Parse(line);
                 using var message = new HttpRequestMessage(HttpMethod.Post, endpoint);
                 message.Headers.TryAddWithoutValidation("Accept", "application/json, text/event-stream");
+                if (!string.IsNullOrWhiteSpace(accessToken)) message.Headers.TryAddWithoutValidation("Authorization", "Bearer " + accessToken);
                 if (!string.IsNullOrWhiteSpace(sessionId)) message.Headers.TryAddWithoutValidation("Mcp-Session-Id", sessionId);
                 message.Content = new StringContent(line, Encoding.UTF8, "application/json");
                 using var response = await client.SendAsync(message).ConfigureAwait(false);
@@ -68,6 +71,13 @@ internal static class Program
                 (endpoint.Scheme == Uri.UriSchemeHttp || endpoint.Scheme == Uri.UriSchemeHttps)) return endpoint;
         }
         throw new ArgumentException("Usage: ZemaxMCP.ClientProxy.exe --url http://host:port/mcp");
+    }
+
+    private static string ReadOption(string[] args, string name)
+    {
+        for (var i = 0; i < args.Length - 1; i++)
+            if (args[i].Equals(name, StringComparison.OrdinalIgnoreCase)) return args[i + 1];
+        return "";
     }
 
     private static async Task WriteErrorAsync(JToken? id, int code, string message)

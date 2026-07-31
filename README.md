@@ -23,13 +23,16 @@ flowchart LR
   B --> E["Live dashboard\nMCP · ZOS-API · AI activity"]
 ```
 
-For a single computer, the AI client uses the local MCP address. For two computers, enable **Share with a trusted LAN computer** on the OpticStudio computer, copy its address, and paste it into **Remote MCP address** on the AI-client computer.
+For a single computer, the AI client uses the local MCP address. For two computers, enable **Share with a trusted LAN computer** on the OpticStudio computer, choose **Copy secure setup**, and paste the copied endpoint/token bundle into **Remote MCP address** on the AI-client computer. The token is stored with Windows user-scope encryption and is written into supported AI-client configurations automatically.
 
 ## Highlights
 
 - **Graphical install and update** — `Install.exe` installs or updates the per-user application. `Portable-Install.cmd` is available where an organisation blocks the installer executable.
 - **Resilient built-in HTTP MCP** — The .NET bridge applies request timeouts, tracks independent MCP sessions, and automatically recovers its server subprocess after an unexpected failure.
-- **Trusted LAN use** — Enable LAN sharing on the OpticStudio computer, copy its address, and configure the AI-client computer graphically.
+- **Authenticated LAN use** — Every launcher-managed request uses a random Bearer token. LAN listening is refused without a token, browser origins are restricted, and token rotation is one click.
+- **Lens-change safety** — Read-only mode blocks mutating tools before ZOS-API access. In read/write mode, every recognised mutation first saves a timestamped copy of the current lens; a failed snapshot prevents the change.
+- **Verified, recoverable updates** — Release metadata is RSA-signed, the ZIP size and SHA-256 are checked before extraction, and a separate updater restores the previous installation if replacement fails.
+- **Dedicated ZOS-API thread** — All connection and tool operations are serialized on one long-lived STA thread to respect the COM threading model and avoid cross-thread session access.
 - **Per-client live dashboard** — Colour-coded cards distinguish installation, configuration, historical activity, and a real request made within the last five minutes. The launcher health check is excluded from AI activity.
 - **Multi-version OpticStudio detection** — Detects classic Zemax and current `ANSYS Inc\v*` layouts from environment variables, both registry views, uninstall entries, and known Program Files locations. The launcher validates all three ZOS-API assemblies before offering a version.
 - **One AI configuration menu** — Configure detected Codex, Claude Desktop, Cursor, Kimi Code, and WorkBuddy clients directly. VS Code / GitHub Copilot uses its native MCP review and trust flow. A generic HTTP MCP JSON entry covers other compatible agents.
@@ -46,6 +49,8 @@ The server supports the following OpticStudio connection modes:
 
 Use the launcher status dashboard to confirm that ZOS-API is loaded and OpticStudio is connected before asking the AI to work on a design.
 
+For inspection-only sessions, enable **Read-only mode** before connecting the AI. In normal read/write mode, automatic lens snapshots are kept under `%LOCALAPPDATA%\ZemaxMCP\snapshots` (up to the newest 100 files). The status details show the active protection mode, snapshot folder, and most recent snapshot created in the current bridge session.
+
 ## Zemax discovery and license diagnostics
 
 The dashboard reports the selected OpticStudio program folder, how it was discovered, the resolved `ZOSAPI.dll`, `ZOSAPI_Interfaces.dll`, and `ZOSAPI_NetHelper.dll` paths, the Zemax Data folder, and license status. After startup it separately reports each assembly's actual CLR load path, so “found” and “loaded” are independently visible on both computers. `ZOSAPI_NetHelper.dll` is supported both beside `ZOSAPI.dll` and in the newer `ZOS-API\Libraries` layout.
@@ -56,7 +61,7 @@ For an unusual portable layout, set `ZEMAX_ROOT` to the program directory and op
 
 ## AI client configuration
 
-Use **Configure AI clients** in the launcher. Existing unrelated MCP entries are preserved and a backup is kept when an existing configuration is replaced.
+Use **Configure AI clients** in the launcher. Existing unrelated MCP entries are preserved and a backup is kept when an existing configuration is replaced. Supported HTTP clients receive both the endpoint and its Bearer header; Claude's packaged proxy receives the token without putting it in the server URL. If a token is rotated, reconfigure each client so its saved credential matches.
 
 | Client | Configuration used by the launcher | Connection confirmation |
 |---|---|---|
@@ -136,4 +141,4 @@ The original copyright and MIT license are retained in [LICENSE](LICENSE). A val
 
 ## Release maintainers
 
-The public ZIP is produced on a trusted Windows computer with a licensed OpticStudio installation. The required ZOS-API files must remain outside source control and the public release. The build accepts `ZOSAPI_NetHelper.dll` either in the program root or `ZOS-API\Libraries`. See [Windows Quick Start](docs/QUICKSTART_WINDOWS.md#maintainers-publishing-an-update) for the release-runner requirements.
+The public ZIP is produced on a trusted Windows computer with a licensed OpticStudio installation. The required ZOS-API files must remain outside source control and the public release. The build accepts `ZOSAPI_NetHelper.dll` either in the program root or `ZOS-API\Libraries`. Automatic-update releases also require the repository secret `UPDATE_SIGNING_PRIVATE_KEY_B64`; its public half is embedded in the launcher. See [Windows Quick Start](docs/QUICKSTART_WINDOWS.md#maintainers-publishing-an-update) for the release-runner requirements.
