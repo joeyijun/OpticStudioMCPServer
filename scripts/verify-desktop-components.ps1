@@ -30,6 +30,23 @@ if ($launcherXaml -match 'AiClientsList' -or
 if ($launcherXaml -notmatch 'Choose folder…' -or $launcherXaml -match 'Connection details') {
   throw "The launcher must provide a manual OpticStudio folder fallback and a compact status overview."
 }
+if ($launcherXaml -match 'Green: ready' -or $launcherXaml -match 'Amber: waiting' -or $launcherXaml -match 'Red: unavailable') {
+  throw "The redundant status-color legend must not be shown at the bottom of the launcher."
+}
+foreach ($layoutMarker in 'Width="980" Height="800"', 'Property="Height" Value="36"', 'Property="CornerRadius" Value="12"', 'Stop service', 'Test MCP', 'Copy diagnostics') {
+  if ($launcherXaml -notmatch [regex]::Escape($layoutMarker)) { throw "The polished launcher layout is missing: $layoutMarker" }
+}
+if ($launcherXaml -notmatch '(?s)Status overview.*Logs.*Updates.*Copy diagnostics') {
+  throw "Status maintenance actions must remain grouped in the status overview card."
+}
+foreach ($clientMarker in 'CodexConfigDot', 'ClaudeConfigDot', 'CursorConfigDot', 'KimiConfigDot', 'WorkBuddyConfigDot', 'VsCodeConfigDot') {
+  if ($launcherXaml -notmatch [regex]::Escape($clientMarker)) { throw "The AI client menu is missing its configuration indicator: $clientMarker" }
+}
+$launcherCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Launcher\MainWindow.xaml.cs")
+if ($launcherCode -notmatch '(?s)AiConfigMenu_Click.*RefreshClientMenuIndicators\(\).*IsOpen = true' -or
+    $launcherCode -notmatch '(?s)RefreshClientDashboard.*RefreshClientMenuIndicators\(clientStatuses\)') {
+  throw "AI client menu indicators must refresh automatically and immediately before the menu opens."
+}
 $publishScript = Get-Content -Raw (Join-Path $root "scripts\publish-windows.ps1")
 foreach ($forbiddenPattern in '"*.log"', '"*.pdb"', '"ZOSAPI*.dll"') {
   if ($publishScript -notmatch [regex]::Escape($forbiddenPattern)) {
