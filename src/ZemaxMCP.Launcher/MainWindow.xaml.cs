@@ -27,6 +27,8 @@ public partial class MainWindow : Window
     private bool _refreshingStatus;
     private bool _windowLoaded;
     private string _localAccessToken = "";
+    private string _remoteEndpoint = "";
+    private string _remoteAccessToken = "";
     private string _fullDiagnostics = "Status has not been checked yet.";
     private readonly Forms.NotifyIcon _trayIcon;
     private readonly DispatcherTimer _statusTimer;
@@ -120,33 +122,38 @@ public partial class MainWindow : Window
         Report("Using manually selected OpticStudio folder: " + selected.Root);
     }
     private void Port_LostFocus(object sender, RoutedEventArgs e) { RefreshEndpoint(); SaveSettings(); }
-    private async void RemoteEndpoint_LostFocus(object sender, RoutedEventArgs e)
+    private async void RemoteSecureSetup_LostFocus(object sender, RoutedEventArgs e)
     {
-        TryApplySecureSetup(RemoteEndpoint.Text);
-        SaveSettings();
-        if (!string.IsNullOrWhiteSpace(RemoteEndpoint.Text) && !IsRemoteEndpointConfigured)
+        var setup = RemoteSecureSetup.Text;
+        if (string.IsNullOrWhiteSpace(setup)) return;
+        if (!TryApplySecureSetup(setup))
         {
-            Report("Remote MCP address is invalid. Use a full http:// or https:// address.");
+            Report("Paste the complete secure setup copied from the OpticStudio computer. It includes both the MCP address and access token.");
             return;
         }
-        if (IsRemoteEndpointConfigured) StopBridge();
-        else if (Installation != null && (_bridge == null || _bridge.HasExited)) StartBridge();
+        SaveSettings();
+        StopBridge();
         await RefreshStatusAsync();
     }
-    private async void RemoteAccessToken_LostFocus(object sender, RoutedEventArgs e)
+    private void ClearRemoteSetup_Click(object sender, RoutedEventArgs e)
     {
+        _remoteEndpoint = "";
+        _remoteAccessToken = "";
+        RemoteSecureSetup.Text = "";
+        UpdateRemoteSetupStatus();
         SaveSettings();
-        await RefreshStatusAsync();
+        Report("Remote secure setup cleared. This computer will use its local MCP service.");
+        if (Installation != null && (_bridge == null || _bridge.HasExited)) StartBridge();
     }
     private string HostName => ShareOnLan.IsChecked == true ? "0.0.0.0" : "127.0.0.1";
     private void RefreshEndpoint() => Endpoint.Text = Url;
     private ZemaxInstallation? Installation => ZemaxVersions.SelectedItem as ZemaxInstallation;
     private string Url => "http://" + (ShareOnLan.IsChecked == true ? GetLanAddress() : "127.0.0.1") + ":" + Port.Text + "/mcp";
-    private bool IsRemoteEndpointConfigured => Uri.TryCreate(RemoteEndpoint.Text, UriKind.Absolute, out var remote) &&
-        (remote.Scheme == Uri.UriSchemeHttp || remote.Scheme == Uri.UriSchemeHttps);
-    private string McpUrl => Uri.TryCreate(RemoteEndpoint.Text, UriKind.Absolute, out var remote) &&
+    private bool IsRemoteEndpointConfigured => Uri.TryCreate(_remoteEndpoint, UriKind.Absolute, out var remote) &&
+        (remote.Scheme == Uri.UriSchemeHttp || remote.Scheme == Uri.UriSchemeHttps) && !string.IsNullOrWhiteSpace(_remoteAccessToken);
+    private string McpUrl => Uri.TryCreate(_remoteEndpoint, UriKind.Absolute, out var remote) &&
         (remote.Scheme == Uri.UriSchemeHttp || remote.Scheme == Uri.UriSchemeHttps) ? remote.ToString().TrimEnd('/') : Url;
-    private string McpToken => IsRemoteEndpointConfigured ? RemoteAccessToken.Password.Trim() : _localAccessToken;
+    private string McpToken => IsRemoteEndpointConfigured ? _remoteAccessToken : _localAccessToken;
 
     private void ShareOnLan_Changed(object sender, RoutedEventArgs e)
     {
@@ -494,7 +501,7 @@ public partial class MainWindow : Window
     {
         var setup = new JObject { ["endpoint"] = Url, ["accessToken"] = _localAccessToken }.ToString(Newtonsoft.Json.Formatting.None);
         System.Windows.Clipboard.SetText(setup);
-        Report("Secure connection setup copied. Treat it like a password and paste it into Remote MCP address on the AI computer.");
+        Report("Secure connection setup copied. Treat it like a password and paste it into the Secure setup field on the AI computer.");
     }
     private void RegenerateToken_Click(object sender, RoutedEventArgs e)
     {
@@ -520,12 +527,24 @@ public partial class MainWindow : Window
             var token = setup["accessToken"]?.ToString();
             if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ||
                 (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) || string.IsNullOrWhiteSpace(token)) return false;
-            RemoteEndpoint.Text = uri.ToString().TrimEnd('/');
-            RemoteAccessToken.Password = token;
-            Report("Secure connection setup accepted for " + RemoteEndpoint.Text + ".");
+            _remoteEndpoint = uri.ToString().TrimEnd('/');
+            _remoteAccessToken = token!;
+            RemoteSecureSetup.Text = "";
+            UpdateRemoteSetupStatus();
+            Report("Secure connection setup accepted for " + _remoteEndpoint + ".");
             return true;
         }
         catch { return false; }
+    }
+    private void UpdateRemoteSetupStatus()
+    {
+        if (!IsRemoteEndpointConfigured)
+        {
+            RemoteSetupStatus.Text = "No remote service configured; this computer uses its local MCP service.";
+            return;
+        }
+        var endpoint = new Uri(_remoteEndpoint);
+        RemoteSetupStatus.Text = "Secure setup saved for " + endpoint.Host + ":" + endpoint.Port + ". Address and token are stored with Windows encryption.";
     }
     private static string GenerateAccessToken()
     {
@@ -718,19 +737,22 @@ public partial class MainWindow : Window
         {
             var settings = File.Exists(SettingsPath) ? JObject.Parse(File.ReadAllText(SettingsPath)) : new JObject();
             Port.Text = settings["port"]?.ToString() ?? Port.Text;
-            RemoteEndpoint.Text = settings["remoteEndpoint"]?.ToString() ?? "";
-            RemoteAccessToken.Password = UnprotectSecret(settings["remoteTokenProtected"]?.ToString());
+            _remoteEndpoint = settings["remoteEndpoint"]?.ToString() ?? "";
+            _remoteAccessToken = UnprotectSecret(settings["remoteTokenProtected"]?.ToString());
             _localAccessToken = UnprotectSecret(settings["localTokenProtected"]?.ToString());
             if (string.IsNullOrWhiteSpace(_localAccessToken)) _localAccessToken = GenerateAccessToken();
             ShareOnLan.IsChecked = settings["shareOnLan"]?.Value<bool>() ?? false;
             ReadOnlyMode.IsChecked = settings["readOnly"]?.Value<bool>() ?? false;
             StartOnLogin.IsChecked = settings["startOnLogin"]?.Value<bool>() ?? false;
             _clientSetupPrompted = settings["clientSetupPrompted"]?.Value<bool>() ?? false;
+            UpdateRemoteSetupStatus();
         }
         catch
         {
             _localAccessToken = GenerateAccessToken();
-            RemoteAccessToken.Password = "";
+            _remoteEndpoint = "";
+            _remoteAccessToken = "";
+            UpdateRemoteSetupStatus();
         }
     }
     private void SaveSettings()
@@ -742,9 +764,9 @@ public partial class MainWindow : Window
             {
                 ["zemaxRoot"] = Installation?.Root ?? "",
                 ["port"] = Port.Text,
-                ["remoteEndpoint"] = RemoteEndpoint.Text,
+                ["remoteEndpoint"] = _remoteEndpoint,
                 ["localTokenProtected"] = ProtectSecret(_localAccessToken),
-                ["remoteTokenProtected"] = ProtectSecret(RemoteAccessToken.Password),
+                ["remoteTokenProtected"] = ProtectSecret(_remoteAccessToken),
                 ["shareOnLan"] = ShareOnLan.IsChecked == true,
                 ["readOnly"] = ReadOnlyMode.IsChecked == true,
                 ["startOnLogin"] = StartOnLogin.IsChecked == true,

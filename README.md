@@ -23,7 +23,7 @@ flowchart LR
   B --> E["Live dashboard\nMCP · ZOS-API · AI activity"]
 ```
 
-For a single computer, the AI client uses the local MCP address. For two computers, enable **Share with a trusted LAN computer** on the OpticStudio computer, choose **Copy secure setup**, and paste the copied endpoint/token bundle into **Remote MCP address** on the AI-client computer. The token is stored with Windows user-scope encryption and is written into supported AI-client configurations automatically.
+For a single computer, the AI client uses the local MCP address. For two computers, enable **Share with a trusted LAN computer** on the OpticStudio computer, choose **Copy secure setup**, then paste the complete copied bundle into the single **Secure setup** field on the AI computer. It automatically extracts both the endpoint and token, stores the token with Windows user-scope encryption, and writes it into supported AI-client configurations automatically.
 
 ## Highlights
 
