@@ -44,6 +44,10 @@ foreach ($clientMarker in 'CodexConfigDot', 'ClaudeConfigDot', 'CursorConfigDot'
   if ($launcherXaml -notmatch [regex]::Escape($clientMarker)) { throw "The AI client menu is missing its configuration indicator: $clientMarker" }
 }
 $launcherCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Launcher\MainWindow.xaml.cs")
+if ($launcherCode -match 'Task\.Run\(\(\) => GetHealth\(endpoint, McpToken\)\)' -or
+    $launcherCode -match 'Task\.Run\(\(\) => TestMcp\(endpoint, McpToken\)\)') {
+  throw "The launcher must capture the token on the WPF dispatcher before starting a background HTTP request."
+}
 if ($launcherCode -notmatch '(?s)AiConfigMenu_Click.*RefreshClientMenuIndicators\(\).*IsOpen = true' -or
     $launcherCode -notmatch '(?s)RefreshClientDashboard.*RefreshClientMenuIndicators\(clientStatuses\)') {
   throw "AI client menu indicators must refresh automatically and immediately before the menu opens."

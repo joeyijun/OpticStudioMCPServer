@@ -241,13 +241,17 @@ public partial class MainWindow : Window
         _refreshingStatus = true;
         var root = Installation?.Root;
         var endpoint = McpUrl;
+        // Capture UI-owned values before switching to the worker thread.  In
+        // remote mode McpToken reads the PasswordBox, which must only ever be
+        // accessed on this WPF dispatcher thread.
+        var accessToken = McpToken;
         var apiFiles = Installation?.ApiFilesPresent == true;
         var localBridge = _bridge != null && !_bridge.HasExited;
         ConnectionSummary.Text = "Checking " + endpoint + "…";
         SetIndicatorsChecking();
         try
         {
-            var health = await Task.Run(() => GetHealth(endpoint, McpToken));
+            var health = await Task.Run(() => GetHealth(endpoint, accessToken));
             var apiLoaded = health["zosApiLoaded"]?.Value<bool>() == true;
             var apiConnected = health["zosApiConnected"]?.Value<bool>() == true;
             var licenseStatus = health["licenseStatus"]?.ToString() ?? "Not checked";
@@ -539,8 +543,9 @@ public partial class MainWindow : Window
     private async void TestMcp_Click(object sender, RoutedEventArgs e)
     {
         var endpoint = McpUrl;
+        var accessToken = McpToken;
         Report("Testing MCP handshake: " + endpoint + "…");
-        try { Report(await Task.Run(() => TestMcp(endpoint, McpToken))); }
+        try { Report(await Task.Run(() => TestMcp(endpoint, accessToken))); }
         catch (Exception ex) { Report("MCP connection failed: " + ex.Message + Environment.NewLine + "On the OpticStudio computer, keep Start-Zemax-MCP open, start the bridge, then enable Share with a trusted LAN computer."); }
         await RefreshStatusAsync();
     }
