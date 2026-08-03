@@ -265,6 +265,23 @@ public partial class MainWindow : Window
             var bridgeRunning = health["bridgeRunning"]?.Value<bool>() == true;
             var serverRunning = health["mcpServerRunning"]?.Value<bool>() == true;
             var activeRequests = health["activeRequests"]?.Value<int>() ?? 0;
+            var activeOperations = health["activeOperations"] as JArray;
+            var activeOperation = activeOperations?.FirstOrDefault();
+            var activeOperationText = activeOperation == null ? "" :
+                "; current: " + (activeOperation["tool"]?.ToString() ?? activeOperation["method"]?.ToString() ?? "MCP request") +
+                " (" + FormatUptime(activeOperation["elapsedSeconds"]?.Value<long?>()) + ")";
+            var jobs = health["jobs"] as JArray;
+            var activeJob = jobs?.FirstOrDefault(x =>
+            {
+                var state = x["state"]?.ToString();
+                return state is "Queued" or "Running" or "Cancelling";
+            });
+            var activeJobText = activeJob == null ? "" :
+                "; job: " + (activeJob["tool"]?.ToString() ?? "Zemax job") +
+                " · " + (activeJob["state"]?.ToString() ?? "running") +
+                (activeJob["progress"]?.Value<double?>() is { } progress ? " " + Math.Round(progress * 100) + "%" : "") +
+                " (" + FormatUptime(activeJob["elapsedSeconds"]?.Value<long?>()) + ")" +
+                (activeJob["queuePosition"]?.Value<int?>() is { } queue && queue > 0 ? " · queue " + queue : "");
             var restartCount = health["serverRestartCount"]?.Value<int>() ?? 0;
             var uptime = FormatUptime(health["bridgeUptimeSeconds"]?.Value<long?>());
             var authenticationRequired = health["authenticationRequired"]?.Value<bool>() == true;
@@ -293,7 +310,7 @@ public partial class MainWindow : Window
                 "Snapshot folder: " + (string.IsNullOrWhiteSpace(snapshotDirectory) ? "not reported" : snapshotDirectory) +
                 "; latest snapshot: " + (string.IsNullOrWhiteSpace(lastSnapshotPath) ? "none this session" : lastSnapshotPath) + "\n" +
                 pathDetails + "\n" +
-                "AI clients active recently: " + activeClients + "; requests in progress: " + activeRequests +
+                "AI clients active recently: " + activeClients + "; requests in progress: " + activeRequests + activeOperationText + activeJobText +
                 (string.IsNullOrWhiteSpace(lastServerError) ? "" : "\nLast MCP server error: " + lastServerError) +
                 (localBridge ? "\nLocal launcher bridge process: running" : "");
             var ready = bridgeRunning && serverRunning && apiConnected;
@@ -302,7 +319,7 @@ public partial class MainWindow : Window
                 (apiConnected ? "connected" : apiLoaded ? "waiting" : "not connected") + ", license " + licenseStatus + "\n" +
                 endpoint + " · " + (authenticationRequired ? "token protected" : "unprotected") +
                 " · " + (readOnly ? "read-only" : "snapshot protected") +
-                " · AI active: " + activeClients + " · requests: " + activeRequests +
+                " · AI active: " + activeClients + " · requests: " + activeRequests + activeOperationText + activeJobText +
                 (restartCount > 0 ? " · restarts: " + restartCount : "") +
                 (string.IsNullOrWhiteSpace(lastServerError) ? "" : "\nLast error: " + lastServerError);
             if (bridgeRunning && serverRunning) SetIndicator(McpStateDot, McpState, "Online — MCP server is accepting connections", System.Windows.Media.Brushes.SeaGreen);

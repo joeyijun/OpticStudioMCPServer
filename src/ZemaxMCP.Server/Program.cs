@@ -3,10 +3,12 @@ using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Server;
 using Serilog;
 using System.Reflection;
+using System.Globalization;
 using ZemaxMCP.Core.Logging;
 using ZemaxMCP.Core.Services.ConstrainedOptimization;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Documentation;
+using ZemaxMCP.Server.Services.Jobs;
 
 namespace ZemaxMCP.Server;
 
@@ -90,6 +92,16 @@ internal static class ServerApplication
             builder.Services.AddSingleton<OperandSearchService>();
             builder.Services.AddSingleton<ConstraintStore>();
             builder.Services.AddSingleton<MultistartState>();
+            var jobManager = new McpJobManager();
+            jobManager.JobChanged += job => Console.Error.WriteLine(string.Join("|", new[]
+            {
+                "ZEMAX_MCP_STATUS:JOB:" + job.JobId,
+                job.ToolName,
+                job.State.ToString(),
+                job.Progress?.ToString("0.###", CultureInfo.InvariantCulture) ?? "",
+                job.QueuePosition.ToString(CultureInfo.InvariantCulture)
+            }));
+            builder.Services.AddSingleton(jobManager);
 
             // Add MCP server with stdio transport
             builder.Services.AddMcpServer(options =>
@@ -101,6 +113,7 @@ internal static class ServerApplication
                 };
             })
             .WithStdioServerTransport()
+            .WithTools<ZemaxMCP.Server.Tools.Jobs.McpJobTools>()
             // Analysis Tools
             .WithTools<ZemaxMCP.Server.Tools.Analysis.SpotDiagramTool>()
             .WithTools<ZemaxMCP.Server.Tools.Analysis.MtfAnalysisTool>()

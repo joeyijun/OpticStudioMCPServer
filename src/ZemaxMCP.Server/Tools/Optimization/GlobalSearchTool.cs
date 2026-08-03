@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using ZOSAPI.Tools.Optimization;
 using ZemaxMCP.Core.Session;
+using ZemaxMCP.Server.Services.Jobs;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
@@ -9,8 +10,13 @@ namespace ZemaxMCP.Server.Tools.Optimization;
 public class GlobalSearchTool
 {
     private readonly IZemaxSession _session;
+    private readonly McpJobManager _jobs;
 
-    public GlobalSearchTool(IZemaxSession session) => _session = session;
+    public GlobalSearchTool(IZemaxSession session, McpJobManager jobs)
+    {
+        _session = session;
+        _jobs = jobs;
+    }
 
     public record GlobalSearchResult(
         bool Success,
@@ -21,7 +27,9 @@ public class GlobalSearchTool
         int SolutionsSaved,
         string Algorithm,
         double RuntimeSeconds,
-        string TerminationReason
+        string TerminationReason,
+        string? JobId = null,
+        string? JobState = null
     );
 
     public record SolutionInfo(
@@ -35,7 +43,26 @@ public class GlobalSearchTool
         [Description("Optimization algorithm: DLS or Orthogonal")] string algorithm = "DLS",
         [Description("Number of CPU cores to use (0 for all available)")] int cores = 0,
         [Description("Number of solutions to save: 10, 20, 50, or 100")] int solutionsToSave = 10,
-        [Description("Maximum runtime in seconds (0 for no limit - will run until cancelled)")] double timeoutSeconds = 60)
+        [Description("Maximum runtime in seconds (0 for no limit - will run until cancelled)")] double timeoutSeconds = 60,
+        [Description("Queue this long operation and return a job id immediately (recommended)")] bool runInBackground = true)
+    {
+        if (!runInBackground) return await ExecuteCoreAsync(algorithm, cores, solutionsToSave, timeoutSeconds, CancellationToken.None);
+
+        var timeout = timeoutSeconds > 0 ? TimeSpan.FromSeconds(timeoutSeconds + 15) : (TimeSpan?)null;
+        var job = _jobs.Enqueue("zemax_global_search", async context =>
+        {
+            context.ReportProgress(0, "Waiting for the ZOS-API job slot.");
+            var result = await ExecuteCoreAsync(algorithm, cores, solutionsToSave, timeoutSeconds, context.CancellationToken);
+            if (!result.Success) throw new InvalidOperationException(result.Error ?? "Global search failed.");
+            context.SetResult(result);
+            context.ReportProgress(1, result.TerminationReason);
+        }, timeout);
+        return new GlobalSearchResult(true, null, 0, 0, 0, 0, algorithm, 0,
+            "Queued. Use zemax_job_status or zemax_job_cancel.", job.JobId, job.State.ToString());
+    }
+
+    private async Task<GlobalSearchResult> ExecuteCoreAsync(
+        string algorithm, int cores, int solutionsToSave, double timeoutSeconds, CancellationToken cancellationToken)
     {
         try
         {
@@ -47,6 +74,7 @@ public class GlobalSearchTool
                 ["timeoutSeconds"] = timeoutSeconds
             };
 
+            cancellationToken.ThrowIfCancellationRequested();
             var result = await _session.ExecuteAsync("GlobalSearch", parameters, system =>
             {
                 if (system == null)
@@ -146,7 +174,7 @@ public class GlobalSearchTool
                 {
                     globalOpt.Close();
                 }
-            });
+            }, cancellationToken);
 
             return result;
         }

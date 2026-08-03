@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Globalization;
 using ModelContextProtocol.Server;
 using ZemaxMCP.Core.Session;
+using ZemaxMCP.Server.Services.Jobs;
 using ZOSAPI.Analysis;
 using ZOSAPI.Analysis.PhysicalOptics;
 
@@ -11,8 +12,13 @@ namespace ZemaxMCP.Server.Tools.Analysis;
 public class PopTool
 {
     private readonly IZemaxSession _session;
+    private readonly McpJobManager _jobs;
 
-    public PopTool(IZemaxSession session) => _session = session;
+    public PopTool(IZemaxSession session, McpJobManager jobs)
+    {
+        _session = session;
+        _jobs = jobs;
+    }
 
     public record PopResult(
         bool Success,
@@ -37,7 +43,9 @@ public class PopTool
         double[][]? Grid = null,
         string? GridFilePath = null,
         string? BmpFilePath = null,
-        string? OutputBeamFilePath = null);
+        string? OutputBeamFilePath = null,
+        string? JobId = null,
+        string? JobState = null);
 
     // Inline threshold: 256x256 = 65536 cells ~ 2 MB JSON. Larger grids must write to disk.
     private const int InlineGridCellLimit = 65536;
@@ -89,8 +97,27 @@ public class PopTool
         [Description("Split control for width auto-calc; null = inherit from autoCalculate")] bool? autoWidth = null,
         [Description("Force ResampleAfterRefraction=true on surfaces in [startSurface, endSurface] before running. Mutates LDE but does not save.")] bool resampleAfterRefraction = false,
         [Description("If true, sets settings.UsePolarization=false (ZOSAPI polarization skip)")] bool ignorePolarization = false,
-        [Description("Optional .ZBF output path; sets SaveOutputBeam=true and OutputBeamFile")] string? outputBeamFilePath = null)
+        [Description("Optional .ZBF output path; sets SaveOutputBeam=true and OutputBeamFile")] string? outputBeamFilePath = null,
+        [Description("Queue POP and return a job id immediately (recommended for large sampling grids)")] bool runInBackground = true)
     {
+        if (runInBackground)
+        {
+            var job = _jobs.Enqueue("zemax_pop", async context =>
+            {
+                context.ReportProgress(0, "Waiting for the ZOS-API job slot.");
+                context.CancellationToken.ThrowIfCancellationRequested();
+                var result = await ExecuteAsync(
+                    beamType, beamParams, startSurface, endSurface, xSampling, ySampling, xWidth, yWidth,
+                    autoCalculate, dataType, peakNormalize, surfaceToBeam, outputGridPath, exportBmpPath,
+                    wavelength, field, autoSampling, autoWidth, resampleAfterRefraction, ignorePolarization,
+                    outputBeamFilePath, runInBackground: false);
+                context.CancellationToken.ThrowIfCancellationRequested();
+                if (!result.Success) throw new InvalidOperationException(result.Error ?? "POP analysis failed.");
+                context.SetResult(result);
+                context.ReportProgress(1, "Completed.");
+            });
+            return new PopResult(true, JobId: job.JobId, JobState: job.State.ToString());
+        }
         try
         {
             var parameters = new Dictionary<string, object?>

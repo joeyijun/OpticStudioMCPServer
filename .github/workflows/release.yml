@@ -30,6 +30,9 @@ jobs:
       - name: Verify live HTTP security behavior
         shell: pwsh
         run: ./scripts/verify-http-security.ps1 -Configuration Release
+      - name: Verify Streamable HTTP behavior
+        shell: pwsh
+        run: ./scripts/verify-streamable-http.ps1 -Configuration Release
       - name: Verify updater apply and rollback behavior
         shell: pwsh
         run: ./scripts/verify-updater.ps1 -Configuration Release
