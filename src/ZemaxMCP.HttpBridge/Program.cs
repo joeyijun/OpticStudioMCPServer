@@ -59,6 +59,10 @@ internal sealed class BridgeOptions
     public string Path { get; private set; } = "/mcp/";
     public string LogDirectory { get; private set; } = System.IO.Path.Combine(AppContext.BaseDirectory, "logs");
     public int RequestTimeoutSeconds { get; private set; } = 300;
+    public string AccessToken { get; private set; } = Environment.GetEnvironmentVariable("ZEMAX_MCP_TOKEN") ?? "";
+    public bool ReadOnly { get; private set; }
+    public string SnapshotDirectory { get; private set; } = Environment.GetEnvironmentVariable("ZEMAX_MCP_SNAPSHOT_DIR") ??
+        System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZemaxMCP", "snapshots");
 
     public static BridgeOptions Parse(string[] args)
     {
@@ -84,11 +88,18 @@ internal sealed class BridgeOptions
                         throw new ArgumentException("--request-timeout-seconds must be between 10 and 3600.");
                     result.RequestTimeoutSeconds = timeout;
                     break;
+                case "--read-only":
+                    if (!bool.TryParse(value, out var readOnly)) throw new ArgumentException("--read-only must be true or false.");
+                    result.ReadOnly = readOnly;
+                    break;
+                case "--snapshot-dir": result.SnapshotDirectory = value; break;
                 default: throw new ArgumentException("Unknown bridge option: " + args[i]);
             }
         }
         if (string.IsNullOrWhiteSpace(result.ServerPath)) throw new ArgumentException("--server cannot be empty.");
         if (string.IsNullOrWhiteSpace(result.Host)) throw new ArgumentException("--host cannot be empty.");
+        if (result.Host == "0.0.0.0" && string.IsNullOrWhiteSpace(result.AccessToken))
+            throw new ArgumentException("LAN sharing requires ZEMAX_MCP_TOKEN to be configured.");
         return result;
     }
 }
@@ -113,6 +124,7 @@ internal sealed class StdioMcpBridge : IDisposable
     private string? _loadedZosApiPath;
     private string? _loadedInterfacesPath;
     private string? _loadedNetHelperPath;
+    private string? _lastSnapshotPath;
     private DateTimeOffset? _serverStartedAt;
     private string? _lastServerError;
     private int _serverRestartCount;
@@ -154,7 +166,12 @@ internal sealed class StdioMcpBridge : IDisposable
             RedirectStandardError = true,
             CreateNoWindow = true
         };
+        // Authentication terminates at the HTTP bridge. The ZOS-API subprocess
+        // does not need the LAN secret and must not inherit it accidentally.
+        psi.EnvironmentVariables.Remove("ZEMAX_MCP_TOKEN");
         if (!string.IsNullOrWhiteSpace(_options.ZemaxRoot)) psi.EnvironmentVariables["ZEMAX_ROOT"] = _options.ZemaxRoot;
+        psi.EnvironmentVariables["ZEMAX_MCP_READ_ONLY"] = _options.ReadOnly ? "1" : "0";
+        psi.EnvironmentVariables["ZEMAX_MCP_SNAPSHOT_DIR"] = _options.SnapshotDirectory;
         var process = Process.Start(psi) ?? throw new InvalidOperationException("Unable to launch ZemaxMCP.Server.exe");
         process.EnableRaisingEvents = true;
         process.ErrorDataReceived += (_, e) => HandleServerStatus(e.Data);
@@ -198,6 +215,7 @@ internal sealed class StdioMcpBridge : IDisposable
         const string zosApiAssembly = "ZEMAX_MCP_STATUS:ZOSAPI_ASSEMBLY:";
         const string interfacesAssembly = "ZEMAX_MCP_STATUS:ZOSAPI_INTERFACES_ASSEMBLY:";
         const string netHelperAssembly = "ZEMAX_MCP_STATUS:ZOSAPI_NETHELPER_ASSEMBLY:";
+        const string snapshotCreated = "ZEMAX_MCP_STATUS:SNAPSHOT_CREATED:";
         if (statusMessage.StartsWith(licenseValid, StringComparison.Ordinal))
         {
             lock (_stateLock) _licenseStatus = "Valid — " + statusMessage.Substring(licenseValid.Length);
@@ -230,6 +248,12 @@ internal sealed class StdioMcpBridge : IDisposable
         if (statusMessage.StartsWith(netHelperAssembly, StringComparison.Ordinal))
         {
             lock (_stateLock) _loadedNetHelperPath = statusMessage.Substring(netHelperAssembly.Length);
+            return;
+        }
+        if (statusMessage.StartsWith(snapshotCreated, StringComparison.Ordinal))
+        {
+            lock (_stateLock) _lastSnapshotPath = statusMessage.Substring(snapshotCreated.Length);
+            Log.Information("Created a pre-change lens snapshot.");
             return;
         }
         Log.Warning("Server: {Message}", statusMessage);
@@ -304,16 +328,24 @@ internal sealed class StdioMcpBridge : IDisposable
     {
         try
         {
+            if (!ValidateOrigin(context)) return;
+            if (context.Request.HttpMethod.Equals("OPTIONS", StringComparison.OrdinalIgnoreCase))
+            {
+                AddCorsHeaders(context);
+                context.Response.StatusCode = (int)HttpStatusCode.NoContent;
+                context.Response.Close();
+                return;
+            }
+            if (!IsAuthorized(context.Request.Headers["Authorization"], _options.AccessToken))
+            {
+                context.Response.StatusCode = (int)HttpStatusCode.Unauthorized;
+                context.Response.Close();
+                return;
+            }
             if (context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
                 context.Request.Url?.AbsolutePath.TrimEnd('/').EndsWith("/health", StringComparison.OrdinalIgnoreCase) == true)
             {
                 await WriteJsonAsync(context, BuildHealthPayload()).ConfigureAwait(false);
-                return;
-            }
-            if (context.Request.HttpMethod.Equals("OPTIONS", StringComparison.OrdinalIgnoreCase))
-            {
-                context.Response.StatusCode = (int)HttpStatusCode.NoContent;
-                context.Response.Close();
                 return;
             }
             if (!context.Request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase))
@@ -413,6 +445,60 @@ internal sealed class StdioMcpBridge : IDisposable
         }
     }
 
+    private bool ValidateOrigin(HttpListenerContext context)
+    {
+        var origin = context.Request.Headers["Origin"];
+        if (string.IsNullOrWhiteSpace(origin)) return true; // Native MCP clients normally omit Origin.
+        if (IsOriginAllowed(origin, context.Request.Url))
+        {
+            AddCorsHeaders(context);
+            return true;
+        }
+        Log.Warning("Rejected MCP request from untrusted Origin {Origin}", origin);
+        context.Response.StatusCode = (int)HttpStatusCode.Forbidden;
+        context.Response.Close();
+        return false;
+    }
+
+    private static void AddCorsHeaders(HttpListenerContext context)
+    {
+        var origin = context.Request.Headers["Origin"];
+        if (string.IsNullOrWhiteSpace(origin)) return;
+        context.Response.Headers["Access-Control-Allow-Origin"] = origin;
+        context.Response.Headers["Vary"] = "Origin";
+        context.Response.Headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
+        context.Response.Headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version";
+    }
+
+    internal static bool IsOriginAllowed(string origin, Uri? requestUrl)
+    {
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var value)) return false;
+        if (value.Scheme != Uri.UriSchemeHttp && value.Scheme != Uri.UriSchemeHttps) return false;
+        if (requestUrl == null) return false;
+        if (value.Host.Equals(requestUrl.Host, StringComparison.OrdinalIgnoreCase)) return true;
+        return value.IsLoopback && requestUrl.IsLoopback;
+    }
+
+    internal static bool IsAuthorized(string? authorization, string expectedToken)
+    {
+        if (string.IsNullOrWhiteSpace(expectedToken)) return true;
+        const string prefix = "Bearer ";
+        if (string.IsNullOrWhiteSpace(authorization)) return false;
+        if (!authorization!.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+        return FixedTimeEquals(authorization!.Substring(prefix.Length).Trim(), expectedToken);
+    }
+
+    private static bool FixedTimeEquals(string supplied, string expected)
+    {
+        var left = Encoding.UTF8.GetBytes(supplied);
+        var right = Encoding.UTF8.GetBytes(expected);
+        var difference = left.Length ^ right.Length;
+        var length = Math.Max(left.Length, right.Length);
+        for (var i = 0; i < length; i++)
+            difference |= (i < left.Length ? left[i] : 0) ^ (i < right.Length ? right[i] : 0);
+        return difference == 0;
+    }
+
     private JObject BuildHealthPayload()
     {
         lock (_stateLock)
@@ -437,6 +523,11 @@ internal sealed class StdioMcpBridge : IDisposable
             return new JObject
             {
                 ["bridgeRunning"] = true,
+                ["authenticationRequired"] = !string.IsNullOrWhiteSpace(_options.AccessToken),
+                ["originValidationEnabled"] = true,
+                ["readOnly"] = _options.ReadOnly,
+                ["snapshotDirectory"] = _options.SnapshotDirectory,
+                ["lastSnapshotPath"] = _lastSnapshotPath,
                 ["bridgeStartedAt"] = _startedAt.ToString("O"),
                 ["bridgeUptimeSeconds"] = Math.Max(0, (long)(now - _startedAt).TotalSeconds),
                 ["mcpServerRunning"] = IsServerRunning(),

@@ -10,9 +10,9 @@ The client cards deliberately use different states: **Installed** means the appl
 
 If your organization blocks `Install.exe` but permits batch files, double-click `Portable-Install.cmd` instead. It performs the same per-user copy and starts the launcher. This is a convenience fallback, not a way to bypass corporate security policy: if Windows also blocks the application executable, request an IT allow-list or a company code-signing certificate.
 
-For a second PC, tick **Share with a trusted LAN computer**, then use the displayed LAN endpoint in the client configuration. If Windows Firewall asks, allow the selected port only for the trusted private network. Do not expose an unauthenticated MCP endpoint to the public internet.
+For a second PC, tick **Share with a trusted LAN computer**, then choose **Copy secure setup**. On the AI-client computer, paste the copied JSON directly into **Remote MCP address**; the launcher separates the endpoint and access token for you. If Windows Firewall asks, allow the selected port only for the trusted private network. The bridge refuses LAN mode without a token and rejects unrelated browser origins, but it is still intended for a trusted private network—not direct internet exposure.
 
-On the AI-client computer, extract the same release, double-click `Install.exe`, paste the endpoint copied from the OpticStudio computer into **Remote MCP address**, then use **Configure AI clients**. This is the only extra step for a two-computer setup and requires no terminal or manual file editing.
+On the AI-client computer, extract the same release, double-click `Install.exe`, paste the secure setup copied from the OpticStudio computer into **Remote MCP address**, then use **Configure AI clients**. This is the only extra step for a two-computer setup and requires no terminal or manual file editing. The token is protected with Windows DPAPI for the current user. If you choose **New token** later, copy the new secure setup and reconfigure all clients; the previous token stops working immediately.
 
 Kimi Code uses `~/.kimi-code/mcp.json` (or `$KIMI_CODE_HOME/mcp.json`) and WorkBuddy uses `~/.workbuddy/mcp.json`. The launcher edits only its `zemax-mcp` entry and preserves other servers. For another HTTP-capable agent, choose **Copy generic HTTP MCP JSON** and paste the result into that agent's documented MCP settings.
 
@@ -26,13 +26,15 @@ The launcher checks `ZEMAX_ROOT`, Windows installation/product registry entries,
 
 ## Updates and logs
 
-Use **Updates** in the launcher to download and apply the current GitHub release, then restart it. Each release includes the server, HTTP bridge, launcher, and installer. Logs are created in the application's `logs` folder; your OpticStudio installation and client configuration are retained. The launcher retries its bridge after an unexpected exit, while the bridge separately restarts a failed MCP server subprocess and reports restart/error information in the dashboard.
+Use **Updates** in the launcher to download and apply the current GitHub release. The launcher accepts an update only after verifying its RSA-signed manifest, expected release version and asset name, file size, and SHA-256. A separate updater keeps a temporary backup and restores the previous installation if replacement fails. Each release includes the server, HTTP bridge, launcher, installer, and updater. Logs are created in the application's `logs` folder; your OpticStudio installation and client configuration are retained. The launcher retries its bridge after an unexpected exit, while the bridge separately restarts a failed MCP server subprocess and reports restart/error information in the dashboard.
+
+Enable **Read-only mode** when an AI should only inspect the optical system. Mutating operations are rejected before the lens is touched. With read-only mode off, recognised lens-changing tools first create a timestamped `.zos` copy under `%LOCALAPPDATA%\ZemaxMCP\snapshots`; if that copy cannot be verified, the requested change is cancelled. The newest 100 snapshots are retained. Open **Details** to see the current security mode and the latest snapshot path.
 
 The public ZIP intentionally contains no `ZOSAPI*.dll` files. On the computer that has OpticStudio installed, the launcher uses that user's local licensed installation at runtime; it does not download, bundle, or redistribute Ansys ZOS-API files.
 
 ### Maintainers: publishing an update
 
-The full ZIP is published from a trusted self-hosted Windows GitHub Actions runner that has a licensed OpticStudio installation. Give that runner the labels `self-hosted`, `windows`, and `zemax`, and set its machine-level `ZEMAX_ROOT` environment variable to the OpticStudio directory. The publishing script accepts NetHelper in either the program root or `ZOS-API\Libraries`. Pushing a `v*` tag then creates the GitHub Release and uploads `ZemaxMCP-win-x64.zip`; installed launchers will discover it through **Check updates**. This keeps proprietary ZOS-API files out of source control and public hosted runners.
+The full ZIP is published from a trusted self-hosted Windows GitHub Actions runner that has a licensed OpticStudio installation. Give that runner the labels `self-hosted`, `windows`, and `zemax`, and set its machine-level `ZEMAX_ROOT` environment variable to the OpticStudio directory. Generate a release-signing key once with `scripts/New-UpdateSigningKey.ps1`, store its private Base64 value as the GitHub Actions secret `UPDATE_SIGNING_PRIVATE_KEY_B64`, and keep that private key out of source control and release assets. The publishing script accepts NetHelper in either the program root or `ZOS-API\Libraries`. Pushing a `v*` tag builds the ZIP, creates `release-manifest.json`, and uploads both to the GitHub Release; installed launchers will discover only correctly signed updates. This keeps proprietary ZOS-API files and the signing key out of source control and public hosted runners.
 
 Use **Open logs** in the launcher for both bridge and server diagnostics; no command prompt is needed to locate or inspect logs.
 
@@ -49,7 +51,8 @@ The script writes `artifacts/ZemaxMCP-win-x64.zip`.
 After deploying the package, maintainers can verify bridge health, the complete tool catalog, and a read-only smoke-test set from another trusted LAN computer:
 
 ```powershell
-./scripts/verify-live-mcp.ps1 -Endpoint "http://192.168.8.1:8000/mcp"
+$env:ZEMAX_MCP_TOKEN = "paste-the-token-from-copy-secure-setup"
+./scripts/verify-live-mcp.ps1 -Endpoint "http://192.168.8.1:8000/mcp" -VerifySafety
 ```
 
-The verifier never invokes tools that change or save the current optical system.
+The safety check reads the current title/author/notes and requests those same values. In read-only mode it verifies that the request is blocked before ZOS-API mutation; in read/write mode it verifies that the bridge reports a newly created `.zos` snapshot before the no-op assignment. It never saves or intentionally changes the current optical system.

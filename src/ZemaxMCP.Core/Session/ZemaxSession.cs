@@ -12,7 +12,8 @@ public class ZemaxSession : IZemaxSession
     private readonly ILogger<ZemaxSession> _logger;
     private readonly IZemaxCommandLog _commandLog;
     private readonly ZemaxConnectionOptions _options;
-    private readonly SemaphoreSlim _lock = new(1, 1);
+    private readonly ZosApiDispatcher _dispatcher = new();
+    private readonly ZemaxOperationSafety _safety = new();
 
     private IZOSAPI_Application? _application;
     private IOpticalSystem? _primarySystem;
@@ -53,7 +54,10 @@ public class ZemaxSession : IZemaxSession
         return ConnectAsync(_options.Mode, _options.InstanceId, cancellationToken);
     }
 
-    public async Task<bool> ConnectAsync(ConnectionMode mode, int instanceId = 0, CancellationToken cancellationToken = default)
+    public Task<bool> ConnectAsync(ConnectionMode mode, int instanceId = 0, CancellationToken cancellationToken = default) =>
+        _dispatcher.InvokeAsync(() => ConnectCore(mode, instanceId), cancellationToken);
+
+    private bool ConnectCore(ConnectionMode mode, int instanceId)
     {
         var sw = Stopwatch.StartNew();
         _commandLog.LogCommand("Connect", new Dictionary<string, object?>
@@ -63,7 +67,6 @@ public class ZemaxSession : IZemaxSession
             ["InstanceId"] = instanceId
         });
 
-        await _lock.WaitAsync(cancellationToken);
         try
         {
             if (IsConnected)
@@ -161,41 +164,35 @@ public class ZemaxSession : IZemaxSession
         {
             _logger.LogError(ex, "Failed to connect to OpticStudio");
             _commandLog.LogError("Connect", ex);
-            await CleanupAsync();
+            Cleanup();
             throw new ZemaxConnectionException("Failed to connect to OpticStudio", ex);
         }
         catch (ZemaxConnectionException ex)
         {
             _commandLog.LogError("Connect", ex);
+            Cleanup();
             throw;
-        }
-        finally
-        {
-            _lock.Release();
         }
     }
 
-    public async Task DisconnectAsync()
+    public Task DisconnectAsync()
     {
-        var sw = Stopwatch.StartNew();
-        _commandLog.LogCommand("Disconnect", null);
-
-        await _lock.WaitAsync();
-        try
+        return _dispatcher.InvokeAsync(() =>
         {
-            await CleanupAsync();
-            _logger.LogInformation("Disconnected from OpticStudio");
-            _commandLog.LogResult("Disconnect", true, "Disconnected", sw.ElapsedMilliseconds);
-        }
-        catch (Exception ex)
-        {
-            _commandLog.LogError("Disconnect", ex);
-            throw;
-        }
-        finally
-        {
-            _lock.Release();
-        }
+            var sw = Stopwatch.StartNew();
+            _commandLog.LogCommand("Disconnect", null);
+            try
+            {
+                Cleanup();
+                _logger.LogInformation("Disconnected from OpticStudio");
+                _commandLog.LogResult("Disconnect", true, "Disconnected", sw.ElapsedMilliseconds);
+            }
+            catch (Exception ex)
+            {
+                _commandLog.LogError("Disconnect", ex);
+                throw;
+            }
+        });
     }
 
     public void StartConnectInBackground(ConnectionMode mode = ConnectionMode.Standalone, int instanceId = 0)
@@ -203,17 +200,10 @@ public class ZemaxSession : IZemaxSession
         if (IsConnected || IsConnecting) return;
 
         _logger.LogInformation("Starting background connection to OpticStudio in {Mode} mode", mode);
-        _backgroundConnectTask = Task.Run(async () =>
+        _backgroundConnectTask = ConnectAsync(mode, instanceId).ContinueWith(task =>
         {
-            try
-            {
-                await ConnectAsync(mode, instanceId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Background connection to OpticStudio failed");
-            }
-        });
+            if (task.IsFaulted) _logger.LogWarning(task.Exception?.GetBaseException(), "Background connection to OpticStudio failed");
+        }, TaskScheduler.Default);
     }
 
     public async Task<T> ExecuteAsync<T>(
@@ -242,32 +232,30 @@ public class ZemaxSession : IZemaxSession
             await WaitForBackgroundConnectAsync(cancellationToken);
         }
 
-        var sw = Stopwatch.StartNew();
-        _commandLog.LogCommand(commandName, parameters);
-
-        await _lock.WaitAsync(cancellationToken);
-        try
+        return await _dispatcher.InvokeAsync(() =>
         {
-            EnsureConnected();
-            var result = operation(_primarySystem!);
-            _commandLog.LogResult(commandName, true, result, sw.ElapsedMilliseconds);
-            return result;
-        }
-        catch (System.Runtime.InteropServices.COMException ex)
-        {
-            _logger.LogError(ex, "COM error during Zemax operation: {Command}", commandName);
-            _commandLog.LogError(commandName, ex);
-            throw new ZemaxException($"Zemax operation failed: {commandName}", ex);
-        }
-        catch (Exception ex)
-        {
-            _commandLog.LogError(commandName, ex);
-            throw;
-        }
-        finally
-        {
-            _lock.Release();
-        }
+            var sw = Stopwatch.StartNew();
+            _commandLog.LogCommand(commandName, parameters);
+            try
+            {
+                EnsureConnected();
+                _safety.BeforeOperation(_primarySystem!, commandName);
+                var result = operation(_primarySystem!);
+                _commandLog.LogResult(commandName, true, result, sw.ElapsedMilliseconds);
+                return result;
+            }
+            catch (System.Runtime.InteropServices.COMException ex)
+            {
+                _logger.LogError(ex, "COM error during Zemax operation: {Command}", commandName);
+                _commandLog.LogError(commandName, ex);
+                throw new ZemaxException($"Zemax operation failed: {commandName}", ex);
+            }
+            catch (Exception ex)
+            {
+                _commandLog.LogError(commandName, ex);
+                throw;
+            }
+        }, cancellationToken);
     }
 
     public async Task ExecuteAsync(
@@ -282,31 +270,29 @@ public class ZemaxSession : IZemaxSession
             await WaitForBackgroundConnectAsync(cancellationToken);
         }
 
-        var sw = Stopwatch.StartNew();
-        _commandLog.LogCommand(commandName, parameters);
-
-        await _lock.WaitAsync(cancellationToken);
-        try
+        await _dispatcher.InvokeAsync(() =>
         {
-            EnsureConnected();
-            operation(_primarySystem!);
-            _commandLog.LogResult(commandName, true, null, sw.ElapsedMilliseconds);
-        }
-        catch (System.Runtime.InteropServices.COMException ex)
-        {
-            _logger.LogError(ex, "COM error during Zemax operation: {Command}", commandName);
-            _commandLog.LogError(commandName, ex);
-            throw new ZemaxException($"Zemax operation failed: {commandName}", ex);
-        }
-        catch (Exception ex)
-        {
-            _commandLog.LogError(commandName, ex);
-            throw;
-        }
-        finally
-        {
-            _lock.Release();
-        }
+            var sw = Stopwatch.StartNew();
+            _commandLog.LogCommand(commandName, parameters);
+            try
+            {
+                EnsureConnected();
+                _safety.BeforeOperation(_primarySystem!, commandName);
+                operation(_primarySystem!);
+                _commandLog.LogResult(commandName, true, null, sw.ElapsedMilliseconds);
+            }
+            catch (System.Runtime.InteropServices.COMException ex)
+            {
+                _logger.LogError(ex, "COM error during Zemax operation: {Command}", commandName);
+                _commandLog.LogError(commandName, ex);
+                throw new ZemaxException($"Zemax operation failed: {commandName}", ex);
+            }
+            catch (Exception ex)
+            {
+                _commandLog.LogError(commandName, ex);
+                throw;
+            }
+        }, cancellationToken);
     }
 
     public async Task<bool> OpenFileAsync(string filePath, CancellationToken cancellationToken = default)
@@ -372,7 +358,7 @@ public class ZemaxSession : IZemaxSession
         }
     }
 
-    private Task CleanupAsync()
+    private void Cleanup()
     {
         _primarySystem = null;
 
@@ -391,23 +377,19 @@ public class ZemaxSession : IZemaxSession
 
         CurrentFilePath = null;
         ZemaxDataDir = null;
-        return Task.CompletedTask;
     }
 
     public void Dispose()
     {
         if (_disposed) return;
-        _disposed = true;
-
-        _lock.Wait();
         try
         {
-            CleanupAsync().GetAwaiter().GetResult();
+            _dispatcher.InvokeAsync(Cleanup).GetAwaiter().GetResult();
         }
         finally
         {
-            _lock.Release();
-            _lock.Dispose();
+            _disposed = true;
+            _dispatcher.Dispose();
         }
     }
 }

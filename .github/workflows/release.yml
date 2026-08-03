@@ -23,6 +23,16 @@ jobs:
           dotnet build src/ZemaxMCP.ClientProxy/ZemaxMCP.ClientProxy.csproj -c Release
           dotnet build src/ZemaxMCP.Launcher/ZemaxMCP.Launcher.csproj -c Release
           dotnet build src/ZemaxMCP.Installer/ZemaxMCP.Installer.csproj -c Release
+          dotnet build src/ZemaxMCP.Updater/ZemaxMCP.Updater.csproj -c Release
       - name: Verify discovery, configuration paths, and icons
         shell: pwsh
         run: ./scripts/verify-desktop-components.ps1 -Configuration Release
+      - name: Verify live HTTP security behavior
+        shell: pwsh
+        run: ./scripts/verify-http-security.ps1 -Configuration Release
+      - name: Verify updater apply and rollback behavior
+        shell: pwsh
+        run: ./scripts/verify-updater.ps1 -Configuration Release
+      - name: Verify signed update fixture and tamper rejection
+        shell: pwsh
+        run: ./scripts/verify-update-manifest.ps1 -Configuration Release -ManifestPath scripts/fixtures/signed-update-fixture.json -PackagePath scripts/fixtures/signed-update-fixture.bin -Version v1.1-fixture

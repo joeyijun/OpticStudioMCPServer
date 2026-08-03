@@ -8,7 +8,8 @@ $launcherExe = Join-Path $root "src\ZemaxMCP.Launcher\bin\$Configuration\net48\S
 $installerExe = Join-Path $root "src\ZemaxMCP.Installer\bin\$Configuration\net48\Install.exe"
 $proxyExe = Join-Path $root "src\ZemaxMCP.ClientProxy\bin\$Configuration\net48\ZemaxMCP.ClientProxy.exe"
 $bridgeExe = Join-Path $root "src\ZemaxMCP.HttpBridge\bin\$Configuration\net48\ZemaxMCP.HttpBridge.exe"
-foreach ($path in $launcherExe, $installerExe, $proxyExe, $bridgeExe) {
+$updaterExe = Join-Path $root "src\ZemaxMCP.Updater\bin\$Configuration\net48\ZemaxMCP.Updater.exe"
+foreach ($path in $launcherExe, $installerExe, $proxyExe, $bridgeExe, $updaterExe) {
   if (-not (Test-Path -LiteralPath $path)) { throw "Build output is missing: $path" }
 }
 
@@ -43,6 +44,10 @@ foreach ($clientMarker in 'CodexConfigDot', 'ClaudeConfigDot', 'CursorConfigDot'
   if ($launcherXaml -notmatch [regex]::Escape($clientMarker)) { throw "The AI client menu is missing its configuration indicator: $clientMarker" }
 }
 $launcherCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Launcher\MainWindow.xaml.cs")
+if ($launcherCode -match 'Task\.Run\(\(\) => GetHealth\(endpoint, McpToken\)\)' -or
+    $launcherCode -match 'Task\.Run\(\(\) => TestMcp\(endpoint, McpToken\)\)') {
+  throw "The launcher must capture the token on the WPF dispatcher before starting a background HTTP request."
+}
 if ($launcherCode -notmatch '(?s)AiConfigMenu_Click.*RefreshClientMenuIndicators\(\).*IsOpen = true' -or
     $launcherCode -notmatch '(?s)RefreshClientDashboard.*RefreshClientMenuIndicators\(clientStatuses\)') {
   throw "AI client menu indicators must refresh automatically and immediately before the menu opens."
@@ -53,6 +58,10 @@ foreach ($forbiddenPattern in '"*.log"', '"*.pdb"', '"ZOSAPI*.dll"') {
     throw "The release script does not exclude $forbiddenPattern."
   }
 }
+$bridgeSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\Program.cs")
+if ($bridgeSource -notmatch 'EnvironmentVariables\.Remove\("ZEMAX_MCP_TOKEN"\)') {
+  throw "The ZOS-API subprocess must not inherit the HTTP access token."
+}
 
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("ZemaxMCP-desktop-test-" + [guid]::NewGuid().ToString("N"))
 $programRoot = Join-Path $testRoot "ANSYS Inc\v261\Zemax OpticStudio"
@@ -62,6 +71,7 @@ $oldDataRoot = $env:ZEMAX_DATA_ROOT
 $oldLicense = $env:ANSYSLMD_LICENSE_FILE
 $oldCodexHome = $env:CODEX_HOME
 $oldKimiHome = $env:KIMI_CODE_HOME
+$oldMcpToken = $env:ZEMAX_MCP_TOKEN
 $proxyJob = $null
 
 try {
@@ -78,6 +88,9 @@ try {
   $env:CODEX_HOME = Join-Path $testRoot "codex-home"
   $env:KIMI_CODE_HOME = Join-Path $testRoot "kimi-home"
   $launcher = [Reflection.Assembly]::LoadFrom($launcherExe)
+  if ($launcher.GetName().Version -lt [Version]"1.1.0.0") { throw "The v1.1 launcher assembly version was not set." }
+  $parseReleaseVersion = $launcher.GetType("ZemaxMCP.Launcher.MainWindow", $true).GetMethod("ParseReleaseVersion", [Reflection.BindingFlags]"NonPublic,Static")
+  if ($parseReleaseVersion.Invoke($null, @("v1.2.3-rc1")) -ne [Version]"1.2.3.0") { throw "Release-tag version parsing failed." }
   $installationType = $launcher.GetType("ZemaxMCP.Launcher.ZemaxInstallation", $true)
   $installation = $installationType.GetMethod("FindAll").Invoke($null, @()) | Where-Object Root -eq $programRoot
   if (-not $installation) { throw "Synthetic modern Ansys installation was not detected." }
@@ -95,27 +108,33 @@ try {
 
   $configurator = $launcher.GetType("ZemaxMCP.Launcher.Configurator", $true)
   $expectedEndpoint = "http://127.0.0.1:8000/mcp"
+  $expectedToken = "desktop-verifier-token"
   New-Item -ItemType Directory -Force -Path $env:CODEX_HOME, $env:KIMI_CODE_HOME | Out-Null
   Set-Content -LiteralPath (Join-Path $env:CODEX_HOME "config.toml") -Value "[unrelated]`r`nkeep = true`r`n"
   Set-Content -LiteralPath (Join-Path $env:KIMI_CODE_HOME "mcp.json") -Value '{"keep":true,"mcpServers":{"other":{"url":"http://127.0.0.1:1/mcp"}}}'
-  $configurator.GetMethod("ConfigureCodex", [Reflection.BindingFlags]"Public,Static").Invoke($null, @($expectedEndpoint))
-  $configurator.GetMethod("ConfigureKimi", [Reflection.BindingFlags]"Public,Static").Invoke($null, @($expectedEndpoint))
-  $statuses = $configurator.GetMethod("GetClientStatuses", [Reflection.BindingFlags]"Public,Static").Invoke($null, @($expectedEndpoint))
+  $stringPair = [type[]]@([string], [string])
+  $configurator.GetMethod("ConfigureCodex", [Reflection.BindingFlags]"Public,Static", $null, $stringPair, $null).Invoke($null, @($expectedEndpoint, $expectedToken))
+  $configurator.GetMethod("ConfigureKimi", [Reflection.BindingFlags]"Public,Static", $null, $stringPair, $null).Invoke($null, @($expectedEndpoint, $expectedToken))
+  $statuses = $configurator.GetMethod("GetClientStatuses", [Reflection.BindingFlags]"Public,Static", $null, $stringPair, $null).Invoke($null, @($expectedEndpoint, $expectedToken))
   if (@($statuses).Count -ne 6 -or @($statuses | Where-Object { [string]::IsNullOrWhiteSpace($_.ConfigPath) }).Count -ne 0) { throw "AI client configuration paths are incomplete." }
   $codexStatus = $statuses | Where-Object Name -eq "Codex"
   $kimiStatus = $statuses | Where-Object Name -eq "Kimi Code"
   if (-not $codexStatus.Configured -or $codexStatus.ConfigPath -ne (Join-Path $env:CODEX_HOME "config.toml")) { throw "CODEX_HOME configuration detection failed." }
   if (-not $kimiStatus.Configured -or $kimiStatus.ConfigPath -ne (Join-Path $env:KIMI_CODE_HOME "mcp.json")) { throw "KIMI_CODE_HOME configuration detection failed." }
-  $staleStatuses = $configurator.GetMethod("GetClientStatuses", [Reflection.BindingFlags]"Public,Static").Invoke($null, @("http://127.0.0.1:9000/mcp"))
+  if ((Get-Content -Raw (Join-Path $env:CODEX_HOME "config.toml")) -notmatch [regex]::Escape("Bearer $expectedToken") -or
+      (Get-Content -Raw (Join-Path $env:KIMI_CODE_HOME "mcp.json") | ConvertFrom-Json).mcpServers.'zemax-mcp'.headers.Authorization -ne "Bearer $expectedToken") { throw "AI client authentication headers were not written." }
+  $staleStatuses = $configurator.GetMethod("GetClientStatuses", [Reflection.BindingFlags]"Public,Static", $null, $stringPair, $null).Invoke($null, @("http://127.0.0.1:9000/mcp", $expectedToken))
   if (($staleStatuses | Where-Object Name -eq "Codex").Configured -or ($staleStatuses | Where-Object Name -eq "Kimi Code").Configured) { throw "A stale AI-client endpoint was incorrectly reported as configured." }
   if ((Get-Content -Raw (Join-Path $env:CODEX_HOME "config.toml")) -notmatch "\[unrelated\]" -or -not (Get-Content -Raw (Join-Path $env:KIMI_CODE_HOME "mcp.json") | ConvertFrom-Json).keep) { throw "Configuring Zemax removed an unrelated AI-client setting." }
   $claudeFixture = Join-Path $testRoot "claude\claude_desktop_config.json"
   New-Item -ItemType Directory -Force -Path (Split-Path $claudeFixture -Parent) | Out-Null
   Set-Content -LiteralPath $claudeFixture -Value '{"keep":true,"mcpServers":{"other":{"command":"other.exe"}}}'
-  $proxyArguments = [object[]]@([string]$claudeFixture, [string]$proxyExe, [string]$expectedEndpoint)
+  $proxyArguments = [object[]]@([string]$claudeFixture, [string]$proxyExe, [string]$expectedEndpoint, [string]$expectedToken)
   $configurator.GetMethod("ConfigureStdioProxyJson", [Reflection.BindingFlags]"NonPublic,Static").Invoke($null, $proxyArguments)
   $claudeResult = Get-Content -Raw $claudeFixture | ConvertFrom-Json
   if (-not $claudeResult.keep -or -not $claudeResult.mcpServers.other -or $claudeResult.mcpServers.'zemax-mcp'.command -ne $proxyExe) { throw "Claude Desktop proxy configuration did not preserve existing settings." }
+  if ($claudeResult.mcpServers.'zemax-mcp'.env.ZEMAX_MCP_TOKEN -ne $expectedToken -or
+      @($claudeResult.mcpServers.'zemax-mcp'.args) -contains "--token") { throw "Claude Desktop must pass the token through its process environment rather than command-line arguments." }
 
   Add-Type -AssemblyName System.Drawing
   foreach ($executable in $launcherExe, $installerExe) {
@@ -127,6 +146,28 @@ try {
   $bridgeAssembly = [Reflection.Assembly]::LoadFrom($bridgeExe)
   $bridgeOptionsType = $bridgeAssembly.GetType("ZemaxMCP.HttpBridge.BridgeOptions", $true)
   $bridgeType = $bridgeAssembly.GetType("ZemaxMCP.HttpBridge.StdioMcpBridge", $true)
+  $parseOptions = $bridgeOptionsType.GetMethod("Parse", [Reflection.BindingFlags]"Public,Static")
+  $env:ZEMAX_MCP_TOKEN = $null
+  try {
+    $parseOptions.Invoke($null, [object[]]@(,[string[]]@("--host", "0.0.0.0"))) | Out-Null
+    throw "LAN bridge options were accepted without an access token."
+  }
+  catch {
+    $message = if ($_.Exception.InnerException) { $_.Exception.InnerException.Message } else { $_.Exception.Message }
+    if ($message -notmatch "requires ZEMAX_MCP_TOKEN") { throw }
+  }
+  $env:ZEMAX_MCP_TOKEN = $expectedToken
+  $securedOptions = $parseOptions.Invoke($null, [object[]]@(,[string[]]@("--host", "0.0.0.0", "--read-only", "true")))
+  if ($securedOptions.AccessToken -ne $expectedToken -or -not $securedOptions.ReadOnly) { throw "Secured LAN bridge options were not retained." }
+  $authorized = $bridgeType.GetMethod("IsAuthorized", [Reflection.BindingFlags]"NonPublic,Static")
+  if (-not $authorized.Invoke($null, @("Bearer verifier-secret", "verifier-secret")) -or
+      $authorized.Invoke($null, @("Bearer wrong", "verifier-secret")) -or
+      $authorized.Invoke($null, @($null, "verifier-secret"))) { throw "Bearer-token authentication validation failed." }
+  $originAllowed = $bridgeType.GetMethod("IsOriginAllowed", [Reflection.BindingFlags]"NonPublic,Static")
+  $requestUri = [Uri]"http://192.168.8.1:8000/mcp"
+  if ($originAllowed.Invoke($null, @("http://localhost:3000", $requestUri)) -or
+      -not $originAllowed.Invoke($null, @("http://192.168.8.1:9000", $requestUri)) -or
+      $originAllowed.Invoke($null, @("https://attacker.example", $requestUri))) { throw "MCP Origin validation failed." }
   $bridgeOptions = [Activator]::CreateInstance($bridgeOptionsType, $true)
   $bridge = [Activator]::CreateInstance($bridgeType, [Reflection.BindingFlags]"Instance,Public,NonPublic", $null, [object[]]@($bridgeOptions), $null)
   try {
@@ -137,11 +178,13 @@ try {
       "ZEMAX_MCP_STATUS:ZOSAPI_INTERFACES_ASSEMBLY:C:\Program Files\Zemax\ZOSAPI_Interfaces.dll",
       "ZEMAX_MCP_STATUS:ZOSAPI_NETHELPER_ASSEMBLY:C:\Program Files\Zemax\ZOS-API\Libraries\ZOSAPI_NetHelper.dll",
       "ZEMAX_MCP_STATUS:ZOS_LICENSE_VALID:Premium",
-      "ZEMAX_MCP_STATUS:ZEMAX_DATA_DIR:D:\Optics\Zemax"
+      "ZEMAX_MCP_STATUS:ZEMAX_DATA_DIR:D:\Optics\Zemax",
+      "ZEMAX_MCP_STATUS:SNAPSHOT_CREATED:D:\Optics\Snapshots\before-change.zos"
     )) { $handleStatus.Invoke($bridge, @($marker)) }
     $health = $bridgeType.GetMethod("BuildHealthPayload", [Reflection.BindingFlags]"Instance,NonPublic").Invoke($bridge, @()).ToString() | ConvertFrom-Json
     if (-not $health.zosApiLoaded -or $health.licenseStatus -ne "Valid — Premium" -or $health.zemaxDataDirectory -ne "D:\Optics\Zemax") { throw "Runtime ZOS-API/license/Data status markers were not reflected in bridge health." }
     if ($health.loadedZosApiFiles.zosApi -notlike "*ZOSAPI.dll" -or $health.loadedZosApiFiles.netHelper -notlike "*ZOSAPI_NetHelper.dll") { throw "Actually loaded ZOS-API assembly paths were not reported." }
+    if ($health.lastSnapshotPath -notlike "*before-change.zos" -or -not $health.originValidationEnabled) { throw "Security/snapshot status was not reflected in bridge health." }
   }
   finally { $bridge.Dispose() }
 
@@ -157,6 +200,7 @@ try {
     try {
       foreach ($index in 1, 2) {
         $context = $listener.GetContext()
+        if ($context.Request.Headers["Authorization"] -ne "Bearer desktop-verifier-token") { throw "The proxy did not send the configured bearer token." }
         if ($index -eq 2 -and $context.Request.Headers["Mcp-Session-Id"] -ne "desktop-test-session") { throw "The proxy did not retain the MCP session." }
         $reader = [IO.StreamReader]::new($context.Request.InputStream, $context.Request.ContentEncoding)
         $request = $reader.ReadToEnd() | ConvertFrom-Json
@@ -177,7 +221,10 @@ try {
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","clientInfo":{"name":"desktop-test","version":"1.0"},"capabilities":{}}}',
     '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
   )
-  $responses = @($requests | & $proxyExe --url "http://127.0.0.1:$proxyTestPort/mcp/")
+  $oldProxyToken = $env:ZEMAX_MCP_TOKEN
+  $env:ZEMAX_MCP_TOKEN = $expectedToken
+  try { $responses = @($requests | & $proxyExe --url "http://127.0.0.1:$proxyTestPort/mcp/") }
+  finally { $env:ZEMAX_MCP_TOKEN = $oldProxyToken }
   if ($LASTEXITCODE -ne 0 -or $responses.Count -ne 2 -or ($responses[1] | ConvertFrom-Json).id -ne 2) { throw "The Claude Desktop stdio-to-HTTP proxy relay failed." }
   Wait-Job $proxyJob -Timeout 10 | Out-Null
   Receive-Job $proxyJob -ErrorAction Stop | Out-Null
@@ -188,6 +235,7 @@ finally {
   $env:ANSYSLMD_LICENSE_FILE = $oldLicense
   $env:CODEX_HOME = $oldCodexHome
   $env:KIMI_CODE_HOME = $oldKimiHome
+  $env:ZEMAX_MCP_TOKEN = $oldMcpToken
   if ($proxyJob) { Stop-Job $proxyJob -ErrorAction SilentlyContinue; Remove-Job $proxyJob -Force -ErrorAction SilentlyContinue }
   if (Test-Path -LiteralPath $testRoot) { Remove-Item -LiteralPath $testRoot -Recurse -Force }
 }
