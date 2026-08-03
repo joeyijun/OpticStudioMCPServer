@@ -4,7 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- MCP SDK -->
-    <PackageVersion Include="ModelContextProtocol" Version="0.2.0-preview.1" />
+    <PackageVersion Include="ModelContextProtocol" Version="1.4.1" />
 
     <!-- .NET Extensions -->
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="8.0.0" />

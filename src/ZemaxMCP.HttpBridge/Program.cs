@@ -112,6 +112,8 @@ internal sealed class StdioMcpBridge : IDisposable
     private readonly SemaphoreSlim _requestLock = new SemaphoreSlim(1, 1);
     private readonly object _stateLock = new object();
     private readonly Dictionary<string, ClientActivity> _clients = new Dictionary<string, ClientActivity>(StringComparer.Ordinal);
+    private readonly Dictionary<string, ActiveRequest> _activeOperations = new Dictionary<string, ActiveRequest>(StringComparer.Ordinal);
+    private readonly Dictionary<string, JobActivity> _jobs = new Dictionary<string, JobActivity>(StringComparer.Ordinal);
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
     private Process? _server;
     private HttpListener? _listener;
@@ -186,6 +188,8 @@ internal sealed class StdioMcpBridge : IDisposable
             _loadedZosApiPath = null;
             _loadedInterfacesPath = null;
             _loadedNetHelperPath = null;
+            _activeOperations.Clear();
+            _jobs.Clear();
             _serverStartedAt = DateTimeOffset.UtcNow;
             if (isRestart) _serverRestartCount++;
         }
@@ -216,6 +220,7 @@ internal sealed class StdioMcpBridge : IDisposable
         const string interfacesAssembly = "ZEMAX_MCP_STATUS:ZOSAPI_INTERFACES_ASSEMBLY:";
         const string netHelperAssembly = "ZEMAX_MCP_STATUS:ZOSAPI_NETHELPER_ASSEMBLY:";
         const string snapshotCreated = "ZEMAX_MCP_STATUS:SNAPSHOT_CREATED:";
+        const string jobStatus = "ZEMAX_MCP_STATUS:JOB:";
         if (statusMessage.StartsWith(licenseValid, StringComparison.Ordinal))
         {
             lock (_stateLock) _licenseStatus = "Valid — " + statusMessage.Substring(licenseValid.Length);
@@ -256,6 +261,30 @@ internal sealed class StdioMcpBridge : IDisposable
             Log.Information("Created a pre-change lens snapshot.");
             return;
         }
+        if (statusMessage.StartsWith(jobStatus, StringComparison.Ordinal))
+        {
+            var parts = statusMessage.Substring(jobStatus.Length).Split('|');
+            if (parts.Length == 5)
+            {
+                double? progress = null;
+                double parsedProgress = 0;
+                if (!string.IsNullOrWhiteSpace(parts[3]) && !double.TryParse(parts[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsedProgress)) return;
+                if (!string.IsNullOrWhiteSpace(parts[3])) progress = parsedProgress;
+                lock (_stateLock)
+                {
+                    if (!_jobs.TryGetValue(parts[0], out var job))
+                    {
+                        job = new JobActivity(parts[0], parts[1], DateTimeOffset.UtcNow);
+                        _jobs[parts[0]] = job;
+                    }
+                    job.State = parts[2];
+                    job.Progress = progress;
+                    job.QueuePosition = int.TryParse(parts[4], out var position) ? position : 0;
+                    if (job.State is "Completed" or "Cancelled" or "Failed") job.CompletedAt = DateTimeOffset.UtcNow;
+                }
+            }
+            return;
+        }
         Log.Warning("Server: {Message}", statusMessage);
     }
 
@@ -274,6 +303,8 @@ internal sealed class StdioMcpBridge : IDisposable
             _loadedZosApiPath = null;
             _loadedInterfacesPath = null;
             _loadedNetHelperPath = null;
+            _activeOperations.Clear();
+            _jobs.Clear();
             _lastServerError = error;
             _consecutiveServerFailures++;
             _clients.Clear(); // Force HTTP clients to initialize again after recovery.
@@ -348,9 +379,34 @@ internal sealed class StdioMcpBridge : IDisposable
                 await WriteJsonAsync(context, BuildHealthPayload()).ConfigureAwait(false);
                 return;
             }
+            if (context.Request.HttpMethod.Equals("DELETE", StringComparison.OrdinalIgnoreCase))
+            {
+                var sessionId = context.Request.Headers["Mcp-Session-Id"];
+                if (string.IsNullOrWhiteSpace(sessionId))
+                {
+                    context.Response.StatusCode = (int)HttpStatusCode.BadRequest;
+                    context.Response.Close();
+                    return;
+                }
+                if (!RemoveSession(sessionId))
+                {
+                    context.Response.StatusCode = (int)HttpStatusCode.NotFound;
+                    context.Response.Close();
+                    return;
+                }
+                context.Response.StatusCode = (int)HttpStatusCode.OK;
+                context.Response.Close();
+                return;
+            }
             if (!context.Request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase))
             {
                 context.Response.StatusCode = (int)HttpStatusCode.MethodNotAllowed;
+                context.Response.Close();
+                return;
+            }
+            if (!AcceptsMcpResponse(context.Request.Headers["Accept"]))
+            {
+                context.Response.StatusCode = (int)HttpStatusCode.NotAcceptable;
                 context.Response.Close();
                 return;
             }
@@ -384,19 +440,34 @@ internal sealed class StdioMcpBridge : IDisposable
                 return;
             }
             TouchClient(requestedSession, method, json, now);
+            var operationId = BeginOperation(method, json, now);
 
             Interlocked.Increment(ref _activeRequests);
             await _requestLock.WaitAsync().ConfigureAwait(false);
             string? response;
+            var releaseRequestLock = true;
             try
             {
                 if (!IsServerRunning()) StartServer(isRestart: true);
                 var server = _server ?? throw new InvalidOperationException("The MCP server is not running.");
                 await server.StandardInput.WriteLineAsync(request).ConfigureAwait(false);
                 await server.StandardInput.FlushAsync().ConfigureAwait(false);
-                response = id == null ? null : await ReadResponseWithTimeoutAsync(id, server).ConfigureAwait(false);
+                response = id == null ? null : await ReadResponseWithTimeoutAsync(id, server, operationId).ConfigureAwait(false);
             }
-            finally { _requestLock.Release(); Interlocked.Decrement(ref _activeRequests); }
+            catch (BridgeRequestTimeoutException ex) when (ex.ResponseIsStillDraining)
+            {
+                releaseRequestLock = false;
+                throw;
+            }
+            finally
+            {
+                if (releaseRequestLock)
+                {
+                    EndOperation(operationId);
+                    _requestLock.Release();
+                }
+                Interlocked.Decrement(ref _activeRequests);
+            }
 
             if (response == null)
             {
@@ -404,14 +475,10 @@ internal sealed class StdioMcpBridge : IDisposable
                 context.Response.Close();
                 return;
             }
-            var bytes = Encoding.UTF8.GetBytes(response);
-            context.Response.StatusCode = (int)HttpStatusCode.OK;
-            context.Response.ContentType = "application/json; charset=utf-8";
-            if (!string.IsNullOrWhiteSpace(responseSession))
-                context.Response.Headers["Mcp-Session-Id"] = responseSession;
-            context.Response.ContentLength64 = bytes.Length;
-            await context.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
-            context.Response.Close();
+            if (PrefersSse(context.Request.Headers["Accept"]))
+                await WriteSseAsync(context, response, responseSession).ConfigureAwait(false);
+            else
+                await WriteMcpJsonAsync(context, response, responseSession).ConfigureAwait(false);
         }
         catch (RequestTooLargeException ex)
         {
@@ -466,7 +533,7 @@ internal sealed class StdioMcpBridge : IDisposable
         if (string.IsNullOrWhiteSpace(origin)) return;
         context.Response.Headers["Access-Control-Allow-Origin"] = origin;
         context.Response.Headers["Vary"] = "Origin";
-        context.Response.Headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
+        context.Response.Headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS";
         context.Response.Headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version";
     }
 
@@ -516,6 +583,27 @@ internal sealed class StdioMcpBridge : IDisposable
                     ["requestCount"] = x.RequestCount,
                     ["active"] = now - x.LastRequestAt <= TimeSpan.FromMinutes(5)
                 }));
+            var activeOperations = new JArray(_activeOperations.Values
+                .OrderBy(x => x.StartedAt)
+                .Select(x => new JObject
+                {
+                    ["method"] = x.Method,
+                    ["tool"] = x.ToolName,
+                    ["startedAt"] = x.StartedAt.ToString("O"),
+                    ["elapsedSeconds"] = Math.Max(0, (long)(now - x.StartedAt).TotalSeconds)
+                }));
+            var jobs = new JArray(_jobs.Values
+                .OrderByDescending(x => x.StartedAt)
+                .Select(x => new JObject
+                {
+                    ["jobId"] = x.JobId,
+                    ["tool"] = x.ToolName,
+                    ["state"] = x.State,
+                    ["progress"] = x.Progress,
+                    ["queuePosition"] = x.QueuePosition,
+                    ["startedAt"] = x.StartedAt.ToString("O"),
+                    ["elapsedSeconds"] = Math.Max(0, (long)((x.CompletedAt ?? now) - x.StartedAt).TotalSeconds)
+                }));
             int? pid = null;
             try { if (IsServerRunning()) pid = _server!.Id; } catch { }
             var zemaxRoot = _options.ZemaxRoot ?? "";
@@ -535,6 +623,8 @@ internal sealed class StdioMcpBridge : IDisposable
                 ["mcpServerStartedAt"] = _serverStartedAt?.ToString("O"),
                 ["serverRestartCount"] = _serverRestartCount,
                 ["activeRequests"] = _activeRequests,
+                ["activeOperations"] = activeOperations,
+                ["jobs"] = jobs,
                 ["zosApiLoaded"] = _zosApiLoaded,
                 ["zosApiConnected"] = _zosApiConnected,
                 ["zemaxRoot"] = zemaxRoot,
@@ -612,6 +702,42 @@ internal sealed class StdioMcpBridge : IDisposable
         return File.Exists(path) ? path : null;
     }
 
+    private string BeginOperation(string method, JObject request, DateTimeOffset now)
+    {
+        var tool = method.Equals("tools/call", StringComparison.OrdinalIgnoreCase)
+            ? request["params"]?["name"]?.ToString() ?? "tools/call"
+            : method;
+        var id = Guid.NewGuid().ToString("N");
+        lock (_stateLock) _activeOperations[id] = new ActiveRequest(method, tool, now);
+        return id;
+    }
+
+    private void EndOperation(string operationId)
+    {
+        lock (_stateLock) _activeOperations.Remove(operationId);
+    }
+
+    private bool RemoveSession(string sessionId)
+    {
+        lock (_stateLock) return _clients.Remove(sessionId);
+    }
+
+    private static bool AcceptsMcpResponse(string? accept)
+    {
+        if (string.IsNullOrWhiteSpace(accept)) return false;
+        var accepted = accept!.Split(',').Select(x => x.Trim().Split(';')[0]);
+        return accepted.Any(x => x.Equals("application/json", StringComparison.OrdinalIgnoreCase) ||
+                                 x.Equals("text/event-stream", StringComparison.OrdinalIgnoreCase) || x == "*/*");
+    }
+
+    private static bool PrefersSse(string? accept)
+    {
+        if (string.IsNullOrWhiteSpace(accept)) return false;
+        var values = accept!.Split(',').Select(x => x.Trim().Split(';')[0]).ToArray();
+        return values.Any(x => x.Equals("text/event-stream", StringComparison.OrdinalIgnoreCase)) &&
+               !values.Any(x => x.Equals("application/json", StringComparison.OrdinalIgnoreCase) || x == "*/*");
+    }
+
     private static string? FindNetHelper(string root)
     {
         if (string.IsNullOrWhiteSpace(root)) return null;
@@ -628,6 +754,30 @@ internal sealed class StdioMcpBridge : IDisposable
         var bytes = Encoding.UTF8.GetBytes(payload.ToString(Newtonsoft.Json.Formatting.None));
         context.Response.StatusCode = (int)status;
         context.Response.ContentType = "application/json; charset=utf-8";
+        context.Response.ContentLength64 = bytes.Length;
+        await context.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
+        context.Response.Close();
+    }
+
+    private static async Task WriteMcpJsonAsync(HttpListenerContext context, string response, string? sessionId)
+    {
+        var bytes = Encoding.UTF8.GetBytes(response);
+        context.Response.StatusCode = (int)HttpStatusCode.OK;
+        context.Response.ContentType = "application/json; charset=utf-8";
+        if (!string.IsNullOrWhiteSpace(sessionId)) context.Response.Headers["Mcp-Session-Id"] = sessionId;
+        context.Response.ContentLength64 = bytes.Length;
+        await context.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
+        context.Response.Close();
+    }
+
+    private static async Task WriteSseAsync(HttpListenerContext context, string response, string? sessionId)
+    {
+        var payload = "event: message\n" + "data: " + response.Replace("\r", string.Empty).Replace("\n", "\\n") + "\n\n";
+        var bytes = Encoding.UTF8.GetBytes(payload);
+        context.Response.StatusCode = (int)HttpStatusCode.OK;
+        context.Response.ContentType = "text/event-stream; charset=utf-8";
+        context.Response.Headers["Cache-Control"] = "no-cache";
+        if (!string.IsNullOrWhiteSpace(sessionId)) context.Response.Headers["Mcp-Session-Id"] = sessionId;
         context.Response.ContentLength64 = bytes.Length;
         await context.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
         context.Response.Close();
@@ -665,29 +815,21 @@ internal sealed class StdioMcpBridge : IDisposable
         }
     }
 
-    private async Task<string> ReadResponseWithTimeoutAsync(JToken id, Process server)
+    private async Task<string> ReadResponseWithTimeoutAsync(JToken id, Process server, string operationId)
     {
         var responseTask = ReadResponseAsync(id, server);
         var completed = await Task.WhenAny(responseTask, Task.Delay(TimeSpan.FromSeconds(_options.RequestTimeoutSeconds))).ConfigureAwait(false);
         if (completed == responseTask) return await responseTask.ConfigureAwait(false);
 
-        _ = responseTask.ContinueWith(t => { var ignored = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
-        var message = $"MCP request timed out after {_options.RequestTimeoutSeconds} seconds. The server is restarting automatically.";
-        lock (_stateLock) _lastServerError = message;
-        DisposeServerProcess();
-        lock (_stateLock)
+        _ = responseTask.ContinueWith(t =>
         {
-            _clients.Clear();
-            _zosApiLoaded = false;
-            _zosApiConnected = false;
-            _licenseStatus = "Not checked";
-            _zemaxDataDirectory = "Not reported";
-            _loadedZosApiPath = null;
-            _loadedInterfacesPath = null;
-            _loadedNetHelperPath = null;
-        }
-        StartServer(isRestart: true);
-        throw new BridgeRequestTimeoutException(message);
+            var ignored = t.Exception;
+            EndOperation(operationId);
+            try { _requestLock.Release(); } catch (ObjectDisposedException) { }
+        }, TaskScheduler.Default);
+        var message = $"MCP request exceeded {_options.RequestTimeoutSeconds} seconds. The operation is still running and the bridge will keep the stdio session intact.";
+        lock (_stateLock) _lastServerError = message;
+        throw new BridgeRequestTimeoutException(message, responseIsStillDraining: true);
     }
 
     private static async Task<string> ReadResponseAsync(JToken id, Process server)
@@ -737,6 +879,36 @@ internal sealed class StdioMcpBridge : IDisposable
         public string LastMethod { get; set; }
         public long RequestCount { get; set; }
     }
+
+    private sealed class ActiveRequest
+    {
+        public ActiveRequest(string method, string toolName, DateTimeOffset startedAt)
+        {
+            Method = method;
+            ToolName = toolName;
+            StartedAt = startedAt;
+        }
+        public string Method { get; }
+        public string ToolName { get; }
+        public DateTimeOffset StartedAt { get; }
+    }
+
+    private sealed class JobActivity
+    {
+        public JobActivity(string jobId, string toolName, DateTimeOffset startedAt)
+        {
+            JobId = jobId;
+            ToolName = toolName;
+            StartedAt = startedAt;
+        }
+        public string JobId { get; }
+        public string ToolName { get; }
+        public DateTimeOffset StartedAt { get; }
+        public DateTimeOffset? CompletedAt { get; set; }
+        public string State { get; set; } = "Queued";
+        public double? Progress { get; set; }
+        public int QueuePosition { get; set; }
+    }
 }
 
 internal sealed class RequestTooLargeException : Exception
@@ -746,5 +918,6 @@ internal sealed class RequestTooLargeException : Exception
 
 internal sealed class BridgeRequestTimeoutException : Exception
 {
-    public BridgeRequestTimeoutException(string message) : base(message) { }
+    public BridgeRequestTimeoutException(string message, bool responseIsStillDraining = false) : base(message) => ResponseIsStillDraining = responseIsStillDraining;
+    public bool ResponseIsStillDraining { get; }
 }

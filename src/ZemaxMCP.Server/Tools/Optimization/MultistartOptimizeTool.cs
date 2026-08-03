@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using ZemaxMCP.Core.Services.ConstrainedOptimization;
 using ZemaxMCP.Core.Session;
+using ZemaxMCP.Server.Services.Jobs;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
@@ -11,18 +12,21 @@ public class MultistartOptimizeTool
     private readonly IZemaxSession _session;
     private readonly ConstraintStore _constraintStore;
     private readonly MultistartState _multistartState;
+    private readonly McpJobManager _jobs;
 
-    public MultistartOptimizeTool(IZemaxSession session, ConstraintStore constraintStore, MultistartState multistartState)
+    public MultistartOptimizeTool(IZemaxSession session, ConstraintStore constraintStore, MultistartState multistartState, McpJobManager jobs)
     {
         _session = session;
         _constraintStore = constraintStore;
         _multistartState = multistartState;
+        _jobs = jobs;
     }
 
     public record MultistartOptimizeResult(
         bool Success,
         string? Error,
-        string Message
+        string Message,
+        string? JobId = null
     );
 
     [McpServerTool(Name = "zemax_multistart_optimize")]
@@ -69,17 +73,17 @@ public class MultistartOptimizeTool
             }
         }
 
-        var cancellationToken = _multistartState.CreateCancellationToken();
         int priorTrialsRun = _multistartState.TotalTrialsRun;
         int priorTrialsAccepted = _multistartState.TotalTrialsAccepted;
 
         _multistartState.SetRunning(maxTrials);
 
-        // Launch optimization on background thread
-        var task = Task.Run(async () =>
+        var job = _jobs.Enqueue("zemax_multistart_optimize", async context =>
         {
             try
             {
+                var cancellationToken = _multistartState.CreateCancellationToken(context.CancellationToken);
+                context.ReportProgress(0, "Waiting for the ZOS-API job slot.");
                 await _session.ExecuteAsync("MultistartOptimize",
                     new Dictionary<string, object?>
                     {
@@ -128,6 +132,7 @@ public class MultistartOptimizeTool
                         Action<int, int, double, int> onProgress = (trial, total, bestMerit, accepted) =>
                         {
                             _multistartState.UpdateProgress(trial, total, bestMerit, priorTrialsAccepted + accepted);
+                            context.ReportProgress(total > 0 ? (double)trial / total : 0, $"Trial {trial}/{total}; best merit {bestMerit:F6}.");
                         };
 
                         Action onInitialLmComplete = () =>
@@ -138,6 +143,7 @@ public class MultistartOptimizeTool
                         Action<int, int, double> onInitialLmProgress = (iteration, maxIter, merit) =>
                         {
                             _multistartState.UpdateInitialLmProgress(iteration, maxIter, merit);
+                            context.ReportProgress(maxIter > 0 ? (double)iteration / maxIter : 0, $"Initial LM iteration {iteration}/{maxIter}; merit {merit:F6}.");
                         };
 
                         var msResult = multistartOptimizer.Optimize(
@@ -175,24 +181,25 @@ public class MultistartOptimizeTool
                         }
 
                         _multistartState.SetCompleted();
+                        context.ReportProgress(1, "Completed.");
                     }, cancellationToken);
             }
             catch (OperationCanceledException)
             {
                 _multistartState.SetCompleted("Cancelled by user");
+                throw;
             }
             catch (Exception ex)
             {
                 _multistartState.SetCompleted($"Error: {ex.Message}");
+                throw;
             }
         });
-
-        _multistartState.SetBackgroundTask(task);
 
         string resumeNote = skipInitialLm ? " (resuming, skipping initial LM)" : "";
         return new MultistartOptimizeResult(true, null,
             $"Multistart optimization started{resumeNote}: {maxTrials} trials, " +
             $"constrainedOnly={constrainedOnly}. " +
-            "Use zemax_multistart_status to check progress, zemax_multistart_stop to cancel.");
+            "Use zemax_multistart_status or zemax_job_status to check progress; use zemax_multistart_stop or zemax_job_cancel to cancel.", job.JobId);
     }
 }

@@ -96,12 +96,12 @@ public class MultistartState
     /// <summary>
     /// Create a new CancellationTokenSource for this run.
     /// </summary>
-    public CancellationToken CreateCancellationToken()
+    public CancellationToken CreateCancellationToken(CancellationToken cancellationToken = default)
     {
         lock (_lock)
         {
             _cts?.Dispose();
-            _cts = new CancellationTokenSource();
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             return _cts.Token;
         }
     }

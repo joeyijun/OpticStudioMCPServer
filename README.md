@@ -33,6 +33,8 @@ For a single computer, the AI client uses the local MCP address. For two compute
 - **Lens-change safety** — Read-only mode blocks mutating tools before ZOS-API access. In read/write mode, every recognised mutation first saves a timestamped copy of the current lens; a failed snapshot prevents the change.
 - **Verified, recoverable updates** — Release metadata is RSA-signed, the ZIP size and SHA-256 are checked before extraction, and a separate updater restores the previous installation if replacement fails.
 - **Dedicated ZOS-API thread** — All connection and tool operations are serialized on one long-lived STA thread to respect the COM threading model and avoid cross-thread session access.
+- **Streamable HTTP lifecycle** — The built-in bridge validates MCP response negotiation, supports JSON and SSE responses, preserves MCP sessions, and supports `DELETE` session cleanup.
+- **Long-job control** — POP, global search, and multistart optimization can return immediately with a job id. Use `zemax_job_status`, `zemax_job_list`, and `zemax_job_cancel` for queue position, live progress, result retrieval, and cooperative cancellation; the launcher also shows the active tool/job and elapsed time.
 - **Per-client live dashboard** — Colour-coded cards distinguish installation, configuration, historical activity, and a real request made within the last five minutes. The launcher health check is excluded from AI activity.
 - **Multi-version OpticStudio detection** — Detects classic Zemax and current `ANSYS Inc\v*` layouts from environment variables, both registry views, uninstall entries, and known Program Files locations. The launcher validates all three ZOS-API assemblies before offering a version.
 - **One AI configuration menu** — Configure detected Codex, Claude Desktop, Cursor, Kimi Code, and WorkBuddy clients directly. VS Code / GitHub Copilot uses its native MCP review and trust flow. A generic HTTP MCP JSON entry covers other compatible agents.
@@ -88,6 +90,7 @@ Major groups include:
 - Imaging and optical analyses: spot, MTF, PSF, POP, ray fans, aberrations, and illumination
 - Optimization, merit functions, operands, constraints, and multistart jobs
 - Multi-configuration, tolerance-data-editor (TDE), system settings, and glass-catalog operations
+- Background job control for lengthy POP and optimization operations
 
 This fork additionally includes the following acceptance and validation tools:
 

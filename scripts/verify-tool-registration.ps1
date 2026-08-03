@@ -16,7 +16,7 @@ $missing = [System.Collections.Generic.List[string]]::new()
 $toolNames = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.List[string]]]::new([System.StringComparer]::OrdinalIgnoreCase)
 $discovered = 0
 
-Get-ChildItem -LiteralPath $toolsPath -Recurse -Filter "*Tool.cs" -File | ForEach-Object {
+Get-ChildItem -LiteralPath $toolsPath -Recurse -Filter "*.cs" -File | ForEach-Object {
     $filePath = $_.FullName
     $source = Get-Content -LiteralPath $_.FullName -Raw
     if ($source -notmatch "\[McpServerToolType\]") { return }
