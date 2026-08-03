@@ -2,7 +2,7 @@
 
 **A GUI-first Windows HTTP MCP server for Zemax OpticStudio.** It detects installed OpticStudio versions, starts a resilient local or trusted-LAN MCP endpoint, and configures **Codex**, **Claude Desktop**, **Cursor**, **Kimi Code**, **WorkBuddy**, and **VS Code / GitHub Copilot** without manual configuration-file editing.
 
-![Zemax MCP launcher dashboard](docs/images/launcher-dashboard.jpg)
+![Zemax MCP launcher dashboard](docs/images/launcher-dashboard.png)
 
 ## Windows quick start
 
