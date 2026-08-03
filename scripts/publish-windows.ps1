@@ -35,6 +35,24 @@ dotnet build "$root\src\ZemaxMCP.Installer\ZemaxMCP.Installer.csproj" -c $Config
 dotnet build "$root\src\ZemaxMCP.Updater\ZemaxMCP.Updater.csproj" -c $Configuration
 
 $projects = "ZemaxMCP.Server", "ZemaxMCP.HttpBridge", "ZemaxMCP.ClientProxy", "ZemaxMCP.Launcher", "ZemaxMCP.Installer", "ZemaxMCP.Updater"
+$releaseAssemblies = @{}
+foreach ($project in $projects) {
+  Get-ChildItem "$root\src\$project\bin\$Configuration\net48" -Filter "*.dll" -File | Where-Object {
+    $_.Name -notlike "ZOSAPI*.dll"
+  } | ForEach-Object {
+    try {
+      $assembly = [System.Reflection.AssemblyName]::GetAssemblyName($_.FullName)
+      $identity = "$($assembly.Name), Version=$($assembly.Version), PublicKeyToken=$([BitConverter]::ToString($assembly.GetPublicKeyToken()).Replace('-', '').ToLowerInvariant())"
+      if ($releaseAssemblies.ContainsKey($assembly.Name) -and $releaseAssemblies[$assembly.Name].Identity -ne $identity) {
+        throw "Release package assembly conflict for $($assembly.Name): $($releaseAssemblies[$assembly.Name].Identity) from $($releaseAssemblies[$assembly.Name].Project), but $identity from $project. Align package versions before publishing."
+      }
+      $releaseAssemblies[$assembly.Name] = [PSCustomObject]@{ Identity = $identity; Project = $project }
+    }
+    catch [System.BadImageFormatException] {
+      # Native DLLs are not CLR assemblies and do not participate in .NET binding.
+    }
+  }
+}
 foreach ($project in $projects) {
   # PDB files contain the absolute source path used by the release builder.
   # They are not needed to run the application and would expose that path in
