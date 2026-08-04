@@ -181,7 +181,6 @@
         <RowDefinition Height="Auto"/>
         <RowDefinition Height="Auto"/>
         <RowDefinition Height="Auto"/>
-        <RowDefinition Height="Auto"/>
         <RowDefinition Height="*"/>
       </Grid.RowDefinitions>
 
@@ -197,13 +196,23 @@
             </StackPanel>
           </Border>
         </StackPanel>
-        <Button Grid.Column="1" Content="Exit service" Style="{StaticResource ExitButton}" VerticalAlignment="Center"
-                ToolTip="Stop the MCP service and close the launcher" Click="Exit_Click"/>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button Content="Start" Style="{StaticResource PrimaryButton}" MinWidth="76" Height="34" Padding="10,5" Margin="0,0,7,0"
+                  ToolTip="Start the local MCP service" Click="Start_Click"/>
+          <Button Content="Stop" Style="{StaticResource StopButton}" MinWidth="70" Height="34" Padding="10,5" Margin="0,0,7,0"
+                  ToolTip="Stop the local MCP service" Click="Stop_Click"/>
+          <Button Content="Refresh" Style="{StaticResource ActionButton}" MinWidth="74" Height="34" Padding="10,5" Margin="0,0,7,0"
+                  ToolTip="Refresh live service status" Click="RefreshStatus_Click"/>
+          <Button Content="Test MCP" Style="{StaticResource ActionButton}" MinWidth="80" Height="34" Padding="10,5" Margin="0,0,9,0"
+                  ToolTip="Test the currently selected MCP endpoint" Click="TestMcp_Click"/>
+          <Button Content="Exit service" Style="{StaticResource ExitButton}" VerticalAlignment="Center"
+                  ToolTip="Stop the MCP service and close the launcher" Click="Exit_Click"/>
+        </StackPanel>
       </Grid>
 
       <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,18,0,0">
         <Grid>
-          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="330"/></Grid.ColumnDefinitions>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="390"/></Grid.ColumnDefinitions>
           <StackPanel>
             <TextBlock Text="OpticStudio installation" Style="{StaticResource SectionLabel}"/>
             <Grid>
@@ -222,20 +231,23 @@
             <CheckBox x:Name="ReadOnlyMode" Content="Read-only mode (block lens changes)" Margin="0,8,0,0"
                       Checked="ReadOnlyMode_Changed" Unchecked="ReadOnlyMode_Changed"/>
             <Grid Margin="0,9,0,0">
-              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="70"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="70"/>
+                <ColumnDefinition Width="8"/><ColumnDefinition Width="145"/><ColumnDefinition Width="7"/><ColumnDefinition Width="84"/>
+              </Grid.ColumnDefinitions>
               <TextBlock Text="Port" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}"/>
-              <TextBox Grid.Column="1" x:Name="Port" Text="8000" Style="{StaticResource InputBox}" Margin="10,0,0,0"
+              <TextBox Grid.Column="2" x:Name="Port" Text="8000" Style="{StaticResource InputBox}"
                        LostFocus="Port_LostFocus"/>
-              <Button Grid.Column="2" Content="Copy secure setup" Style="{StaticResource SmallButton}" Margin="9,2,0,2" Click="CopySecureSetup_Click"/>
-              <Button Grid.Column="3" Content="New token" Style="{StaticResource SmallButton}" Margin="7,2,0,2" Click="RegenerateToken_Click"/>
+              <Button Grid.Column="4" Content="Copy secure setup" Style="{StaticResource SmallButton}" MinWidth="145" Click="CopySecureSetup_Click"/>
+              <Button Grid.Column="6" Content="New token" Style="{StaticResource SmallButton}" MinWidth="84" Click="RegenerateToken_Click"/>
             </Grid>
           </StackPanel>
         </Grid>
       </Border>
 
       <Grid Grid.Row="2" Margin="0,14,0,0">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="360"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <Border Style="{StaticResource Card}">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="0.85*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="1.15*"/></Grid.ColumnDefinitions>
+        <Border Style="{StaticResource Card}" VerticalAlignment="Top">
           <StackPanel>
             <TextBlock Text="This computer" Style="{StaticResource SectionLabel}"/>
             <Grid>
@@ -248,24 +260,32 @@
         </Border>
         <Border Grid.Column="2" Style="{StaticResource Card}">
           <StackPanel>
-            <TextBlock Text="AI computer (remote service)" Style="{StaticResource SectionLabel}"/>
-            <TextBlock Text="Paste Copy secure setup from the OpticStudio computer. One setup contains both the address and token."
-                       Foreground="{StaticResource MutedBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,7"/>
+            <TextBlock Text="AI computer" Style="{StaticResource SectionLabel}" Margin="0,0,0,6"/>
+            <Border Background="#F4FAF6" BorderBrush="#CFE8D7" BorderThickness="1" CornerRadius="7" Padding="9,6" Margin="0,0,0,8">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <Ellipse x:Name="RemoteSetupDot" Width="9" Height="9" Fill="#94A3B8" Margin="0,3,8,0" VerticalAlignment="Top"/>
+                <TextBlock Grid.Column="1" x:Name="RemoteSetupStatus" Foreground="{StaticResource MutedBrush}" FontSize="12"
+                           TextWrapping="Wrap" ToolTip="The remote endpoint and access token are encrypted for this Windows user."/>
+              </Grid>
+            </Border>
             <Grid>
               <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
               <TextBox x:Name="RemoteSecureSetup" Style="{StaticResource InputBox}"
                        ToolTip="Paste the complete secure setup JSON copied from the OpticStudio computer. It is stored securely after validation."
                        LostFocus="RemoteSecureSetup_LostFocus"/>
-              <Button Grid.Column="1" Content="Clear" Style="{StaticResource SmallButton}" Margin="9,2,0,2"
+              <Button Grid.Column="1" Content="Use local" Style="{StaticResource SmallButton}" Margin="9,2,0,2"
                       ToolTip="Use this computer's local MCP service again" Click="ClearRemoteSetup_Click"/>
             </Grid>
-            <TextBlock x:Name="RemoteSetupStatus" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="1,7,0,0"/>
+            <TextBlock Text="Paste secure setup only when switching to another service." Foreground="{StaticResource MutedBrush}" FontSize="11.5" Margin="1,6,0,0"/>
           </StackPanel>
         </Border>
       </Grid>
 
       <Grid Grid.Row="3" Margin="0,14,0,0">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
         <Border Style="{StaticResource Card}" MinHeight="80">
           <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
@@ -286,22 +306,8 @@
             </StackPanel>
           </Grid>
         </Border>
-      </Grid>
-
-      <Grid Grid.Row="4" Margin="0,14,0,0">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="1.1*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <Border Style="{StaticResource Card}" MinHeight="92">
-          <StackPanel>
-            <TextBlock Text="Service control" Style="{StaticResource SectionLabel}"/>
-            <WrapPanel>
-              <Button Content="Start service" Style="{StaticResource PrimaryButton}" Margin="0,0,9,0" Click="Start_Click"/>
-              <Button Content="Stop service" Style="{StaticResource StopButton}" Margin="0,0,9,0" Click="Stop_Click"/>
-              <Button Content="Refresh" Style="{StaticResource ActionButton}" Margin="0,0,9,0" Click="RefreshStatus_Click"/>
-              <Button Content="Test MCP" Style="{StaticResource ActionButton}" Click="TestMcp_Click"/>
-            </WrapPanel>
-          </StackPanel>
-        </Border>
-        <Border Grid.Column="2" Style="{StaticResource Card}" MinHeight="92">
+        <Grid Grid.Column="4" Margin="0">
+        <Border Style="{StaticResource Card}" MinHeight="80">
           <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <StackPanel>
@@ -369,9 +375,10 @@
             </Button>
           </Grid>
         </Border>
+        </Grid>
       </Grid>
 
-      <Border Grid.Row="5" Style="{StaticResource Card}" Margin="0,14,0,0" MinHeight="120">
+      <Border Grid.Row="4" Style="{StaticResource Card}" Margin="0,14,0,0" MinHeight="120">
         <StackPanel>
           <Grid Margin="0,0,0,10">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>

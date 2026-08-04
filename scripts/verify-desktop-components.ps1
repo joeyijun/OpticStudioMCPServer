@@ -34,8 +34,16 @@ if ($launcherXaml -notmatch 'Choose folder…' -or $launcherXaml -match 'Connect
 if ($launcherXaml -match 'Green: ready' -or $launcherXaml -match 'Amber: waiting' -or $launcherXaml -match 'Red: unavailable') {
   throw "The redundant status-color legend must not be shown at the bottom of the launcher."
 }
-foreach ($layoutMarker in 'Width="980" Height="800"', 'Property="Height" Value="36"', 'Property="CornerRadius" Value="12"', 'Stop service', 'Test MCP', 'Copy diagnostics') {
+foreach ($layoutMarker in 'Width="980" Height="800"', 'Property="Height" Value="36"', 'Property="CornerRadius" Value="12"', 'Content="Start"', 'Content="Stop"', 'Test MCP', 'Copy diagnostics', 'Copy secure setup') {
   if ($launcherXaml -notmatch [regex]::Escape($layoutMarker)) { throw "The polished launcher layout is missing: $layoutMarker" }
+}
+if ($launcherXaml -match 'Service control' -or
+    $launcherXaml -notmatch '(?s)Grid\.Row="3".*McpStateDot.*ZosStateDot.*Grid\.Column="4".*AiStateDot') {
+  throw "Service controls must be in the header and MCP, ZOS-API, and AI status cards must share one row."
+}
+if ($launcherXaml -notmatch 'RemoteSetupDot' -or
+    $launcherXaml -notmatch 'Content="Copy secure setup".*MinWidth="145"') {
+  throw "The remote secure-setup card must communicate its saved endpoint and keep the copy action fully visible."
 }
 if ($launcherXaml -notmatch '(?s)Status overview.*Logs.*Updates.*Copy diagnostics') {
   throw "Status maintenance actions must remain grouped in the status overview card."
@@ -44,6 +52,10 @@ foreach ($clientMarker in 'CodexConfigDot', 'ClaudeConfigDot', 'CursorConfigDot'
   if ($launcherXaml -notmatch [regex]::Escape($clientMarker)) { throw "The AI client menu is missing its configuration indicator: $clientMarker" }
 }
 $launcherCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Launcher\MainWindow.xaml.cs")
+if ($launcherCode -notmatch 'Remote endpoint active:' -or
+    $launcherCode -notmatch 'token protected for this Windows user') {
+  throw "The remote secure-setup status must identify the selected endpoint and encrypted credential."
+}
 if ($launcherCode -match 'Task\.Run\(\(\) => GetHealth\(endpoint, McpToken\)\)' -or
     $launcherCode -match 'Task\.Run\(\(\) => TestMcp\(endpoint, McpToken\)\)') {
   throw "The launcher must capture the token on the WPF dispatcher before starting a background HTTP request."
