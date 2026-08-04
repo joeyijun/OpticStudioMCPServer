@@ -557,11 +557,15 @@ public partial class MainWindow : Window
     {
         if (!IsRemoteEndpointConfigured)
         {
-            RemoteSetupStatus.Text = "No remote service configured; this computer uses its local MCP service.";
+            RemoteSetupDot.Fill = System.Windows.Media.Brushes.SlateGray;
+            RemoteSetupStatus.Foreground = System.Windows.Media.Brushes.SlateGray;
+            RemoteSetupStatus.Text = "Local MCP service selected.";
             return;
         }
         var endpoint = new Uri(_remoteEndpoint);
-        RemoteSetupStatus.Text = "Secure setup saved for " + endpoint.Host + ":" + endpoint.Port + ". Address and token are stored with Windows encryption.";
+        RemoteSetupDot.Fill = System.Windows.Media.Brushes.SeaGreen;
+        RemoteSetupStatus.Foreground = System.Windows.Media.Brushes.SeaGreen;
+        RemoteSetupStatus.Text = "Remote endpoint active: " + endpoint.Host + ":" + endpoint.Port + " · token protected for this Windows user.";
     }
     private static string GenerateAccessToken()
     {
