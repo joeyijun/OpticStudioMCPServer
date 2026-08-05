@@ -113,6 +113,7 @@ internal static class ServerApplication
                 };
             })
             .WithStdioServerTransport()
+            .WithTools<ZemaxMCP.Server.Tools.Catalog.ToolCatalogTool>()
             .WithTools<ZemaxMCP.Server.Tools.Jobs.McpJobTools>()
             // Analysis Tools
             .WithTools<ZemaxMCP.Server.Tools.Analysis.SpotDiagramTool>()

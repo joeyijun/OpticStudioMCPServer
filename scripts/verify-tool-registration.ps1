@@ -52,4 +52,10 @@ if ($duplicates) {
 
 if ($toolNames.Count -eq 0) { throw "No named MCP tools were discovered under $toolsPath" }
 
+$catalogPath = Join-Path $toolsPath "Catalog\ToolCatalogTool.cs"
+if (-not (Test-Path -LiteralPath $catalogPath) -or
+    -not $program.Contains("WithTools<ZemaxMCP.Server.Tools.Catalog.ToolCatalogTool>()")) {
+    throw "The generated MCP tool catalogue must be registered with the server."
+}
+
 Write-Host "Verified $discovered MCP tool classes and $($toolNames.Count) unique named MCP methods are registered in Program.cs."
