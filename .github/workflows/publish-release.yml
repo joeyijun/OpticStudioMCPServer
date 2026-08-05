@@ -1,44 +1,47 @@
-name: Publish Windows release
+name: Sign Windows release package
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing GitHub Release tag containing ZemaxMCP-win-x64.zip (for example v1.1.1)
+        required: true
+        type: string
 
-# A full package is deliberately built on a maintained Zemax workstation. The
-# ZOS-API assemblies are supplied by that licensed installation rather than
-# checked into this repository or copied to a public hosted runner.
+# A public package is built on the maintainer's Windows computer with a local
+# licensed OpticStudio/ZOS-API reference. That computer does not need GitHub
+# Actions Runner or Internet access. After the ZIP is uploaded to a Release,
+# this GitHub-hosted job downloads that exact asset, signs its manifest with the
+# repository secret, and attaches release-manifest.json for automatic updates.
 jobs:
-  publish:
-    runs-on: [self-hosted, windows, zemax]
+  sign-existing-package:
+    runs-on: windows-latest
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - name: Build the end-user package
+      - name: Download the existing release ZIP
         shell: pwsh
-        run: ./scripts/publish-windows.ps1 -Configuration Release -ZemaxRoot $env:ZEMAX_ROOT
-      - name: Sign the update manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item artifacts -ItemType Directory -Force | Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern "ZemaxMCP-win-x64.zip" --dir artifacts
+          if (-not (Test-Path "artifacts/ZemaxMCP-win-x64.zip")) {
+            throw "Release $env:RELEASE_TAG does not contain ZemaxMCP-win-x64.zip. Upload the locally built ZIP first."
+          }
+      - name: Sign the update manifest for the uploaded ZIP
         shell: pwsh
         env:
           UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY_B64 }}
-        run: ./scripts/New-UpdateManifest.ps1 -PackagePath artifacts/ZemaxMCP-win-x64.zip -Version "${{ github.ref_name }}"
-      - name: Upload the verified package
-        uses: actions/upload-artifact@v4
-        with:
-          name: ZemaxMCP-win-x64
-          path: |
-            artifacts/ZemaxMCP-win-x64.zip
-            artifacts/release-manifest.json
-          if-no-files-found: error
-      - name: Publish ZIP for automatic updates
-        if: startsWith(github.ref, 'refs/tags/v')
+        run: ./scripts/New-UpdateManifest.ps1 -PackagePath artifacts/ZemaxMCP-win-x64.zip -Version $env:RELEASE_TAG
+      - name: Attach signed manifest to the existing release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
-          files: |
-            artifacts/ZemaxMCP-win-x64.zip
-            artifacts/release-manifest.json
+          tag_name: ${{ inputs.release_tag }}
+          files: artifacts/release-manifest.json
