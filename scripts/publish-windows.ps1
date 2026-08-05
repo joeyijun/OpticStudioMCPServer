@@ -59,6 +59,10 @@ foreach ($project in $projects) {
   # user-facing exception logs.
   Copy-Item "$root\src\$project\bin\$Configuration\net48\*" $publish -Recurse -Force -Exclude "*.pdb", "*.xml", "*.log", "logs", "ZOSAPI*.dll"
 }
+$launcherAssemblyVersion = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $root "src\ZemaxMCP.Launcher\bin\$Configuration\net48\Start-Zemax-MCP.exe")).Version
+if ($null -eq $launcherAssemblyVersion) { throw "Could not determine the launcher version for the release package." }
+$launcherVersion = $launcherAssemblyVersion.ToString(3)
+Set-Content -LiteralPath (Join-Path $publish "VERSION.txt") -Value $launcherVersion -NoNewline
 Copy-Item "$root\installer\Portable-Install.cmd" "$publish\Portable-Install.cmd" -Force
 Copy-Item "$root\installer\Start-Zemax-MCP.cmd" "$publish\Start-Zemax-MCP.cmd" -Force
 Copy-Item "$root\LICENSE" "$publish\LICENSE" -Force

@@ -391,6 +391,8 @@
           </Grid>
           <TextBlock x:Name="ConnectionSummary" Text="Checking status automatically…" TextWrapping="Wrap"
                      Foreground="{StaticResource BodyBrush}" FontSize="13.5" LineHeight="20"/>
+          <TextBlock Text="Tool guide: System information · Lens editing · Analysis · Optimization · Files. High-impact changes should be confirmed; read-only mode blocks recognized lens changes."
+                     TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="11.5" LineHeight="17" Margin="0,8,0,0"/>
           <TextBox x:Name="Status" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                    Height="48" Margin="0,11,0,0" Padding="10,7" Background="#F7F9FC" Foreground="#536277"
                    BorderBrush="#DCE4EE" BorderThickness="1" FontFamily="Consolas" FontSize="12"/>

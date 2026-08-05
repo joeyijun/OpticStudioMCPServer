@@ -80,7 +80,23 @@ Each card displays the exact configuration path inspected by the launcher. “Co
 
 ## MCP capabilities
 
-The server exposes a broad tool set. AI clients discover the exact, version-matched schemas through MCP `tools/list`, so this README does not become a stale duplicate of the running server.
+The server exposes a broad tool set. AI clients discover the exact, version-matched schemas through MCP `tools/list`, so this README does not become a stale duplicate of the running server. Use `zemax_tool_catalog` when beginning a broad task: it is generated from the running server's registered tool attributes and returns the installed tools, their task group, risk level, and safety guidance.
+
+### Tool navigation and safety
+
+The existing MCP names are intentionally unchanged, so current Codex, Claude, Cursor, and other client configurations continue to work. The catalogue adds these task-oriented groups:
+
+| Group | Use it for | Typical first step |
+|---|---|---|
+| **System information** | Connection state, system settings, materials, tolerances, and job inspection. | Confirm `zemax_status` and inspect the active system. |
+| **Lens editing** | Sequential/NSC surfaces, fields, wavelengths, apertures, configurations, and solves. | Read the current data before changing a specific item. |
+| **Analysis** | Spot, MTF, PSF, POP, rays, aberrations, illumination, and result export. | Analyse the current or changed design and retain the result. |
+| **Optimization** | Merit functions, operands, constraints, local/global optimization, and background jobs. | Inspect variables and merit data before launching a long job. |
+| **Files** | Opening, saving, importing, and exporting project artifacts. | Confirm the current system and destination path. |
+
+Operations tagged **High impact** by `zemax_tool_catalog` can change lens data, a saved file, or optimization state. Confirm the target system and intended change before calling one. In read-only mode, recognized lens changes are blocked; in read/write mode, recognized ZOS-API mutations create a pre-change lens snapshot. **Caution** operations can alter the active session, connection, or job state. All other catalogue entries are intended for inspection or calculation and are marked **Read-only**.
+
+A safe default workflow is: inspect the system → make the smallest necessary edit → run an analysis → save or export deliberately. For POP, global search, or multistart optimization, use the returned Job ID with `zemax_job_status` / `zemax_job_cancel` rather than waiting on a long synchronous request.
 
 `zemax_get_system` reports both the ZOS-API system path and whether that file currently exists on disk, together with unsaved-change state, system mode, and system name. This distinguishes a named but not-yet-saved OpticStudio session from a loadable lens file.
 
