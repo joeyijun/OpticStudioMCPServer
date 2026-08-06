@@ -131,12 +131,17 @@ internal sealed class StdioMcpBridge : IDisposable
     private const int MaxTrackedClients = 20;
     private static readonly TimeSpan ClientSessionIdleTimeout = TimeSpan.FromMinutes(15);
     private readonly BridgeOptions _options;
-    private readonly SemaphoreSlim _requestLock = new SemaphoreSlim(1, 1);
+    // A main MCP request may hold the OpticStudio session for minutes.  Never
+    // use this lock for responses to server requests or client notifications:
+    // those messages must be able to reach stdio while the main request waits.
+    private readonly SemaphoreSlim _requestExecutionLock = new SemaphoreSlim(1, 1);
+    private readonly SemaphoreSlim _stdinWriteLock = new SemaphoreSlim(1, 1);
     private readonly object _stateLock = new object();
     private readonly Dictionary<string, ClientActivity> _clients = new Dictionary<string, ClientActivity>(StringComparer.Ordinal);
     private readonly Dictionary<string, ActiveRequest> _activeOperations = new Dictionary<string, ActiveRequest>(StringComparer.Ordinal);
     private readonly Dictionary<string, JobActivity> _jobs = new Dictionary<string, JobActivity>(StringComparer.Ordinal);
     private readonly Dictionary<string, ResponseWaiter> _responseWaiters = new Dictionary<string, ResponseWaiter>(StringComparer.Ordinal);
+    private readonly Dictionary<string, PendingServerRequest> _pendingServerRequests = new Dictionary<string, PendingServerRequest>(StringComparer.Ordinal);
     private readonly Dictionary<string, SseResponseStream> _sseStreams = new Dictionary<string, SseResponseStream>(StringComparer.Ordinal);
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
     private Process? _server;
@@ -355,7 +360,7 @@ internal sealed class StdioMcpBridge : IDisposable
                     var delaySeconds = Math.Min(30, 1 << Math.Min(failures, 4));
                     await Task.Delay(TimeSpan.FromSeconds(delaySeconds)).ConfigureAwait(false);
                     if (_disposed || IsServerRunning()) break;
-                    await _requestLock.WaitAsync().ConfigureAwait(false);
+                    await _requestExecutionLock.WaitAsync().ConfigureAwait(false);
                     try
                     {
                         if (!_disposed && !IsServerRunning()) StartServer(isRestart: true);
@@ -365,7 +370,7 @@ internal sealed class StdioMcpBridge : IDisposable
                         lock (_stateLock) { _lastServerError = ex.Message; _consecutiveServerFailures++; }
                         Log.Error(ex, "Could not restart the MCP stdio server");
                     }
-                    finally { _requestLock.Release(); }
+                    finally { _requestExecutionLock.Release(); }
                     await Task.Delay(500).ConfigureAwait(false);
                 }
             }
@@ -386,6 +391,8 @@ internal sealed class StdioMcpBridge : IDisposable
     private async Task HandleAsync(HttpListenerContext context)
     {
         SseResponseStream? sse = null;
+        string? provisionalSession = null;
+        var initializationCommitted = false;
         try
         {
             if (!ValidateOrigin(context)) return;
@@ -462,11 +469,12 @@ internal sealed class StdioMcpBridge : IDisposable
             var method = json["method"]?.ToString() ?? "unknown";
             var id = json["id"];
             var isClientResponse = IsJsonRpcResponse(json);
+            var isClientNotification = IsJsonRpcNotification(json);
             var requestedSession = context.Request.Headers["Mcp-Session-Id"];
             string? responseSession = null;
             if (string.Equals(method, "initialize", StringComparison.OrdinalIgnoreCase))
             {
-                if (!TryRegisterClient(json, now, out responseSession, out var rejection))
+                if (!TryBeginClientRegistration(json, now, out responseSession, out var rejection))
                 {
                     await WriteJsonAsync(context, new JObject
                     {
@@ -477,6 +485,7 @@ internal sealed class StdioMcpBridge : IDisposable
                     return;
                 }
                 requestedSession = responseSession;
+                provisionalSession = responseSession;
             }
             else if (string.IsNullOrWhiteSpace(requestedSession))
             {
@@ -494,9 +503,39 @@ internal sealed class StdioMcpBridge : IDisposable
                 context.Response.Close();
                 return;
             }
+            if (!isClientResponse && !isClientNotification && json["method"] == null)
+            {
+                await WriteJsonAsync(context, new JObject
+                {
+                    ["jsonrpc"] = "2.0",
+                    ["error"] = new JObject { ["code"] = -32600, ["message"] = "JSON-RPC message must be a request, response, or notification." },
+                    ["id"] = null
+                }, HttpStatusCode.BadRequest).ConfigureAwait(false);
+                return;
+            }
             TouchClient(requestedSession, method, json, now);
-            var operationId = BeginOperation(isClientResponse ? "server/request-response" : method, json, requestedSession, now);
-            if (!isClientResponse && id != null && PrefersSse(context.Request.Headers["Accept"]))
+            if (isClientResponse)
+            {
+                if (!TryTakePendingServerRequest(id!, requestedSession!, out var pendingServerRequest))
+                {
+                    await TryWriteRpcErrorAsync(context, -32004, "No matching pending server request exists for this JSON-RPC response.", HttpStatusCode.Conflict).ConfigureAwait(false);
+                    return;
+                }
+                await WriteToServerAsync(pendingServerRequest.Server, request).ConfigureAwait(false);
+                context.Response.StatusCode = (int)HttpStatusCode.Accepted;
+                context.Response.Close();
+                return;
+            }
+            if (isClientNotification)
+            {
+                await WriteToCurrentServerAsync(request).ConfigureAwait(false);
+                context.Response.StatusCode = (int)HttpStatusCode.Accepted;
+                context.Response.Close();
+                return;
+            }
+
+            var operationId = BeginOperation(method, json, requestedSession, now);
+            if (id != null && ShouldUseSse(context.Request.Headers["Accept"]))
             {
                 sse = new SseResponseStream(context, responseSession ?? requestedSession);
                 await sse.OpenAsync().ConfigureAwait(false);
@@ -509,13 +548,12 @@ internal sealed class StdioMcpBridge : IDisposable
             var releaseRequestLock = true;
             try
             {
-                await WaitForRequestLockAsync().ConfigureAwait(false);
+                await WaitForRequestExecutionLockAsync().ConfigureAwait(false);
                 ownsRequestLock = true;
                 if (!IsServerRunning()) StartServer(isRestart: true);
                 var server = _server ?? throw new InvalidOperationException("The MCP server is not running.");
                 var responseTask = !isClientResponse && id != null ? RegisterResponseWaiter(id, server, operationId, requestedSession!) : null;
-                await server.StandardInput.WriteLineAsync(request).ConfigureAwait(false);
-                await server.StandardInput.FlushAsync().ConfigureAwait(false);
+                await WriteToServerAsync(server, request).ConfigureAwait(false);
                 response = responseTask == null ? null : await ReadResponseWithTimeoutAsync(responseTask, server, operationId).ConfigureAwait(false);
             }
             catch (BridgeRequestTimeoutException ex) when (ex.ResponseIsStillDraining)
@@ -528,7 +566,7 @@ internal sealed class StdioMcpBridge : IDisposable
                 if (releaseRequestLock)
                 {
                     EndOperation(operationId);
-                    if (ownsRequestLock) _requestLock.Release();
+                    if (ownsRequestLock) _requestExecutionLock.Release();
                 }
                 Interlocked.Decrement(ref _activeRequests);
             }
@@ -538,6 +576,15 @@ internal sealed class StdioMcpBridge : IDisposable
                 context.Response.StatusCode = (int)HttpStatusCode.Accepted;
                 context.Response.Close();
                 return;
+            }
+            if (provisionalSession != null)
+            {
+                if (!IsSuccessfulInitializeResponse(response) || !CommitClientRegistration(provisionalSession))
+                {
+                    DiscardProvisionalClientRegistration(provisionalSession);
+                    responseSession = null;
+                }
+                else initializationCommitted = true;
             }
             if (sse != null)
                 await sse.WriteMessageAsync(response).ConfigureAwait(false);
@@ -584,6 +631,7 @@ internal sealed class StdioMcpBridge : IDisposable
         }
         finally
         {
+            if (!initializationCommitted) DiscardProvisionalClientRegistration(provisionalSession);
             if (sse != null)
             {
                 UnregisterSseStream(sse);
@@ -731,15 +779,15 @@ internal sealed class StdioMcpBridge : IDisposable
                 ["lastRequestAt"] = _lastRequestAt?.ToString("O"),
                 ["lastClient"] = _lastClient,
                 ["clientCount"] = clients.Count,
-                ["activeClientCount"] = _clients.Values.Count(x => now - x.LastRequestAt <= TimeSpan.FromMinutes(5) && !IsLauncherClient(x.Name)),
+                ["activeClientCount"] = _clients.Values.Count(x => now - x.LastRequestAt <= TimeSpan.FromMinutes(5)),
                 ["maxActiveMcpClients"] = _options.MaxActiveMcpClients,
-                ["clientIsolation"] = "single shared OpticStudio session; concurrent external MCP clients are rejected",
+                ["clientIsolation"] = "single shared OpticStudio session; concurrent MCP clients are rejected",
                 ["clients"] = clients
             };
         }
     }
 
-    private bool TryRegisterClient(JObject request, DateTimeOffset now, out string? sessionId, out string? rejection)
+    private bool TryBeginClientRegistration(JObject request, DateTimeOffset now, out string? sessionId, out string? rejection)
     {
         var name = request["params"]?["clientInfo"]?["name"]?.ToString();
         var version = request["params"]?["clientInfo"]?["version"]?.ToString();
@@ -749,22 +797,21 @@ internal sealed class StdioMcpBridge : IDisposable
         lock (_stateLock)
         {
             var expired = _clients
-                .Where(pair => !IsLauncherClient(pair.Value.Name) && now - pair.Value.LastRequestAt > ClientSessionIdleTimeout && !SessionHasActiveOperation(pair.Key))
+                .Where(pair => now - pair.Value.LastRequestAt > ClientSessionIdleTimeout && !SessionHasActiveOperation(pair.Key))
                 .Select(pair => pair.Key)
                 .ToArray();
             foreach (var key in expired) _clients.Remove(key);
 
-            if (!IsLauncherClient(name!) && _clients.Values.Count(client => !IsLauncherClient(client.Name)) >= _options.MaxActiveMcpClients)
+            if (_clients.Count >= _options.MaxActiveMcpClients)
             {
-                rejection = "This bridge intentionally allows only " + _options.MaxActiveMcpClients + " external MCP client session because all requests share one OpticStudio/ZOS-API session. Disconnect the existing client or wait for its idle session to expire.";
+                rejection = "This bridge intentionally allows only " + _options.MaxActiveMcpClients + " MCP client session because all requests share one OpticStudio/ZOS-API session. Disconnect the existing client or wait for its idle session to expire.";
                 return false;
             }
             while (_clients.Count >= MaxTrackedClients)
             {
                 var removable = _clients
-                    .Where(pair => IsLauncherClient(pair.Value.Name) || !SessionHasActiveOperation(pair.Key))
-                    .OrderBy(pair => IsLauncherClient(pair.Value.Name) ? 0 : 1)
-                    .ThenBy(pair => pair.Value.LastRequestAt)
+                    .Where(pair => !SessionHasActiveOperation(pair.Key))
+                    .OrderBy(pair => pair.Value.LastRequestAt)
                     .Select(pair => pair.Key)
                     .FirstOrDefault();
                 if (removable == null) break;
@@ -776,14 +823,34 @@ internal sealed class StdioMcpBridge : IDisposable
                 return false;
             }
             sessionId = Guid.NewGuid().ToString("N");
-            _clients[sessionId] = new ClientActivity(name!, version ?? string.Empty, now);
+            _clients[sessionId] = new ClientActivity(name!, version ?? string.Empty, now, isProvisional: true);
         }
         return true;
     }
 
     private bool SessionExists(string sessionId)
     {
-        lock (_stateLock) return _clients.ContainsKey(sessionId);
+        lock (_stateLock) return _clients.TryGetValue(sessionId, out var client) && !client.IsProvisional;
+    }
+
+    private bool CommitClientRegistration(string sessionId)
+    {
+        lock (_stateLock)
+        {
+            if (!_clients.TryGetValue(sessionId, out var client) || !client.IsProvisional) return false;
+            client.IsProvisional = false;
+            return true;
+        }
+    }
+
+    private void DiscardProvisionalClientRegistration(string? sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId)) return;
+        lock (_stateLock)
+        {
+            if (_clients.TryGetValue(sessionId!, out var client) && client.IsProvisional)
+                _clients.Remove(sessionId!);
+        }
     }
 
     private void TouchClient(string? sessionId, string method, JObject request, DateTimeOffset now)
@@ -807,8 +874,6 @@ internal sealed class StdioMcpBridge : IDisposable
         }
     }
 
-    private static bool IsLauncherClient(string name) => name.Equals("zemax-mcp-launcher", StringComparison.OrdinalIgnoreCase);
-
     private static string? ExistingPath(string root, string fileName)
     {
         if (string.IsNullOrWhiteSpace(root)) return null;
@@ -828,7 +893,12 @@ internal sealed class StdioMcpBridge : IDisposable
 
     private void EndOperation(string operationId)
     {
-        lock (_stateLock) _activeOperations.Remove(operationId);
+        lock (_stateLock)
+        {
+            _activeOperations.Remove(operationId);
+            foreach (var key in _pendingServerRequests.Where(pair => pair.Value.ParentOperationId == operationId).Select(pair => pair.Key).ToArray())
+                _pendingServerRequests.Remove(key);
+        }
     }
 
     private bool RemoveSession(string sessionId)
@@ -850,12 +920,11 @@ internal sealed class StdioMcpBridge : IDisposable
                                  x.Equals("text/event-stream", StringComparison.OrdinalIgnoreCase) || x == "*/*");
     }
 
-    private static bool PrefersSse(string? accept)
+    private static bool ShouldUseSse(string? accept)
     {
         if (string.IsNullOrWhiteSpace(accept)) return false;
-        var values = accept!.Split(',').Select(x => x.Trim().Split(';')[0]).ToArray();
-        return values.Any(x => x.Equals("text/event-stream", StringComparison.OrdinalIgnoreCase)) &&
-               !values.Any(x => x.Equals("application/json", StringComparison.OrdinalIgnoreCase) || x == "*/*");
+        return accept!.Split(',').Select(x => x.Trim().Split(';')[0])
+            .Any(x => x.Equals("text/event-stream", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string? FindNetHelper(string root)
@@ -968,14 +1037,14 @@ internal sealed class StdioMcpBridge : IDisposable
             EndOperation(operationId);
             if (pending.TryComplete())
             {
-                try { _requestLock.Release(); } catch (ObjectDisposedException) { }
+                try { _requestExecutionLock.Release(); } catch (ObjectDisposedException) { }
             }
         }
     }
 
-    private async Task WaitForRequestLockAsync()
+    private async Task WaitForRequestExecutionLockAsync()
     {
-        if (_requestLock.Wait(0)) return;
+        if (_requestExecutionLock.Wait(0)) return;
 
         var queuePosition = Interlocked.Increment(ref _queuedRequests);
         if (queuePosition > _options.MaxQueuedRequests)
@@ -984,8 +1053,29 @@ internal sealed class StdioMcpBridge : IDisposable
             throw new BridgeRequestQueueFullException("The MCP request queue is full. Wait for the active OpticStudio operation to finish before retrying.");
         }
 
-        try { await _requestLock.WaitAsync().ConfigureAwait(false); }
+        try { await _requestExecutionLock.WaitAsync().ConfigureAwait(false); }
         finally { Interlocked.Decrement(ref _queuedRequests); }
+    }
+
+    private async Task WriteToCurrentServerAsync(string message)
+    {
+        var server = _server;
+        if (server == null || !IsServerRunning())
+            throw new InvalidOperationException("The MCP stdio server is not running.");
+        await WriteToServerAsync(server, message).ConfigureAwait(false);
+    }
+
+    private async Task WriteToServerAsync(Process server, string message)
+    {
+        await _stdinWriteLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (!ReferenceEquals(_server, server) || !IsServerRunning())
+                throw new InvalidOperationException("The MCP stdio server is no longer available.");
+            await server.StandardInput.WriteLineAsync(message).ConfigureAwait(false);
+            await server.StandardInput.FlushAsync().ConfigureAwait(false);
+        }
+        finally { _stdinWriteLock.Release(); }
     }
 
     private Task<string> RegisterResponseWaiter(JToken id, Process server, string operationId, string sessionId)
@@ -1029,7 +1119,20 @@ internal sealed class StdioMcpBridge : IDisposable
                     }
                 }
                 if (response != null) response.Completion.TrySetResult(line);
-                else _ = PublishServerMessageAsync(line, GetCurrentResponseOperationId());
+                else
+                {
+                    var owner = GetCurrentResponseWaiter();
+                    if (IsJsonRpcServerRequest(message))
+                    {
+                        if (owner == null || !HasSseStream(owner.OperationId))
+                        {
+                            Log.Warning("Dropped a server-initiated MCP request because its owning HTTP request has no SSE stream.");
+                            continue;
+                        }
+                        RegisterPendingServerRequest(message["id"]!, message["method"]!.ToString(), owner, server);
+                    }
+                    _ = PublishServerMessageAsync(line, owner?.OperationId);
+                }
             }
         }
         catch (Exception ex)
@@ -1042,13 +1145,46 @@ internal sealed class StdioMcpBridge : IDisposable
         }
     }
 
-    private string? GetCurrentResponseOperationId()
+    private ResponseWaiter? GetCurrentResponseWaiter()
     {
         lock (_stateLock)
         {
             // Stdio requests are serialized, so at most one response is awaiting the
             // shared backend.  Its operation owns any notifications or server requests.
-            return _responseWaiters.Count == 1 ? _responseWaiters.Values.First().OperationId : null;
+            return _responseWaiters.Count == 1 ? _responseWaiters.Values.First() : null;
+        }
+    }
+
+    private bool HasSseStream(string operationId)
+    {
+        lock (_stateLock) return _sseStreams.ContainsKey(operationId);
+    }
+
+    private void RegisterPendingServerRequest(JToken id, string method, ResponseWaiter owner, Process server)
+    {
+        var key = ResponseKey(id);
+        lock (_stateLock)
+        {
+            if (_pendingServerRequests.ContainsKey(key))
+                throw new InvalidOperationException("The MCP server emitted a duplicate pending request id.");
+            _pendingServerRequests.Add(key, new PendingServerRequest(key, owner.SessionId, owner.OperationId, method, server));
+        }
+    }
+
+    private bool TryTakePendingServerRequest(JToken id, string sessionId, out PendingServerRequest pending)
+    {
+        var key = ResponseKey(id);
+        lock (_stateLock)
+        {
+            if (!_pendingServerRequests.TryGetValue(key, out pending!) ||
+                !string.Equals(pending.SessionId, sessionId, StringComparison.Ordinal) ||
+                !_activeOperations.ContainsKey(pending.ParentOperationId))
+            {
+                pending = null!;
+                return false;
+            }
+            _pendingServerRequests.Remove(key);
+            return true;
         }
     }
 
@@ -1097,6 +1233,7 @@ internal sealed class StdioMcpBridge : IDisposable
             if (!ReferenceEquals(_server, server)) return;
             waiters = _responseWaiters.Values.ToArray();
             _responseWaiters.Clear();
+            _pendingServerRequests.Clear();
         }
         foreach (var waiter in waiters) waiter.Completion.TrySetException(error);
     }
@@ -1108,6 +1245,22 @@ internal sealed class StdioMcpBridge : IDisposable
                (message["result"] != null || message["error"] != null);
     }
 
+    private static bool IsJsonRpcNotification(JObject message) =>
+        message["method"] != null && (message["id"] == null || message["id"]!.Type == JTokenType.Null);
+
+    private static bool IsJsonRpcServerRequest(JObject message) =>
+        message["method"] != null && message["id"] != null && message["id"]!.Type != JTokenType.Null;
+
+    private static bool IsSuccessfulInitializeResponse(string response)
+    {
+        try
+        {
+            var message = JObject.Parse(response);
+            return message["result"] != null && message["error"] == null;
+        }
+        catch { return false; }
+    }
+
     private static string ResponseKey(JToken id) => id.ToString(Newtonsoft.Json.Formatting.None);
 
     public void Dispose()
@@ -1115,7 +1268,8 @@ internal sealed class StdioMcpBridge : IDisposable
         _disposed = true;
         try { _listener?.Close(); } catch { }
         DisposeServerProcess();
-        _requestLock.Dispose();
+        _requestExecutionLock.Dispose();
+        _stdinWriteLock.Dispose();
     }
 
     private void DisposeServerProcess()
@@ -1129,13 +1283,14 @@ internal sealed class StdioMcpBridge : IDisposable
 
     private sealed class ClientActivity
     {
-        public ClientActivity(string name, string version, DateTimeOffset connectedAt)
+        public ClientActivity(string name, string version, DateTimeOffset connectedAt, bool isProvisional = false)
         {
             Name = name;
             Version = version;
             ConnectedAt = connectedAt;
             LastRequestAt = connectedAt;
             LastMethod = "initialize";
+            IsProvisional = isProvisional;
         }
 
         public string Name { get; }
@@ -1144,6 +1299,7 @@ internal sealed class StdioMcpBridge : IDisposable
         public DateTimeOffset LastRequestAt { get; set; }
         public string LastMethod { get; set; }
         public long RequestCount { get; set; }
+        public bool IsProvisional { get; set; }
     }
 
     private sealed class ActiveRequest
@@ -1179,6 +1335,24 @@ internal sealed class StdioMcpBridge : IDisposable
         public string OperationId { get; }
         public string SessionId { get; }
         public TaskCompletionSource<string> Completion { get; }
+    }
+
+    private sealed class PendingServerRequest
+    {
+        public PendingServerRequest(string id, string sessionId, string parentOperationId, string method, Process server)
+        {
+            Id = id;
+            SessionId = sessionId;
+            ParentOperationId = parentOperationId;
+            Method = method;
+            Server = server;
+        }
+
+        public string Id { get; }
+        public string SessionId { get; }
+        public string ParentOperationId { get; }
+        public string Method { get; }
+        public Process Server { get; }
     }
 
     /// <summary>One Streamable HTTP response. It stays open until the final JSON-RPC response,
