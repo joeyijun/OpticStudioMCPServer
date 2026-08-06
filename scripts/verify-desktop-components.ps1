@@ -7,7 +7,7 @@ $root = Split-Path $PSScriptRoot -Parent
 $launcherExe = Join-Path $root "src\ZemaxMCP.Launcher\bin\$Configuration\net48\Start-Zemax-MCP.exe"
 $installerExe = Join-Path $root "src\ZemaxMCP.Installer\bin\$Configuration\net48\Install.exe"
 $proxyExe = Join-Path $root "src\ZemaxMCP.ClientProxy\bin\$Configuration\net48\ZemaxMCP.ClientProxy.exe"
-$bridgeExe = Join-Path $root "src\ZemaxMCP.HttpBridge\bin\$Configuration\net48\ZemaxMCP.HttpBridge.exe"
+$bridgeExe = Join-Path $root "src\ZemaxMCP.HttpBridge\bin\$Configuration\net48\ZemaxMCP.Host.exe"
 $updaterExe = Join-Path $root "src\ZemaxMCP.Updater\bin\$Configuration\net48\ZemaxMCP.Updater.exe"
 foreach ($path in $launcherExe, $installerExe, $proxyExe, $bridgeExe, $updaterExe) {
   if (-not (Test-Path -LiteralPath $path)) { throw "Build output is missing: $path" }
@@ -45,6 +45,10 @@ if ($launcherXaml -notmatch 'RemoteSetupDot' -or
     $launcherXaml -notmatch 'Content="Copy secure setup".*MinWidth="145"') {
   throw "The remote secure-setup card must communicate its saved endpoint and keep the copy action fully visible."
 }
+if ($launcherXaml -notmatch 'x:Name="ToolsetProfile"' -or
+    $launcherXaml -notmatch '完整专家模式') {
+  throw "The launcher must offer the task-oriented toolset run configurations."
+}
 if ($launcherXaml -notmatch '(?s)Status overview.*Logs.*Updates.*Copy diagnostics') {
   throw "Status maintenance actions must remain grouped in the status overview card."
 }
@@ -73,6 +77,9 @@ foreach ($forbiddenPattern in '"*.log"', '"*.pdb"', '"ZOSAPI*.dll"') {
 $bridgeSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\Program.cs")
 if ($bridgeSource -notmatch 'EnvironmentVariables\.Remove\("ZEMAX_MCP_TOKEN"\)') {
   throw "The ZOS-API subprocess must not inherit the HTTP access token."
+}
+if ($bridgeSource -notmatch 'NamedPipeClientStream' -or $bridgeSource -notmatch 'ToolsetPolicy') {
+  throw "The Host must isolate the Worker behind a named pipe and enforce the selected toolset policy."
 }
 
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("ZemaxMCP-desktop-test-" + [guid]::NewGuid().ToString("N"))

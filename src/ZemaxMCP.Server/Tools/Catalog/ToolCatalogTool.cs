@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Reflection;
 using ModelContextProtocol.Server;
 using ZemaxMCP.Core.Session;
+using ZemaxMCP.Toolsets;
 
 namespace ZemaxMCP.Server.Tools.Catalog;
 
@@ -51,14 +52,9 @@ internal static class ToolCatalog
 
     internal sealed record GroupDefinition(string Id, string Title, string Purpose);
 
-    internal static readonly IReadOnlyList<GroupDefinition> Groups = new[]
-    {
-        new GroupDefinition("system-information", "System information", "Connection, settings, catalog, tolerance, and job inspection."),
-        new GroupDefinition("lens-editing", "Lens editing", "Sequential, non-sequential, field, wavelength, and configuration work."),
-        new GroupDefinition("analysis", "Analysis", "Optical performance calculations and result export."),
-        new GroupDefinition("optimization", "Optimization", "Merit-function work, optimization, and background-job control."),
-        new GroupDefinition("files", "Files", "Opening, saving, importing, and exporting project artifacts.")
-    };
+    internal static readonly IReadOnlyList<GroupDefinition> Groups = ToolsetCatalog.Domains
+        .Select(domain => new GroupDefinition(domain.Id, domain.Title, domain.Purpose))
+        .ToArray();
 
     internal static IReadOnlyList<ToolCatalogTool.ToolEntry> Build(bool highImpactOnly)
     {
@@ -83,18 +79,7 @@ internal static class ToolCatalog
         return new ToolCatalogTool.ToolEntry(name, GetGroup(type, name), risk, description, GetSafetyGuidance(risk, name));
     }
 
-    private static string GetGroup(Type type, string name)
-    {
-        if (name is "zemax_open_file" or "zemax_save_file" or "zemax_new_system" or "zemax_export_analysis" or "zemax_export_glass_catalog" or
-            "zemax_load_merit_function_file" or "zemax_save_merit_function_file") return "Files";
-
-        var toolNamespace = type.Namespace ?? string.Empty;
-        if (toolNamespace.Contains(".Analysis", StringComparison.Ordinal)) return "Analysis";
-        if (toolNamespace.Contains(".Optimization", StringComparison.Ordinal) || toolNamespace.Contains(".Jobs", StringComparison.Ordinal)) return "Optimization";
-        if (toolNamespace.Contains(".LensData", StringComparison.Ordinal) || toolNamespace.Contains(".NonSequential", StringComparison.Ordinal) ||
-            toolNamespace.Contains(".Configuration", StringComparison.Ordinal) || toolNamespace.Contains(".Tolerancing", StringComparison.Ordinal)) return "Lens editing";
-        return "System information";
-    }
+    private static string GetGroup(Type type, string name) => ToolsetCatalog.GetDomain(name).Title;
 
     private static string GetRisk(string name) => ZemaxOperationMetadata.GetToolImpact(name) switch
     {
@@ -114,13 +99,5 @@ internal static class ToolCatalog
         return "Designed to inspect state or calculate results without intentionally editing lens data.";
     }
 
-    private static int GroupOrder(string group) => group switch
-    {
-        "System information" => 0,
-        "Lens editing" => 1,
-        "Analysis" => 2,
-        "Optimization" => 3,
-        "Files" => 4,
-        _ => 99
-    };
+    private static int GroupOrder(string group) => ToolsetCatalog.GetDomainOrder(group);
 }

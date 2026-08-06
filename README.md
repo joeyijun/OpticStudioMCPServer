@@ -19,8 +19,9 @@ For the complete one- and two-computer guide, see [Windows Quick Start](docs/QUI
 
 ```mermaid
 flowchart LR
-  A["OpticStudio computer\nInstall.exe → Start-Zemax-MCP.exe"] --> B["Built-in HTTP MCP bridge\n/mcp"]
-  B --> C["ZOS-API + licensed\nOpticStudio"]
+  A["OpticStudio computer\nInstall.exe → Start-Zemax-MCP.exe"] --> B["ZemaxMCP.Host\nStreamable HTTP, auth, sessions"]
+  B -->|"private Named Pipe"| C["ZemaxMCP.Worker\nsingle STA + ZOS-API"]
+  C --> F["Licensed OpticStudio"]
   D["Codex / Claude / Cursor / Kimi / WorkBuddy / Copilot\nlocal or trusted LAN computer"] -->|"HTTP MCP"| B
   B --> E["Live dashboard\nMCP · ZOS-API · AI activity"]
 ```
@@ -30,11 +31,12 @@ For a single computer, the AI client uses the local MCP address. For two compute
 ## Highlights
 
 - **Graphical install and update** — `Install.exe` installs or updates the per-user application. `Portable-Install.cmd` is available where an organisation blocks the installer executable.
-- **Resilient built-in HTTP MCP** — The .NET bridge deliberately permits one external AI session per OpticStudio process, applies a soft request timeout, and force-restarts a permanently stuck stdio subprocess at a second hard limit so it cannot block future calls forever.
+- **Isolated Host / Worker architecture** — `ZemaxMCP.Host` owns Streamable HTTP, authentication, sessions, client policy, SSE, and audit status. It talks only through a private Windows named pipe to `ZemaxMCP.Worker`, which owns the one ZOS-API connection and its STA COM thread.
+- **Resilient built-in HTTP MCP** — One external AI session per OpticStudio process, bounded queueing, soft timeouts, graceful recovery, and automatic Worker restart prevent a stuck operation from blocking later work forever.
 - **Authenticated LAN use** — Every launcher-managed request uses a random Bearer token. LAN listening is refused without a token, browser origins are restricted, and token rotation is one click.
 - **Lens-change safety** — One explicit metadata catalogue drives both the MCP risk display and ZOS-API protection. Read-only mode blocks high-impact operations; in read/write mode, every recognised mutation first saves a timestamped copy of the current lens, while unknown execution commands fail closed as high impact.
 - **Verified, recoverable updates** — Release metadata is RSA-signed, the ZIP size and SHA-256 are checked before extraction, and a separate updater restores the previous installation if replacement fails.
-- **Dedicated ZOS-API thread** — All connection and tool operations are serialized on one long-lived STA thread to respect the COM threading model and avoid cross-thread session access.
+- **Dedicated ZOS-API thread** — The Worker serializes every connection and tool operation on one long-lived STA thread to respect the COM threading model and avoid cross-thread session access.
 - **Streamable HTTP lifecycle** — The built-in bridge validates MCP response negotiation, supports JSON and multi-message SSE streams, routes server notifications before the final response, preserves a controlled MCP session, and supports `DELETE` session cleanup.
 - **Long-job control** — POP, global search, and multistart optimization can return immediately with a job id. Use `zemax_job_status`, `zemax_job_list`, and `zemax_job_cancel` for queue position, live progress, result retrieval, and cooperative cancellation; the launcher also shows the active tool/job and elapsed time.
 - **Per-client live dashboard** — Colour-coded cards distinguish installation, configuration, historical activity, and a real request made within the last five minutes. The launcher health check is excluded from AI activity.
@@ -82,17 +84,31 @@ Each card displays the exact configuration path inspected by the launcher. “Co
 
 The server exposes a broad tool set. AI clients discover the exact, version-matched schemas through MCP `tools/list`, so this README does not become a stale duplicate of the running server. Use `zemax_tool_catalog` when beginning a broad task: it is generated from the running server's registered tool attributes and returns the installed tools, their task group, risk level, and safety guidance.
 
-### Tool navigation and safety
+### Tool navigation, run configurations, and safety
 
-The existing MCP names are intentionally unchanged, so current Codex, Claude, Cursor, and other client configurations continue to work. The catalogue adds these task-oriented groups:
+The existing MCP names are intentionally unchanged, so current Codex, Claude, Cursor, and other client configurations continue to work. The Launcher can expose a smaller, task-focused surface. This is enforced by the Host for both `tools/list` and `tools/call`, not merely hidden in the UI.
+
+| Launcher configuration | Enabled domains |
+|---|---|
+| **基础查看** | System, Analysis, Administration |
+| **顺序成像设计** | System, Sequential editing, Analysis, Polarization, Files, Administration |
+| **非序列与杂散光** | System, Non-sequential, Analysis, Files, Administration |
+| **优化与公差** | System, Sequential editing, Analysis, Optimization, Tolerance, Polarization, Files, Administration |
+| **完整专家模式** | All domains |
+
+`zemax_tool_catalog` uses the same shared source of truth and presents the following domains:
 
 | Group | Use it for | Typical first step |
 |---|---|---|
-| **System information** | Connection state, system settings, materials, tolerances, and job inspection. | Confirm `zemax_status` and inspect the active system. |
-| **Lens editing** | Sequential/NSC surfaces, fields, wavelengths, apertures, configurations, and solves. | Read the current data before changing a specific item. |
+| **System** | System state, catalog data, and safe inspection. | Confirm `zemax_status` and inspect the active system. |
+| **Sequential editing** | Surfaces, fields, wavelengths, apertures, configurations, and solves. | Read the current data before changing a specific item. |
+| **Non-sequential** | NSC objects, detectors, and stray-light data. | Inspect NSC mode and objects before changing a model. |
 | **Analysis** | Spot, MTF, PSF, POP, rays, aberrations, illumination, and result export. | Analyse the current or changed design and retain the result. |
 | **Optimization** | Merit functions, operands, constraints, local/global optimization, and background jobs. | Inspect variables and merit data before launching a long job. |
+| **Tolerance** | Tolerance Data Editor inspection and tolerance workflow. | Inspect existing operands and bounds. |
+| **Polarization** | Polarization settings and thin-film phase handling. | Inspect current settings before changing amplitudes or phases. |
 | **Files** | Opening, saving, importing, and exporting project artifacts. | Confirm the current system and destination path. |
+| **Administration** | Connection, session, and service management. | Verify the Worker connection before starting a task. |
 
 Operations tagged **High impact** by `zemax_tool_catalog` can change lens data, a saved file, or optimization state. Confirm the target system and intended change before calling one. In read-only mode, recognized lens changes are blocked; in read/write mode, recognized ZOS-API mutations create a pre-change lens snapshot. **Caution** operations can alter the active session, connection, or job state. All other catalogue entries are intended for inspection or calculation and are marked **Read-only**.
 

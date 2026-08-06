@@ -154,6 +154,7 @@ public partial class MainWindow : Window
     private string McpUrl => Uri.TryCreate(_remoteEndpoint, UriKind.Absolute, out var remote) &&
         (remote.Scheme == Uri.UriSchemeHttp || remote.Scheme == Uri.UriSchemeHttps) ? remote.ToString().TrimEnd('/') : Url;
     private string McpToken => IsRemoteEndpointConfigured ? _remoteAccessToken : _localAccessToken;
+    private string SelectedToolsetProfile => (ToolsetProfile.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag?.ToString() ?? "full-expert";
 
     private void ShareOnLan_Changed(object sender, RoutedEventArgs e)
     {
@@ -170,6 +171,15 @@ public partial class MainWindow : Window
         if (IsRemoteEndpointConfigured) return;
         StopBridge();
         if (Installation != null) StartBridge();
+    }
+    private void ToolsetProfile_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (!_windowLoaded) return;
+        SaveSettings();
+        if (IsRemoteEndpointConfigured) return;
+        StopBridge();
+        if (Installation != null) StartBridge();
+        Report("Run configuration changed to " + (ToolsetProfile.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content + ".");
     }
     private void StartOnLogin_Changed(object sender, RoutedEventArgs e)
     {
@@ -195,9 +205,9 @@ public partial class MainWindow : Window
         StopBridge();
         if (!automaticRestart) _bridgeRestartAttempts = 0;
         SaveSettings();
-        var bridge = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZemaxMCP.HttpBridge.exe");
-        var server = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZemaxMCP.Server.exe");
-        if (!File.Exists(bridge) || !File.Exists(server)) { Report("Release package is incomplete: ZemaxMCP.HttpBridge.exe and ZemaxMCP.Server.exe must be beside this launcher."); return; }
+        var bridge = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZemaxMCP.Host.exe");
+        var server = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZemaxMCP.Worker.exe");
+        if (!File.Exists(bridge) || !File.Exists(server)) { Report("Release package is incomplete: ZemaxMCP.Host.exe and ZemaxMCP.Worker.exe must be beside this launcher."); return; }
         if (!EnsureZosApiBootstrap(Installation)) return;
         // URL ACL/firewall setup is a user-approved configuration step, not
         // something an automatic recovery attempt should prompt for again.
@@ -207,7 +217,7 @@ public partial class MainWindow : Window
         {
             var snapshots = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZemaxMCP", "snapshots");
             var startInfo = new ProcessStartInfo(bridge,
-                $"--server \"{server}\" --zemax-root \"{Installation.Root}\" --host {HostName} --port {port} --read-only {(ReadOnlyMode.IsChecked == true ? "true" : "false")} --snapshot-dir \"{snapshots}\"")
+                $"--server \"{server}\" --zemax-root \"{Installation.Root}\" --host {HostName} --port {port} --read-only {(ReadOnlyMode.IsChecked == true ? "true" : "false")} --toolset {SelectedToolsetProfile} --snapshot-dir \"{snapshots}\"")
             { UseShellExecute = false, CreateNoWindow = true };
             startInfo.EnvironmentVariables["ZEMAX_MCP_TOKEN"] = _localAccessToken;
             process = Process.Start(startInfo);
@@ -770,6 +780,7 @@ public partial class MainWindow : Window
             if (string.IsNullOrWhiteSpace(_localAccessToken)) _localAccessToken = GenerateAccessToken();
             ShareOnLan.IsChecked = settings["shareOnLan"]?.Value<bool>() ?? false;
             ReadOnlyMode.IsChecked = settings["readOnly"]?.Value<bool>() ?? false;
+            SelectToolsetProfile(settings["toolsetProfile"]?.ToString());
             StartOnLogin.IsChecked = settings["startOnLogin"]?.Value<bool>() ?? false;
             _clientSetupPrompted = settings["clientSetupPrompted"]?.Value<bool>() ?? false;
             UpdateRemoteSetupStatus();
@@ -796,11 +807,24 @@ public partial class MainWindow : Window
                 ["remoteTokenProtected"] = ProtectSecret(_remoteAccessToken),
                 ["shareOnLan"] = ShareOnLan.IsChecked == true,
                 ["readOnly"] = ReadOnlyMode.IsChecked == true,
+                ["toolsetProfile"] = SelectedToolsetProfile,
                 ["startOnLogin"] = StartOnLogin.IsChecked == true,
                 ["clientSetupPrompted"] = _clientSetupPrompted
             }.ToString());
         }
         catch { /* Preferences are non-essential. */ }
+    }
+    private void SelectToolsetProfile(string? value)
+    {
+        foreach (var item in ToolsetProfile.Items.OfType<System.Windows.Controls.ComboBoxItem>())
+        {
+            if (string.Equals(item.Tag?.ToString(), value, StringComparison.OrdinalIgnoreCase))
+            {
+                ToolsetProfile.SelectedItem = item;
+                return;
+            }
+        }
+        ToolsetProfile.SelectedIndex = 4;
     }
     private static string ProtectSecret(string value)
     {

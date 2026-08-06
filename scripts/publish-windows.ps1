@@ -57,7 +57,7 @@ foreach ($project in $projects) {
   # PDB files contain the absolute source path used by the release builder.
   # They are not needed to run the application and would expose that path in
   # user-facing exception logs.
-  Copy-Item "$root\src\$project\bin\$Configuration\net48\*" $publish -Recurse -Force -Exclude "*.pdb", "*.xml", "*.log", "logs", "ZOSAPI*.dll"
+  Copy-Item "$root\src\$project\bin\$Configuration\net48\*" $publish -Recurse -Force -Exclude "*.pdb", "*.xml", "*.log", "logs", "ZOSAPI*.dll", "ZemaxMCP.HttpBridge.exe", "ZemaxMCP.HttpBridge.exe.config", "ZemaxMCP.Server.exe", "ZemaxMCP.Server.exe.config"
 }
 $launcherAssemblyVersion = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $root "src\ZemaxMCP.Launcher\bin\$Configuration\net48\Start-Zemax-MCP.exe")).Version
 if ($null -eq $launcherAssemblyVersion) { throw "Could not determine the launcher version for the release package." }
@@ -68,10 +68,13 @@ Copy-Item "$root\installer\Start-Zemax-MCP.cmd" "$publish\Start-Zemax-MCP.cmd" -
 Copy-Item "$root\LICENSE" "$publish\LICENSE" -Force
 Copy-Item "$root\THIRD_PARTY_NOTICES.md" "$publish\THIRD_PARTY_NOTICES.md" -Force
 $forbiddenReleaseFiles = @(Get-ChildItem $publish -Recurse -File | Where-Object {
-  $_.Extension -in ".pdb", ".log" -or $_.Name -like "ZOSAPI*.dll"
+  $_.Extension -in ".pdb", ".log" -or $_.Name -like "ZOSAPI*.dll" -or $_.Name -in "ZemaxMCP.HttpBridge.exe", "ZemaxMCP.Server.exe"
 })
 if ($forbiddenReleaseFiles.Count -gt 0) {
   throw "Release staging contains forbidden files: $($forbiddenReleaseFiles.FullName -join ', ')"
+}
+foreach ($requiredExecutable in "ZemaxMCP.Host.exe", "ZemaxMCP.Worker.exe", "Start-Zemax-MCP.exe") {
+  if (-not (Test-Path -LiteralPath (Join-Path $publish $requiredExecutable))) { throw "Release staging is missing $requiredExecutable." }
 }
 Compress-Archive "$publish\*" "$root\artifacts\ZemaxMCP-win-x64.zip" -Force
 Write-Host "Release package: $root\artifacts\ZemaxMCP-win-x64.zip"

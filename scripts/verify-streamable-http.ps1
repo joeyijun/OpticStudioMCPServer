@@ -2,7 +2,7 @@ param([string]$Configuration = "Release")
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
-$bridge = Join-Path $root "src\ZemaxMCP.HttpBridge\bin\$Configuration\net48\ZemaxMCP.HttpBridge.exe"
+$bridge = Join-Path $root "src\ZemaxMCP.HttpBridge\bin\$Configuration\net48\ZemaxMCP.Host.exe"
 if (-not (Test-Path -LiteralPath $bridge)) { throw "HTTP bridge build output is missing." }
 
 $probe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
@@ -12,6 +12,7 @@ $fakeServer = Join-Path $testRoot "FakeMcpServer.exe"
 $fixture = Join-Path $PSScriptRoot "fixtures\FakeMcpServer.cs"
 $oldToken = $env:ZEMAX_MCP_TOKEN
 $process = $null
+$sseFailureProcess = $null
 
 function Get-Response([scriptblock]$action) {
   try { return & $action }
@@ -28,7 +29,7 @@ try {
   & $csc /nologo /target:exe /out:$fakeServer $fixture
   if ($LASTEXITCODE -ne 0) { throw "Could not compile the streamable HTTP test server." }
   $env:ZEMAX_MCP_TOKEN = "streamable-verifier-token"
-  $arguments = @("--server", $fakeServer, "--host", "127.0.0.1", "--port", [string]$port, "--log-dir", $testRoot, "--snapshot-dir", (Join-Path $testRoot "snapshots"), "--read-only", "true", "--request-timeout-seconds", "10", "--hard-recovery-timeout-seconds", "20", "--max-queued-requests", "0")
+  $arguments = @("--server", $fakeServer, "--host", "127.0.0.1", "--port", [string]$port, "--log-dir", $testRoot, "--snapshot-dir", (Join-Path $testRoot "snapshots"), "--read-only", "true", "--stdio-backend", "true", "--request-timeout-seconds", "10", "--hard-recovery-timeout-seconds", "20", "--max-queued-requests", "0")
   $process = Start-Process -FilePath $bridge -ArgumentList $arguments -PassThru -WindowStyle Hidden
   $url = "http://127.0.0.1:$port/mcp/"
   $headers = @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json, text/event-stream" }
@@ -168,10 +169,28 @@ try {
   $postPumpList = '{"jsonrpc":"2.0","id":"post-pump-list","method":"tools/list","params":{}}'
   $postPumpTools = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json"; "Mcp-Session-Id" = $postPumpSession } -Body $postPumpList }
   if ($postPumpTools.StatusCode -ne 200 -or $postPumpTools.Content -notmatch '"result"') { throw "The recovered MCP server could not complete tools/list." }
-  Write-Host "Streamable HTTP negotiation, provisional sessions, ordered/time-bounded SSE messages, server-request round trips, in-flight cancellation, bounded queueing, and stdout-pump recovery verified."
+
+  # Opening an SSE response can fail before request execution starts. Verify that
+  # this leaves no permanent active operation/session deletion blocker.
+  $failureProbe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+  $failureProbe.Start(); $failurePort = ([Net.IPEndPoint]$failureProbe.LocalEndpoint).Port; $failureProbe.Stop()
+  $failureArgs = @("--server", $fakeServer, "--host", "127.0.0.1", "--port", [string]$failurePort, "--log-dir", (Join-Path $testRoot "sse-open-failure"), "--snapshot-dir", (Join-Path $testRoot "failure-snapshots"), "--read-only", "true", "--stdio-backend", "true", "--test-fail-sse-open", "true", "--request-timeout-seconds", "10", "--hard-recovery-timeout-seconds", "20")
+  $sseFailureProcess = Start-Process -FilePath $bridge -ArgumentList $failureArgs -PassThru -WindowStyle Hidden
+  $failureUrl = "http://127.0.0.1:$failurePort/mcp/"
+  $failureDeadline = [DateTime]::UtcNow.AddSeconds(10)
+  do { Start-Sleep -Milliseconds 100; $failureHealth = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri ($failureUrl + "health") -Headers @{ Authorization = "Bearer streamable-verifier-token" } -TimeoutSec 1 } }
+  while ($failureHealth.StatusCode -ne 200 -and [DateTime]::UtcNow -lt $failureDeadline)
+  $failureInit = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $failureUrl -Method Post -ContentType "application/json" -Headers $headers -Body $initialize }
+  $failureSession = [string]$failureInit.Headers["Mcp-Session-Id"]
+  $failureSse = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $failureUrl -Method Post -ContentType "application/json" -Headers @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json, text/event-stream"; "Mcp-Session-Id" = $failureSession } -Body $list }
+  if ([int]$failureSse.StatusCode -ne 500) { throw "The injected SSE-open failure did not return a recoverable HTTP error." }
+  $afterFailureHealth = (Get-Response { Invoke-WebRequest -UseBasicParsing -Uri ($failureUrl + "health") -Headers @{ Authorization = "Bearer streamable-verifier-token" } }).Content | ConvertFrom-Json
+  if ($afterFailureHealth.activeOperations.Count -ne 0) { throw "An SSE-open failure leaked a permanent active MCP operation." }
+  Write-Host "Streamable HTTP negotiation, provisional sessions, ordered/time-bounded SSE messages, server-request round trips, in-flight cancellation, bounded queueing, stdout-pump recovery, and SSE-open cleanup verified."
 }
 finally {
   $env:ZEMAX_MCP_TOKEN = $oldToken
+  if ($sseFailureProcess -and -not $sseFailureProcess.HasExited) { Stop-Process -Id $sseFailureProcess.Id -Force -ErrorAction SilentlyContinue; $sseFailureProcess.WaitForExit(3000) | Out-Null }
   if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue; $process.WaitForExit(3000) | Out-Null }
   if (Test-Path -LiteralPath $testRoot) { Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue }
 }

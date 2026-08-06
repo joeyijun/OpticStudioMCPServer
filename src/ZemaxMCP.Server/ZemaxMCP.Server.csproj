@@ -2,8 +2,13 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>ZemaxMCP.Server</RootNamespace>
+    <AssemblyName>ZemaxMCP.Worker</AssemblyName>
     <StartupObject>ZemaxMCP.Server.BootstrapProgram</StartupObject>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\ZemaxMCP.Toolsets\ToolsetCatalog.cs" Link="Toolsets\ToolsetCatalog.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="ModelContextProtocol" />
