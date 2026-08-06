@@ -52,6 +52,7 @@ internal static class Program
 
 internal sealed class BridgeOptions
 {
+    private const int MaximumActiveMcpClients = 20;
     public string ServerPath { get; private set; } = System.IO.Path.Combine(AppContext.BaseDirectory, "ZemaxMCP.Server.exe");
     public string ZemaxRoot { get; private set; } = "";
     public string Host { get; private set; } = "127.0.0.1";
@@ -59,6 +60,8 @@ internal sealed class BridgeOptions
     public string Path { get; private set; } = "/mcp/";
     public string LogDirectory { get; private set; } = System.IO.Path.Combine(AppContext.BaseDirectory, "logs");
     public int RequestTimeoutSeconds { get; private set; } = 300;
+    public int HardRecoveryTimeoutSeconds { get; private set; } = 360;
+    public int MaxActiveMcpClients { get; private set; } = 1;
     public string AccessToken { get; private set; } = Environment.GetEnvironmentVariable("ZEMAX_MCP_TOKEN") ?? "";
     public bool ReadOnly { get; private set; }
     public string SnapshotDirectory { get; private set; } = Environment.GetEnvironmentVariable("ZEMAX_MCP_SNAPSHOT_DIR") ??
@@ -88,6 +91,16 @@ internal sealed class BridgeOptions
                         throw new ArgumentException("--request-timeout-seconds must be between 10 and 3600.");
                     result.RequestTimeoutSeconds = timeout;
                     break;
+                case "--hard-recovery-timeout-seconds":
+                    if (!int.TryParse(value, out var hardTimeout) || hardTimeout < 20 || hardTimeout > 7200)
+                        throw new ArgumentException("--hard-recovery-timeout-seconds must be between 20 and 7200.");
+                    result.HardRecoveryTimeoutSeconds = hardTimeout;
+                    break;
+                case "--max-active-mcp-clients":
+                    if (!int.TryParse(value, out var maxClients) || maxClients < 1 || maxClients > MaximumActiveMcpClients)
+                        throw new ArgumentException("--max-active-mcp-clients must be between 1 and " + MaximumActiveMcpClients + ".");
+                    result.MaxActiveMcpClients = maxClients;
+                    break;
                 case "--read-only":
                     if (!bool.TryParse(value, out var readOnly)) throw new ArgumentException("--read-only must be true or false.");
                     result.ReadOnly = readOnly;
@@ -98,6 +111,8 @@ internal sealed class BridgeOptions
         }
         if (string.IsNullOrWhiteSpace(result.ServerPath)) throw new ArgumentException("--server cannot be empty.");
         if (string.IsNullOrWhiteSpace(result.Host)) throw new ArgumentException("--host cannot be empty.");
+        if (result.HardRecoveryTimeoutSeconds <= result.RequestTimeoutSeconds)
+            throw new ArgumentException("--hard-recovery-timeout-seconds must be greater than --request-timeout-seconds.");
         if (result.Host == "0.0.0.0" && string.IsNullOrWhiteSpace(result.AccessToken))
             throw new ArgumentException("LAN sharing requires ZEMAX_MCP_TOKEN to be configured.");
         return result;
@@ -108,12 +123,15 @@ internal sealed class StdioMcpBridge : IDisposable
 {
     private const int MaxRequestBytes = 1024 * 1024;
     private const int MaxTrackedClients = 20;
+    private static readonly TimeSpan ClientSessionIdleTimeout = TimeSpan.FromMinutes(15);
     private readonly BridgeOptions _options;
     private readonly SemaphoreSlim _requestLock = new SemaphoreSlim(1, 1);
     private readonly object _stateLock = new object();
     private readonly Dictionary<string, ClientActivity> _clients = new Dictionary<string, ClientActivity>(StringComparer.Ordinal);
     private readonly Dictionary<string, ActiveRequest> _activeOperations = new Dictionary<string, ActiveRequest>(StringComparer.Ordinal);
     private readonly Dictionary<string, JobActivity> _jobs = new Dictionary<string, JobActivity>(StringComparer.Ordinal);
+    private readonly Dictionary<string, TaskCompletionSource<string>> _responseWaiters = new Dictionary<string, TaskCompletionSource<string>>(StringComparer.Ordinal);
+    private readonly Dictionary<string, SseResponseStream> _sseStreams = new Dictionary<string, SseResponseStream>(StringComparer.Ordinal);
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
     private Process? _server;
     private HttpListener? _listener;
@@ -133,6 +151,7 @@ internal sealed class StdioMcpBridge : IDisposable
     private int _consecutiveServerFailures;
     private int _restartLoopRunning;
     private int _activeRequests;
+    private int _hardRecoveryCount;
     private bool _disposed;
 
     public StdioMcpBridge(BridgeOptions options) => _options = options;
@@ -194,6 +213,7 @@ internal sealed class StdioMcpBridge : IDisposable
             if (isRestart) _serverRestartCount++;
         }
         process.BeginErrorReadLine();
+        _ = Task.Run(() => PumpServerOutputAsync(process));
         Log.Information("Started MCP stdio server with PID {Pid}{Restart}", process.Id, isRestart ? " after recovery" : string.Empty);
     }
 
@@ -310,6 +330,7 @@ internal sealed class StdioMcpBridge : IDisposable
             _clients.Clear(); // Force HTTP clients to initialize again after recovery.
         }
         Log.Error("{Error} Automatic recovery will be attempted.", error);
+        FailResponseWaiters(process, new EndOfStreamException(error));
         ScheduleServerRestart();
     }
 
@@ -357,6 +378,7 @@ internal sealed class StdioMcpBridge : IDisposable
 
     private async Task HandleAsync(HttpListenerContext context)
     {
+        SseResponseStream? sse = null;
         try
         {
             if (!ValidateOrigin(context)) return;
@@ -385,6 +407,12 @@ internal sealed class StdioMcpBridge : IDisposable
                 if (string.IsNullOrWhiteSpace(sessionId))
                 {
                     context.Response.StatusCode = (int)HttpStatusCode.BadRequest;
+                    context.Response.Close();
+                    return;
+                }
+                if (SessionHasActiveOperation(sessionId))
+                {
+                    context.Response.StatusCode = (int)HttpStatusCode.Conflict;
                     context.Response.Close();
                     return;
                 }
@@ -430,7 +458,16 @@ internal sealed class StdioMcpBridge : IDisposable
             string? responseSession = null;
             if (string.Equals(method, "initialize", StringComparison.OrdinalIgnoreCase))
             {
-                responseSession = RegisterClient(json, now);
+                if (!TryRegisterClient(json, now, out responseSession, out var rejection))
+                {
+                    await WriteJsonAsync(context, new JObject
+                    {
+                        ["jsonrpc"] = "2.0",
+                        ["error"] = new JObject { ["code"] = -32002, ["message"] = rejection },
+                        ["id"] = id
+                    }, HttpStatusCode.Conflict).ConfigureAwait(false);
+                    return;
+                }
                 requestedSession = responseSession;
             }
             else if (!string.IsNullOrWhiteSpace(requestedSession) && !SessionExists(requestedSession))
@@ -440,19 +477,26 @@ internal sealed class StdioMcpBridge : IDisposable
                 return;
             }
             TouchClient(requestedSession, method, json, now);
-            var operationId = BeginOperation(method, json, now);
+            var operationId = BeginOperation(method, json, requestedSession, now);
+            if (id != null && PrefersSse(context.Request.Headers["Accept"]))
+            {
+                sse = new SseResponseStream(context, responseSession);
+                await sse.OpenAsync().ConfigureAwait(false);
+                RegisterSseStream(operationId, sse);
+            }
 
             Interlocked.Increment(ref _activeRequests);
             await _requestLock.WaitAsync().ConfigureAwait(false);
-            string? response;
+            string? response = null;
             var releaseRequestLock = true;
             try
             {
                 if (!IsServerRunning()) StartServer(isRestart: true);
                 var server = _server ?? throw new InvalidOperationException("The MCP server is not running.");
+                var responseTask = id == null ? null : RegisterResponseWaiter(id, server);
                 await server.StandardInput.WriteLineAsync(request).ConfigureAwait(false);
                 await server.StandardInput.FlushAsync().ConfigureAwait(false);
-                response = id == null ? null : await ReadResponseWithTimeoutAsync(id, server, operationId).ConfigureAwait(false);
+                response = responseTask == null ? null : await ReadResponseWithTimeoutAsync(responseTask, server, operationId).ConfigureAwait(false);
             }
             catch (BridgeRequestTimeoutException ex) when (ex.ResponseIsStillDraining)
             {
@@ -475,8 +519,8 @@ internal sealed class StdioMcpBridge : IDisposable
                 context.Response.Close();
                 return;
             }
-            if (PrefersSse(context.Request.Headers["Accept"]))
-                await WriteSseAsync(context, response, responseSession).ConfigureAwait(false);
+            if (sse != null)
+                await sse.WriteMessageAsync(response).ConfigureAwait(false);
             else
                 await WriteMcpJsonAsync(context, response, responseSession).ConfigureAwait(false);
         }
@@ -502,13 +546,23 @@ internal sealed class StdioMcpBridge : IDisposable
         }
         catch (BridgeRequestTimeoutException ex)
         {
-            Log.Error(ex, "MCP request timed out; the stdio server was restarted");
-            await TryWriteRpcErrorAsync(context, -32001, ex.Message, HttpStatusCode.GatewayTimeout).ConfigureAwait(false);
+            Log.Error(ex, "MCP request timed out; hard recovery is pending if the server remains unresponsive");
+            if (sse != null) await sse.WriteRpcErrorAsync(-32001, ex.Message).ConfigureAwait(false);
+            else await TryWriteRpcErrorAsync(context, -32001, ex.Message, HttpStatusCode.GatewayTimeout).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             Log.Error(ex, "HTTP request failed");
-            await TryWriteRpcErrorAsync(context, -32603, "Zemax MCP bridge error", HttpStatusCode.InternalServerError).ConfigureAwait(false);
+            if (sse != null) await sse.WriteRpcErrorAsync(-32603, "Zemax MCP bridge error").ConfigureAwait(false);
+            else await TryWriteRpcErrorAsync(context, -32603, "Zemax MCP bridge error", HttpStatusCode.InternalServerError).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (sse != null)
+            {
+                UnregisterSseStream(sse);
+                await sse.CloseAsync().ConfigureAwait(false);
+            }
         }
     }
 
@@ -622,6 +676,9 @@ internal sealed class StdioMcpBridge : IDisposable
                 ["mcpServerPid"] = pid,
                 ["mcpServerStartedAt"] = _serverStartedAt?.ToString("O"),
                 ["serverRestartCount"] = _serverRestartCount,
+                ["hardRecoveryCount"] = _hardRecoveryCount,
+                ["requestTimeoutSeconds"] = _options.RequestTimeoutSeconds,
+                ["hardRecoveryTimeoutSeconds"] = _options.HardRecoveryTimeoutSeconds,
                 ["activeRequests"] = _activeRequests,
                 ["activeOperations"] = activeOperations,
                 ["jobs"] = jobs,
@@ -647,24 +704,53 @@ internal sealed class StdioMcpBridge : IDisposable
                 ["lastClient"] = _lastClient,
                 ["clientCount"] = clients.Count,
                 ["activeClientCount"] = _clients.Values.Count(x => now - x.LastRequestAt <= TimeSpan.FromMinutes(5) && !IsLauncherClient(x.Name)),
+                ["maxActiveMcpClients"] = _options.MaxActiveMcpClients,
+                ["clientIsolation"] = "single shared OpticStudio session; concurrent external MCP clients are rejected",
                 ["clients"] = clients
             };
         }
     }
 
-    private string RegisterClient(JObject request, DateTimeOffset now)
+    private bool TryRegisterClient(JObject request, DateTimeOffset now, out string? sessionId, out string? rejection)
     {
         var name = request["params"]?["clientInfo"]?["name"]?.ToString();
         var version = request["params"]?["clientInfo"]?["version"]?.ToString();
         if (string.IsNullOrWhiteSpace(name)) name = "MCP client";
-        var sessionId = Guid.NewGuid().ToString("N");
+        sessionId = null;
+        rejection = null;
         lock (_stateLock)
         {
+            var expired = _clients
+                .Where(pair => !IsLauncherClient(pair.Value.Name) && now - pair.Value.LastRequestAt > ClientSessionIdleTimeout && !SessionHasActiveOperation(pair.Key))
+                .Select(pair => pair.Key)
+                .ToArray();
+            foreach (var key in expired) _clients.Remove(key);
+
+            if (!IsLauncherClient(name!) && _clients.Values.Count(client => !IsLauncherClient(client.Name)) >= _options.MaxActiveMcpClients)
+            {
+                rejection = "This bridge intentionally allows only " + _options.MaxActiveMcpClients + " external MCP client session because all requests share one OpticStudio/ZOS-API session. Disconnect the existing client or wait for its idle session to expire.";
+                return false;
+            }
             while (_clients.Count >= MaxTrackedClients)
-                _clients.Remove(_clients.OrderBy(x => x.Value.LastRequestAt).First().Key);
+            {
+                var removable = _clients
+                    .Where(pair => IsLauncherClient(pair.Value.Name) || !SessionHasActiveOperation(pair.Key))
+                    .OrderBy(pair => IsLauncherClient(pair.Value.Name) ? 0 : 1)
+                    .ThenBy(pair => pair.Value.LastRequestAt)
+                    .Select(pair => pair.Key)
+                    .FirstOrDefault();
+                if (removable == null) break;
+                _clients.Remove(removable);
+            }
+            if (_clients.Count >= MaxTrackedClients)
+            {
+                rejection = "The bridge session table is full while active operations are still running. Retry after the active operation finishes.";
+                return false;
+            }
+            sessionId = Guid.NewGuid().ToString("N");
             _clients[sessionId] = new ClientActivity(name!, version ?? string.Empty, now);
         }
-        return sessionId;
+        return true;
     }
 
     private bool SessionExists(string sessionId)
@@ -702,13 +788,13 @@ internal sealed class StdioMcpBridge : IDisposable
         return File.Exists(path) ? path : null;
     }
 
-    private string BeginOperation(string method, JObject request, DateTimeOffset now)
+    private string BeginOperation(string method, JObject request, string? sessionId, DateTimeOffset now)
     {
         var tool = method.Equals("tools/call", StringComparison.OrdinalIgnoreCase)
             ? request["params"]?["name"]?.ToString() ?? "tools/call"
             : method;
         var id = Guid.NewGuid().ToString("N");
-        lock (_stateLock) _activeOperations[id] = new ActiveRequest(method, tool, now);
+        lock (_stateLock) _activeOperations[id] = new ActiveRequest(method, tool, sessionId, now);
         return id;
     }
 
@@ -720,6 +806,12 @@ internal sealed class StdioMcpBridge : IDisposable
     private bool RemoveSession(string sessionId)
     {
         lock (_stateLock) return _clients.Remove(sessionId);
+    }
+
+    private bool SessionHasActiveOperation(string sessionId)
+    {
+        lock (_stateLock) return _activeOperations.Values.Any(operation =>
+            string.Equals(operation.SessionId, sessionId, StringComparison.Ordinal));
     }
 
     private static bool AcceptsMcpResponse(string? accept)
@@ -770,19 +862,6 @@ internal sealed class StdioMcpBridge : IDisposable
         context.Response.Close();
     }
 
-    private static async Task WriteSseAsync(HttpListenerContext context, string response, string? sessionId)
-    {
-        var payload = "event: message\n" + "data: " + response.Replace("\r", string.Empty).Replace("\n", "\\n") + "\n\n";
-        var bytes = Encoding.UTF8.GetBytes(payload);
-        context.Response.StatusCode = (int)HttpStatusCode.OK;
-        context.Response.ContentType = "text/event-stream; charset=utf-8";
-        context.Response.Headers["Cache-Control"] = "no-cache";
-        if (!string.IsNullOrWhiteSpace(sessionId)) context.Response.Headers["Mcp-Session-Id"] = sessionId;
-        context.Response.ContentLength64 = bytes.Length;
-        await context.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
-        context.Response.Close();
-    }
-
     private static async Task TryWriteRpcErrorAsync(HttpListenerContext context, int code, string message, HttpStatusCode status)
     {
         try
@@ -815,34 +894,154 @@ internal sealed class StdioMcpBridge : IDisposable
         }
     }
 
-    private async Task<string> ReadResponseWithTimeoutAsync(JToken id, Process server, string operationId)
+    private async Task<string> ReadResponseWithTimeoutAsync(Task<string> responseTask, Process server, string operationId)
     {
-        var responseTask = ReadResponseAsync(id, server);
         var completed = await Task.WhenAny(responseTask, Task.Delay(TimeSpan.FromSeconds(_options.RequestTimeoutSeconds))).ConfigureAwait(false);
         if (completed == responseTask) return await responseTask.ConfigureAwait(false);
 
-        _ = responseTask.ContinueWith(t =>
-        {
-            var ignored = t.Exception;
-            EndOperation(operationId);
-            try { _requestLock.Release(); } catch (ObjectDisposedException) { }
-        }, TaskScheduler.Default);
-        var message = $"MCP request exceeded {_options.RequestTimeoutSeconds} seconds. The operation is still running and the bridge will keep the stdio session intact.";
+        var pending = new PendingResponse();
+        _ = DrainOrRecoverAsync(responseTask, server, operationId, pending);
+        var message = $"MCP request exceeded {_options.RequestTimeoutSeconds} seconds. The operation may still be running; the bridge will force a clean MCP server restart after {_options.HardRecoveryTimeoutSeconds} seconds if it does not finish.";
         lock (_stateLock) _lastServerError = message;
         throw new BridgeRequestTimeoutException(message, responseIsStillDraining: true);
     }
 
-    private static async Task<string> ReadResponseAsync(JToken id, Process server)
+    private async Task DrainOrRecoverAsync(Task<string> responseTask, Process server, string operationId, PendingResponse pending)
     {
-        while (true)
+        try
         {
-            var line = await server.StandardOutput.ReadLineAsync().ConfigureAwait(false);
-            if (line == null) throw new EndOfStreamException("MCP server closed stdout.");
-            var message = JObject.Parse(line);
-            if (JToken.DeepEquals(message["id"], id)) return line;
-            Log.Debug("Forwarded MCP notification: {Message}", line);
+            var remaining = Math.Max(1, _options.HardRecoveryTimeoutSeconds - _options.RequestTimeoutSeconds);
+            var completed = await Task.WhenAny(responseTask, Task.Delay(TimeSpan.FromSeconds(remaining))).ConfigureAwait(false);
+            if (completed == responseTask)
+            {
+                try { await responseTask.ConfigureAwait(false); }
+                catch (Exception ex) { Log.Warning(ex, "Timed-out MCP response ended with an error"); }
+                return;
+            }
+
+            var message = $"MCP request did not finish within the {_options.HardRecoveryTimeoutSeconds}-second hard recovery limit. Terminating the stdio server to unblock future clients.";
+            lock (_stateLock)
+            {
+                _hardRecoveryCount++;
+                _lastServerError = message;
+            }
+            Log.Error(message);
+            try
+            {
+                if (!server.HasExited) server.Kill();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Could not terminate the unresponsive MCP stdio server");
+            }
+        }
+        finally
+        {
+            EndOperation(operationId);
+            if (pending.TryComplete())
+            {
+                try { _requestLock.Release(); } catch (ObjectDisposedException) { }
+            }
         }
     }
+
+    private Task<string> RegisterResponseWaiter(JToken id, Process server)
+    {
+        if (!ReferenceEquals(_server, server) || !IsServerRunning())
+            throw new InvalidOperationException("The MCP stdio server is no longer available.");
+        var key = ResponseKey(id);
+        var completion = new TaskCompletionSource<string>();
+        lock (_stateLock)
+        {
+            if (_responseWaiters.ContainsKey(key))
+                throw new InvalidOperationException("A duplicate JSON-RPC request id is already waiting for a response.");
+            _responseWaiters.Add(key, completion);
+        }
+        return completion.Task;
+    }
+
+    private async Task PumpServerOutputAsync(Process server)
+    {
+        try
+        {
+            while (!_disposed && ReferenceEquals(_server, server))
+            {
+                var line = await server.StandardOutput.ReadLineAsync().ConfigureAwait(false);
+                if (line == null) break;
+                JObject message;
+                try { message = JObject.Parse(line); }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "MCP server wrote a non-JSON line to stdout");
+                    continue;
+                }
+
+                var id = message["id"];
+                TaskCompletionSource<string>? response = null;
+                if (id != null && id.Type != JTokenType.Null)
+                {
+                    lock (_stateLock)
+                    {
+                        var key = ResponseKey(id);
+                        if (_responseWaiters.TryGetValue(key, out response)) _responseWaiters.Remove(key);
+                    }
+                }
+                if (response != null) response.TrySetResult(line);
+                else _ = PublishServerMessageAsync(line);
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!_disposed) Log.Warning(ex, "MCP stdio stdout pump stopped unexpectedly");
+        }
+        finally
+        {
+            FailResponseWaiters(server, new EndOfStreamException("MCP server closed stdout."));
+        }
+    }
+
+    private async Task PublishServerMessageAsync(string message)
+    {
+        SseResponseStream[] streams;
+        lock (_stateLock) streams = _sseStreams.Values.ToArray();
+        foreach (var stream in streams)
+        {
+            try { await stream.WriteMessageAsync(message).ConfigureAwait(false); }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "Could not forward an MCP notification to a closed SSE stream");
+                UnregisterSseStream(stream);
+            }
+        }
+    }
+
+    private void RegisterSseStream(string operationId, SseResponseStream stream)
+    {
+        lock (_stateLock) _sseStreams[operationId] = stream;
+    }
+
+    private void UnregisterSseStream(SseResponseStream stream)
+    {
+        lock (_stateLock)
+        {
+            foreach (var key in _sseStreams.Where(pair => ReferenceEquals(pair.Value, stream)).Select(pair => pair.Key).ToArray())
+                _sseStreams.Remove(key);
+        }
+    }
+
+    private void FailResponseWaiters(Process server, Exception error)
+    {
+        TaskCompletionSource<string>[] waiters;
+        lock (_stateLock)
+        {
+            if (!ReferenceEquals(_server, server)) return;
+            waiters = _responseWaiters.Values.ToArray();
+            _responseWaiters.Clear();
+        }
+        foreach (var waiter in waiters) waiter.TrySetException(error);
+    }
+
+    private static string ResponseKey(JToken id) => id.ToString(Newtonsoft.Json.Formatting.None);
 
     public void Dispose()
     {
@@ -882,15 +1081,91 @@ internal sealed class StdioMcpBridge : IDisposable
 
     private sealed class ActiveRequest
     {
-        public ActiveRequest(string method, string toolName, DateTimeOffset startedAt)
+        public ActiveRequest(string method, string toolName, string? sessionId, DateTimeOffset startedAt)
         {
             Method = method;
             ToolName = toolName;
+            SessionId = sessionId;
             StartedAt = startedAt;
         }
         public string Method { get; }
         public string ToolName { get; }
+        public string? SessionId { get; }
         public DateTimeOffset StartedAt { get; }
+    }
+
+    private sealed class PendingResponse
+    {
+        private int _completed;
+        public bool TryComplete() => Interlocked.Exchange(ref _completed, 1) == 0;
+    }
+
+    /// <summary>One Streamable HTTP response. It stays open until the final JSON-RPC response,
+    /// and can receive any number of server notifications beforehand.</summary>
+    private sealed class SseResponseStream
+    {
+        private readonly HttpListenerContext _context;
+        private readonly string? _sessionId;
+        private readonly SemaphoreSlim _writeLock = new SemaphoreSlim(1, 1);
+        private int _closed;
+
+        public SseResponseStream(HttpListenerContext context, string? sessionId)
+        {
+            _context = context;
+            _sessionId = sessionId;
+        }
+
+        public async Task OpenAsync()
+        {
+            var response = _context.Response;
+            response.StatusCode = (int)HttpStatusCode.OK;
+            response.ContentType = "text/event-stream; charset=utf-8";
+            response.Headers["Cache-Control"] = "no-cache";
+            response.SendChunked = true;
+            if (!string.IsNullOrWhiteSpace(_sessionId)) response.Headers["Mcp-Session-Id"] = _sessionId;
+            await WriteRawAsync(": stream-open\n\n").ConfigureAwait(false);
+        }
+
+        public Task WriteMessageAsync(string payload) => WriteEventAsync("message", payload);
+
+        public Task WriteRpcErrorAsync(int code, string message) => WriteMessageAsync(new JObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["error"] = new JObject { ["code"] = code, ["message"] = message },
+            ["id"] = null
+        }.ToString(Newtonsoft.Json.Formatting.None));
+
+        private async Task WriteEventAsync(string eventName, string payload)
+        {
+            var lines = payload.Replace("\r", string.Empty).Split(new[] { '\n' });
+            var builder = new StringBuilder("event: ").Append(eventName).Append('\n');
+            foreach (var line in lines) builder.Append("data: ").Append(line).Append('\n');
+            builder.Append('\n');
+            await WriteRawAsync(builder.ToString()).ConfigureAwait(false);
+        }
+
+        private async Task WriteRawAsync(string payload)
+        {
+            if (Volatile.Read(ref _closed) != 0) throw new ObjectDisposedException(nameof(SseResponseStream));
+            await _writeLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (Volatile.Read(ref _closed) != 0) throw new ObjectDisposedException(nameof(SseResponseStream));
+                var bytes = Encoding.UTF8.GetBytes(payload);
+                await _context.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
+                await _context.Response.OutputStream.FlushAsync().ConfigureAwait(false);
+            }
+            finally { _writeLock.Release(); }
+        }
+
+        public async Task CloseAsync()
+        {
+            if (Interlocked.Exchange(ref _closed, 1) != 0) return;
+            await _writeLock.WaitAsync().ConfigureAwait(false);
+            try { _context.Response.Close(); }
+            catch { }
+            finally { _writeLock.Release(); _writeLock.Dispose(); }
+        }
     }
 
     private sealed class JobActivity

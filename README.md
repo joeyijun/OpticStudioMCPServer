@@ -30,12 +30,12 @@ For a single computer, the AI client uses the local MCP address. For two compute
 ## Highlights
 
 - **Graphical install and update** — `Install.exe` installs or updates the per-user application. `Portable-Install.cmd` is available where an organisation blocks the installer executable.
-- **Resilient built-in HTTP MCP** — The .NET bridge applies request timeouts, tracks independent MCP sessions, and automatically recovers its server subprocess after an unexpected failure.
+- **Resilient built-in HTTP MCP** — The .NET bridge deliberately permits one external AI session per OpticStudio process, applies a soft request timeout, and force-restarts a permanently stuck stdio subprocess at a second hard limit so it cannot block future calls forever.
 - **Authenticated LAN use** — Every launcher-managed request uses a random Bearer token. LAN listening is refused without a token, browser origins are restricted, and token rotation is one click.
-- **Lens-change safety** — Read-only mode blocks mutating tools before ZOS-API access. In read/write mode, every recognised mutation first saves a timestamped copy of the current lens; a failed snapshot prevents the change.
+- **Lens-change safety** — One explicit metadata catalogue drives both the MCP risk display and ZOS-API protection. Read-only mode blocks high-impact operations; in read/write mode, every recognised mutation first saves a timestamped copy of the current lens, while unknown execution commands fail closed as high impact.
 - **Verified, recoverable updates** — Release metadata is RSA-signed, the ZIP size and SHA-256 are checked before extraction, and a separate updater restores the previous installation if replacement fails.
 - **Dedicated ZOS-API thread** — All connection and tool operations are serialized on one long-lived STA thread to respect the COM threading model and avoid cross-thread session access.
-- **Streamable HTTP lifecycle** — The built-in bridge validates MCP response negotiation, supports JSON and SSE responses, preserves MCP sessions, and supports `DELETE` session cleanup.
+- **Streamable HTTP lifecycle** — The built-in bridge validates MCP response negotiation, supports JSON and multi-message SSE streams, routes server notifications before the final response, preserves a controlled MCP session, and supports `DELETE` session cleanup.
 - **Long-job control** — POP, global search, and multistart optimization can return immediately with a job id. Use `zemax_job_status`, `zemax_job_list`, and `zemax_job_cancel` for queue position, live progress, result retrieval, and cooperative cancellation; the launcher also shows the active tool/job and elapsed time.
 - **Per-client live dashboard** — Colour-coded cards distinguish installation, configuration, historical activity, and a real request made within the last five minutes. The launcher health check is excluded from AI activity.
 - **Multi-version OpticStudio detection** — Detects classic Zemax and current `ANSYS Inc\v*` layouts from environment variables, both registry views, uninstall entries, and known Program Files locations. The launcher validates all three ZOS-API assemblies before offering a version.
@@ -53,7 +53,7 @@ The server supports the following OpticStudio connection modes:
 
 Use the launcher status dashboard to confirm that ZOS-API is loaded and OpticStudio is connected before asking the AI to work on a design.
 
-For inspection-only sessions, enable **Read-only mode** before connecting the AI. In normal read/write mode, automatic lens snapshots are kept under `%LOCALAPPDATA%\ZemaxMCP\snapshots` (up to the newest 100 files). The status details show the active protection mode, snapshot folder, and most recent snapshot created in the current bridge session.
+For inspection-only sessions, enable **Read-only mode** before connecting the AI. In normal read/write mode, automatic lens snapshots are kept under `%LOCALAPPDATA%\ZemaxMCP\snapshots` (up to the newest 100 files). The status details show the active protection mode, snapshot folder, and most recent snapshot created in the current bridge session. One live bridge accepts one external AI-client session at a time; close that client's MCP session (or wait 15 minutes without an active call) before moving the same live lens system to another client.
 
 ## Zemax discovery and license diagnostics
 

@@ -1,17 +1,10 @@
 using System.Globalization;
-using ZOSAPI;
 
 namespace ZemaxMCP.Core.Session;
 
 internal sealed class ZemaxOperationSafety
 {
     private const int MaximumSnapshots = 100;
-    private static readonly string[] MutatingPrefixes =
-    {
-        "Add", "Delete", "Remove", "Set", "Optimize", "ConstrainedOptimize", "MultistartOptimize",
-        "GlobalSearch", "Hammer", "QuickFocus", "ScaleLens", "NewSystem", "LoadMeritFunctionFile",
-        "OptimizationWizard", "ForbesMeritFunction", "SaveFile", "SaveMeritFunctionFile", "clear", "calculate"
-    };
     private readonly bool _readOnly;
     private readonly string _snapshotDirectory;
 
@@ -28,20 +21,19 @@ internal sealed class ZemaxOperationSafety
     public string SnapshotDirectory => _snapshotDirectory;
     public string? LastSnapshotPath { get; private set; }
 
-    public void BeforeOperation(IOpticalSystem system, string commandName)
+    public void BeforeOperation(IZosSystemSnapshot system, string commandName)
     {
-        if (!IsMutating(commandName)) return;
+        if (!RequiresSnapshot(commandName)) return;
         if (_readOnly)
             throw new InvalidOperationException("Read-only mode blocked the mutating Zemax operation '" + commandName + "'. Disable read-only mode in the launcher to allow lens changes.");
         LastSnapshotPath = CreateSnapshot(system, commandName);
         Console.Error.WriteLine("ZEMAX_MCP_STATUS:SNAPSHOT_CREATED:" + LastSnapshotPath);
     }
 
-    internal static bool IsMutating(string commandName) =>
-        MutatingPrefixes.Any(prefix => commandName.Equals(prefix, StringComparison.OrdinalIgnoreCase) ||
-                                       commandName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+    internal static bool RequiresSnapshot(string commandName) =>
+        ZemaxOperationMetadata.GetCommandImpact(commandName) == ZemaxOperationImpact.HighImpact;
 
-    private string CreateSnapshot(IOpticalSystem system, string commandName)
+    private string CreateSnapshot(IZosSystemSnapshot system, string commandName)
     {
         Directory.CreateDirectory(_snapshotDirectory);
         var sourceName = string.IsNullOrWhiteSpace(system.SystemFile) ? "Unsaved" : Path.GetFileNameWithoutExtension(system.SystemFile);
@@ -49,7 +41,7 @@ internal sealed class ZemaxOperationSafety
         var safeCommand = Sanitize(commandName);
         var fileName = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture) + "_" + safeName + "_before-" + safeCommand + ".zos";
         var path = Path.Combine(_snapshotDirectory, fileName);
-        IOpticalSystem? copy = null;
+        IZosSystemSnapshot? copy = null;
         try
         {
             copy = system.CopySystem() ?? throw new InvalidOperationException("OpticStudio did not create a system copy for the safety snapshot.");

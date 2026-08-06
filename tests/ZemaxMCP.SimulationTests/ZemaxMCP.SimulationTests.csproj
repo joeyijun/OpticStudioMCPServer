@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\src\ZemaxMCP.Core\Session\IZosSystemSnapshot.cs" Link="Core\IZosSystemSnapshot.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Core\Session\ZemaxOperationMetadata.cs" Link="Core\ZemaxOperationMetadata.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Core\Session\ZemaxOperationSafety.cs" Link="Core\ZemaxOperationSafety.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Core\Session\ZosApiDispatcher.cs" Link="Core\ZosApiDispatcher.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Services\Jobs\McpJobManager.cs" Link="Server\McpJobManager.cs" />
+  </ItemGroup>
+</Project>

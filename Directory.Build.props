@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <Version>1.1.1</Version>
+    <Version>1.2.0</Version>
     <UseWindowsForms>false</UseWindowsForms>
     <ZOSAPI_PATH Condition="'$(ZOSAPI_PATH)' == ''">$(ZEMAX_ROOT)\ZOSAPI.dll</ZOSAPI_PATH>
     <ZOSAPI_INTERFACES_PATH Condition="'$(ZOSAPI_INTERFACES_PATH)' == ''">$(ZEMAX_ROOT)\ZOSAPI_Interfaces.dll</ZOSAPI_INTERFACES_PATH>
