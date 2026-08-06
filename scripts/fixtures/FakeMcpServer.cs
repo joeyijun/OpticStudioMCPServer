@@ -37,6 +37,17 @@ public static class Program
                 Console.Out.Flush();
                 continue;
             }
+            if (line.Contains("\"method\":\"test/server-request-no-sse\""))
+            {
+                Console.WriteLine("{\"jsonrpc\":\"2.0\",\"id\":\"unreachable-sampling-request\",\"method\":\"sampling/createMessage\",\"params\":{\"messages\":[]}}");
+                Console.Out.Flush();
+                var deliveryError = Console.ReadLine();
+                if (deliveryError == null || !deliveryError.Contains("\"id\":\"unreachable-sampling-request\"") || !deliveryError.Contains("\"code\":-32601"))
+                    throw new InvalidOperationException("Expected an error for an undeliverable server request.");
+                Console.WriteLine("{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"deliveryRejected\":true}}");
+                Console.Out.Flush();
+                continue;
+            }
             if (line.Contains("\"method\":\"test/wait-cancel\""))
             {
                 // A cancellation notification must arrive while the original

@@ -38,7 +38,7 @@ try {
 
   $initialize = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"streamable-verifier","version":"1"}}}'
   $init = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $headers -Body $initialize }
-  if ($init.StatusCode -ne 200 -or $init.Content -notmatch 'fake-mcp') { throw "Initialize did not return a JSON MCP response." }
+  if ($init.StatusCode -ne 200 -or $init.Headers["Content-Type"] -notmatch "application/json" -or $init.Content -notmatch 'fake-mcp') { throw "Initialize did not return a JSON MCP response." }
   $session = [string]$init.Headers["Mcp-Session-Id"]
   if ([string]::IsNullOrWhiteSpace($session)) { throw "Initialize did not establish an MCP session." }
 
@@ -50,6 +50,10 @@ try {
   $list = '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
   $sse = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $sseHeaders -Body $list }
   if ($sse.StatusCode -ne 200 -or $sse.Headers["Content-Type"] -notmatch "text/event-stream" -or $sse.Content -notmatch "notifications/progress" -or ([regex]::Matches($sse.Content, "event: message").Count -lt 2)) { throw "SSE MCP stream did not carry both an MCP notification and the final response." }
+
+  $unsafeNotification = '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"zemax_get_system","arguments":{}}}'
+  $unsafeNotificationResponse = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json"; "Mcp-Session-Id" = $session } -Body $unsafeNotification }
+  if ([int]$unsafeNotificationResponse.StatusCode -ne 400) { throw "A non-notification JSON-RPC message without an id bypassed the request execution lock." }
 
   $serverRequest = '{"jsonrpc":"2.0","id":"server-request-parent","method":"test/server-request","params":{}}'
   $serverRequestJob = Start-Job -ScriptBlock {
@@ -68,6 +72,10 @@ try {
   $serverRequestSse = Receive-Job -Job $serverRequestJob -ErrorAction Stop
   Remove-Job -Job $serverRequestJob -Force
   if ($serverRequestSse.StatusCode -ne 200 -or $serverRequestSse.Content -notmatch '"method":"sampling/createMessage"' -or $serverRequestSse.Content -notmatch '"completed":true') { throw "A server-initiated JSON-RPC request was not routed through its owning SSE response." }
+
+  $serverRequestWithoutSse = '{"jsonrpc":"2.0","id":"server-request-no-sse","method":"test/server-request-no-sse","params":{}}'
+  $withoutSse = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json"; "Mcp-Session-Id" = $session } -Body $serverRequestWithoutSse }
+  if ($withoutSse.StatusCode -ne 200 -or $withoutSse.Content -notmatch '"deliveryRejected":true') { throw "An undeliverable server request did not receive an immediate JSON-RPC error." }
 
   $badAccept = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/xml"; "Mcp-Session-Id" = $session } -Body $list }
   if ([int]$badAccept.StatusCode -ne 406) { throw "Unsupported Accept header was not rejected with HTTP 406." }
@@ -117,7 +125,7 @@ try {
 
   $failedInitialize = $initialize.Replace('"streamable-verifier"', '"fail-init"')
   $failed = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $headers -Body $failedInitialize }
-  if ($failed.StatusCode -ne 200 -or $failed.Content -notmatch 'simulated initialize failure') { throw "The simulated initialize failure did not reach the client." }
+  if ($failed.StatusCode -ne 200 -or $failed.Headers["Mcp-Session-Id"] -or $failed.Content -notmatch 'simulated initialize failure') { throw "A failed initialize exposed a provisional MCP session." }
   $hangInitialize = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $headers -Body $initialize }
   $hangSession = [string]$hangInitialize.Headers["Mcp-Session-Id"]
   $hang = '{"jsonrpc":"2.0","id":3,"method":"test/hang","params":{}}'
