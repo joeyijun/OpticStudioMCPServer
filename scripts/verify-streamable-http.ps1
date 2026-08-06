@@ -90,6 +90,7 @@ try {
   if ($accepted.StatusCode -ne 202) { throw "MCP notification did not return HTTP 202." }
 
   $waitCancel = '{"jsonrpc":"2.0","id":"cancel-parent","method":"test/wait-cancel","params":{}}'
+  $activeCancellation = '{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"cancel-parent"}}'
   $cancelRequest = [Net.HttpWebRequest]::Create($url)
   $cancelRequest.Method = "POST"
   $cancelRequest.ContentType = "application/json"
@@ -111,7 +112,7 @@ try {
         if (-not $cancelLine.StartsWith("data: ")) { continue }
         $cancelContent += $cancelLine.Substring(6)
         if (-not $cancelSent -and $cancelLine -match 'ready-cancel') {
-          $cancelDuringExecution = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json"; "Mcp-Session-Id" = $session } -Body $notification }
+          $cancelDuringExecution = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json"; "Mcp-Session-Id" = $session } -Body $activeCancellation }
           if ($cancelDuringExecution.StatusCode -ne 202) { throw "Cancellation notification was blocked behind the active MCP request." }
           $cancelSent = $true
         }
@@ -158,7 +159,16 @@ try {
     $afterPumpFailure = $pumpHealth.Content | ConvertFrom-Json
   } while (($afterPumpFailure.serverRestartCount -le $pumpRestartBaseline -or -not $afterPumpFailure.mcpServerRunning) -and [DateTime]::UtcNow -lt $pumpRecoveryDeadline)
   if ($afterPumpFailure.serverRestartCount -le $pumpRestartBaseline -or -not $afterPumpFailure.mcpServerRunning) { throw "A stdout pump failure did not terminate and recover the MCP stdio server." }
-  Write-Host "Streamable HTTP negotiation, provisional sessions, ordered SSE messages, server-request round trips, in-flight cancellation, bounded queueing, and stdout-pump recovery verified."
+  $postPumpInitialize = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $headers -Body $initialize }
+  $postPumpSession = [string]$postPumpInitialize.Headers["Mcp-Session-Id"]
+  if ($postPumpInitialize.StatusCode -ne 200 -or [string]::IsNullOrWhiteSpace($postPumpSession)) { throw "The recovered MCP server could not initialize a new client." }
+  $initializedNotification = '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'
+  $initialized = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json"; "Mcp-Session-Id" = $postPumpSession } -Body $initializedNotification }
+  if ($initialized.StatusCode -ne 202) { throw "The recovered MCP server did not accept notifications/initialized." }
+  $postPumpList = '{"jsonrpc":"2.0","id":"post-pump-list","method":"tools/list","params":{}}'
+  $postPumpTools = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json"; "Mcp-Session-Id" = $postPumpSession } -Body $postPumpList }
+  if ($postPumpTools.StatusCode -ne 200 -or $postPumpTools.Content -notmatch '"result"') { throw "The recovered MCP server could not complete tools/list." }
+  Write-Host "Streamable HTTP negotiation, provisional sessions, ordered/time-bounded SSE messages, server-request round trips, in-flight cancellation, bounded queueing, and stdout-pump recovery verified."
 }
 finally {
   $env:ZEMAX_MCP_TOKEN = $oldToken

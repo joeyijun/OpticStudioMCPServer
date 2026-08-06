@@ -130,6 +130,7 @@ internal sealed class StdioMcpBridge : IDisposable
     private const int MaxRequestBytes = 1024 * 1024;
     private const int MaxTrackedClients = 20;
     private static readonly TimeSpan ClientSessionIdleTimeout = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan SseWriteTimeout = TimeSpan.FromSeconds(10);
     private readonly BridgeOptions _options;
     // A main MCP request may hold the OpticStudio session for minutes.  Never
     // use this lock for responses to server requests or client notifications:
@@ -600,7 +601,7 @@ internal sealed class StdioMcpBridge : IDisposable
                 else initializationCommitted = true;
             }
             if (sse != null)
-                await sse.WriteMessageAsync(response).ConfigureAwait(false);
+                await WriteSseWithTimeoutAsync(sse, () => sse.WriteMessageAsync(response)).ConfigureAwait(false);
             else
                 await WriteMcpJsonAsync(context, response, responseSession).ConfigureAwait(false);
         }
@@ -627,19 +628,19 @@ internal sealed class StdioMcpBridge : IDisposable
         catch (BridgeRequestTimeoutException ex)
         {
             Log.Error(ex, "MCP request timed out; hard recovery is pending if the server remains unresponsive");
-            if (sse != null) await sse.WriteRpcErrorAsync(-32001, ex.Message).ConfigureAwait(false);
+            if (sse != null) await WriteSseWithTimeoutAsync(sse, () => sse.WriteRpcErrorAsync(-32001, ex.Message)).ConfigureAwait(false);
             else await TryWriteRpcErrorAsync(context, -32001, ex.Message, HttpStatusCode.GatewayTimeout).ConfigureAwait(false);
         }
         catch (BridgeRequestQueueFullException ex)
         {
             Log.Warning(ex, "Rejected MCP request because the bridge queue is full");
-            if (sse != null) await sse.WriteRpcErrorAsync(-32003, ex.Message).ConfigureAwait(false);
+            if (sse != null) await WriteSseWithTimeoutAsync(sse, () => sse.WriteRpcErrorAsync(-32003, ex.Message)).ConfigureAwait(false);
             else await TryWriteRpcErrorAsync(context, -32003, ex.Message, (HttpStatusCode)429).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             Log.Error(ex, "HTTP request failed");
-            if (sse != null) await sse.WriteRpcErrorAsync(-32603, "Zemax MCP bridge error").ConfigureAwait(false);
+            if (sse != null) await WriteSseWithTimeoutAsync(sse, () => sse.WriteRpcErrorAsync(-32603, "Zemax MCP bridge error")).ConfigureAwait(false);
             else await TryWriteRpcErrorAsync(context, -32603, "Zemax MCP bridge error", HttpStatusCode.InternalServerError).ConfigureAwait(false);
         }
         finally
@@ -1266,17 +1267,49 @@ internal sealed class StdioMcpBridge : IDisposable
             Log.Warning("Dropped an MCP server message because request {OperationId} is not using an SSE response stream.", operationId);
             return false;
         }
+        return await WriteSseWithTimeoutAsync(stream, () => stream.WriteMessageAsync(message)).ConfigureAwait(false);
+    }
+
+    private async Task<bool> WriteSseWithTimeoutAsync(SseResponseStream stream, Func<Task> write)
+    {
+        Task writeTask;
+        try { writeTask = write(); }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Could not start an SSE write");
+            UnregisterSseStream(stream);
+            stream.Abort();
+            return false;
+        }
+
+        var completed = await Task.WhenAny(writeTask, Task.Delay(SseWriteTimeout)).ConfigureAwait(false);
+        if (completed != writeTask)
+        {
+            Log.Warning("SSE client did not accept a message within {TimeoutSeconds} seconds; closing its stream.", SseWriteTimeout.TotalSeconds);
+            UnregisterSseStream(stream);
+            stream.Abort();
+            _ = ObserveTimedOutSseWriteAsync(writeTask);
+            return false;
+        }
+
         try
         {
-            await stream.WriteMessageAsync(message).ConfigureAwait(false);
+            await writeTask.ConfigureAwait(false);
             return true;
         }
         catch (Exception ex)
         {
             Log.Debug(ex, "Could not forward an MCP message to its owning SSE stream");
             UnregisterSseStream(stream);
+            stream.Abort();
             return false;
         }
+    }
+
+    private static async Task ObserveTimedOutSseWriteAsync(Task writeTask)
+    {
+        try { await writeTask.ConfigureAwait(false); }
+        catch { }
     }
 
     private void RegisterSseStream(string operationId, SseResponseStream stream)
@@ -1484,6 +1517,13 @@ internal sealed class StdioMcpBridge : IDisposable
                 await _context.Response.OutputStream.FlushAsync().ConfigureAwait(false);
             }
             finally { _writeLock.Release(); }
+        }
+
+        public void Abort()
+        {
+            if (Interlocked.Exchange(ref _closed, 1) != 0) return;
+            try { _context.Response.Abort(); }
+            catch { }
         }
 
         public async Task CloseAsync()
