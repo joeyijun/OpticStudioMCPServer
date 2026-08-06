@@ -46,7 +46,7 @@ if ($launcherXaml -notmatch 'RemoteSetupDot' -or
   throw "The remote secure-setup card must communicate its saved endpoint and keep the copy action fully visible."
 }
 if ($launcherXaml -notmatch 'x:Name="ToolsetProfile"' -or
-    $launcherXaml -notmatch '完整专家模式') {
+    $launcherXaml -notmatch 'Full expert') {
   throw "The launcher must offer the task-oriented toolset run configurations."
 }
 if ($launcherXaml -notmatch '(?s)Status overview.*Logs.*Updates.*Copy diagnostics') {
@@ -59,6 +59,13 @@ $launcherCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Launcher\MainWin
 if ($launcherCode -notmatch 'Remote endpoint active:' -or
     $launcherCode -notmatch 'token protected for this Windows user') {
   throw "The remote secure-setup status must identify the selected endpoint and encrypted credential."
+}
+if ($launcherCode -notmatch 'MouseClick' -or
+    $launcherCode -notmatch 'menu\.Items\.Add\("Start"' -or
+    $launcherCode -notmatch 'menu\.Items\.Add\("Stop"' -or
+    $launcherCode -notmatch 'menu\.Items\.Add\("Exit"' -or
+    $launcherCode -notmatch 'StartServiceFromTray') {
+  throw "The tray menu must support single-click opening plus Start, Stop, and Exit service control."
 }
 if ($launcherCode -match 'Task\.Run\(\(\) => GetHealth\(endpoint, McpToken\)\)' -or
     $launcherCode -match 'Task\.Run\(\(\) => TestMcp\(endpoint, McpToken\)\)') {
