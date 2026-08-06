@@ -469,10 +469,21 @@ internal sealed class StdioMcpBridge : IDisposable
             var method = json["method"]?.ToString() ?? "unknown";
             var id = json["id"];
             var isClientResponse = IsJsonRpcResponse(json);
-            var isClientNotification = IsJsonRpcNotification(json);
+            var isFastPathNotification = IsFastPathNotification(json);
+            var isInitialize = string.Equals(method, "initialize", StringComparison.OrdinalIgnoreCase);
+            if (!isClientResponse && (id == null || id.Type == JTokenType.Null) && !isFastPathNotification)
+            {
+                await WriteJsonAsync(context, new JObject
+                {
+                    ["jsonrpc"] = "2.0",
+                    ["error"] = new JObject { ["code"] = -32600, ["message"] = "Only notifications/* messages may omit a JSON-RPC id." },
+                    ["id"] = null
+                }, HttpStatusCode.BadRequest).ConfigureAwait(false);
+                return;
+            }
             var requestedSession = context.Request.Headers["Mcp-Session-Id"];
             string? responseSession = null;
-            if (string.Equals(method, "initialize", StringComparison.OrdinalIgnoreCase))
+            if (isInitialize)
             {
                 if (!TryBeginClientRegistration(json, now, out responseSession, out var rejection))
                 {
@@ -503,7 +514,7 @@ internal sealed class StdioMcpBridge : IDisposable
                 context.Response.Close();
                 return;
             }
-            if (!isClientResponse && !isClientNotification && json["method"] == null)
+            if (!isClientResponse && !isFastPathNotification && json["method"] == null)
             {
                 await WriteJsonAsync(context, new JObject
                 {
@@ -526,7 +537,7 @@ internal sealed class StdioMcpBridge : IDisposable
                 context.Response.Close();
                 return;
             }
-            if (isClientNotification)
+            if (isFastPathNotification)
             {
                 await WriteToCurrentServerAsync(request).ConfigureAwait(false);
                 context.Response.StatusCode = (int)HttpStatusCode.Accepted;
@@ -535,7 +546,9 @@ internal sealed class StdioMcpBridge : IDisposable
             }
 
             var operationId = BeginOperation(method, json, requestedSession, now);
-            if (id != null && ShouldUseSse(context.Request.Headers["Accept"]))
+            // The session header must only be exposed after initialization has
+            // completed successfully, so initialize always uses JSON.
+            if (!isInitialize && id != null && ShouldUseSse(context.Request.Headers["Accept"]))
             {
                 sse = new SseResponseStream(context, responseSession ?? requestedSession);
                 await sse.OpenAsync().ConfigureAwait(false);
@@ -1126,10 +1139,16 @@ internal sealed class StdioMcpBridge : IDisposable
                     {
                         if (owner == null || !HasSseStream(owner.OperationId))
                         {
-                            Log.Warning("Dropped a server-initiated MCP request because its owning HTTP request has no SSE stream.");
+                            await RejectUndeliverableServerRequestAsync(server, message["id"]!).ConfigureAwait(false);
                             continue;
                         }
                         RegisterPendingServerRequest(message["id"]!, message["method"]!.ToString(), owner, server);
+                        if (!await PublishServerMessageAsync(line, owner.OperationId).ConfigureAwait(false))
+                        {
+                            RemovePendingServerRequest(message["id"]!);
+                            await RejectUndeliverableServerRequestAsync(server, message["id"]!).ConfigureAwait(false);
+                        }
+                        continue;
                     }
                     _ = PublishServerMessageAsync(line, owner?.OperationId);
                 }
@@ -1160,6 +1179,23 @@ internal sealed class StdioMcpBridge : IDisposable
         lock (_stateLock) return _sseStreams.ContainsKey(operationId);
     }
 
+    private async Task RejectUndeliverableServerRequestAsync(Process server, JToken id)
+    {
+        Log.Warning("Rejecting a server-initiated MCP request because its owning HTTP request cannot receive SSE.");
+        var error = new JObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = id,
+            ["error"] = new JObject
+            {
+                ["code"] = -32601,
+                ["message"] = "Client cannot receive server-initiated requests."
+            }
+        };
+        try { await WriteToServerAsync(server, error.ToString(Newtonsoft.Json.Formatting.None)).ConfigureAwait(false); }
+        catch (Exception ex) { Log.Warning(ex, "Could not reject an undeliverable server-initiated MCP request"); }
+    }
+
     private void RegisterPendingServerRequest(JToken id, string method, ResponseWaiter owner, Process server)
     {
         var key = ResponseKey(id);
@@ -1188,12 +1224,17 @@ internal sealed class StdioMcpBridge : IDisposable
         }
     }
 
-    private async Task PublishServerMessageAsync(string message, string? operationId)
+    private void RemovePendingServerRequest(JToken id)
+    {
+        lock (_stateLock) _pendingServerRequests.Remove(ResponseKey(id));
+    }
+
+    private async Task<bool> PublishServerMessageAsync(string message, string? operationId)
     {
         if (string.IsNullOrWhiteSpace(operationId))
         {
             Log.Warning("Dropped an unsolicited MCP server message because no active HTTP request owns it.");
-            return;
+            return false;
         }
 
         SseResponseStream? stream;
@@ -1201,13 +1242,18 @@ internal sealed class StdioMcpBridge : IDisposable
         if (stream == null)
         {
             Log.Warning("Dropped an MCP server message because request {OperationId} is not using an SSE response stream.", operationId);
-            return;
+            return false;
         }
-        try { await stream.WriteMessageAsync(message).ConfigureAwait(false); }
+        try
+        {
+            await stream.WriteMessageAsync(message).ConfigureAwait(false);
+            return true;
+        }
         catch (Exception ex)
         {
             Log.Debug(ex, "Could not forward an MCP message to its owning SSE stream");
             UnregisterSseStream(stream);
+            return false;
         }
     }
 
@@ -1245,8 +1291,13 @@ internal sealed class StdioMcpBridge : IDisposable
                (message["result"] != null || message["error"] != null);
     }
 
-    private static bool IsJsonRpcNotification(JObject message) =>
-        message["method"] != null && (message["id"] == null || message["id"]!.Type == JTokenType.Null);
+    private static bool IsFastPathNotification(JObject message)
+    {
+        var method = message["method"]?.ToString();
+        var id = message["id"];
+        return (id == null || id.Type == JTokenType.Null) && method != null &&
+               method.StartsWith("notifications/", StringComparison.Ordinal);
+    }
 
     private static bool IsJsonRpcServerRequest(JObject message) =>
         message["method"] != null && message["id"] != null && message["id"]!.Type != JTokenType.Null;
