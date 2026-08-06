@@ -37,10 +37,15 @@ public partial class MainWindow : Window
         InitializeComponent();
         var applicationIcon = GetApplicationIcon();
         _trayIcon = new Forms.NotifyIcon { Icon = applicationIcon, Text = "Zemax MCP", Visible = true };
-        _trayIcon.DoubleClick += (_, _) => RestoreWindow();
+        _trayIcon.MouseClick += (_, eventArgs) =>
+        {
+            if (eventArgs.Button == Forms.MouseButtons.Left)
+                Dispatcher.BeginInvoke(new Action(RestoreWindow));
+        };
         var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("Open Zemax MCP", null, (_, _) => RestoreWindow());
-        menu.Items.Add("Exit", null, (_, _) => ExitApplication());
+        menu.Items.Add("Start", null, (_, _) => Dispatcher.BeginInvoke(new Action(StartServiceFromTray)));
+        menu.Items.Add("Stop", null, (_, _) => Dispatcher.BeginInvoke(new Action(StopService)));
+        menu.Items.Add("Exit", null, (_, _) => Dispatcher.BeginInvoke(new Action(ExitApplication)));
         _trayIcon.ContextMenuStrip = menu;
         _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _statusTimer.Tick += async (_, _) => await RefreshStatusAsync();
@@ -193,7 +198,21 @@ public partial class MainWindow : Window
         catch (Exception ex) { Report("Could not change sign-in startup: " + ex.Message); }
     }
 
-    private void Start_Click(object sender, RoutedEventArgs e) => StartBridge(false);
+    private void Start_Click(object sender, RoutedEventArgs e) => StartServiceFromTray();
+    private void StartServiceFromTray()
+    {
+        if (IsRemoteEndpointConfigured)
+        {
+            Report("This computer is configured as an AI client for a remote MCP service.");
+            return;
+        }
+        if (_bridge != null && !_bridge.HasExited)
+        {
+            Report("HTTP MCP is already running.");
+            return;
+        }
+        StartBridge(false);
+    }
     private void StartBridge(bool automaticRestart = false)
     {
         if (Installation == null) { Report("Choose a detected OpticStudio installation first."); return; }
@@ -250,7 +269,14 @@ public partial class MainWindow : Window
         await Task.Delay(TimeSpan.FromSeconds(delay));
         if (_bridge == null && !_exitRequested && !IsRemoteEndpointConfigured) StartBridge(true);
     }
-    private void Stop_Click(object sender, RoutedEventArgs e) { StopBridge(); Report("HTTP MCP stopped."); SetIndicator(McpStateDot, McpState, "Stopped", System.Windows.Media.Brushes.IndianRed); SetIndicator(AiStateDot, AiState, "No client activity while stopped", System.Windows.Media.Brushes.SlateGray); }
+    private void Stop_Click(object sender, RoutedEventArgs e) => StopService();
+    private void StopService()
+    {
+        StopBridge();
+        Report("HTTP MCP stopped.");
+        SetIndicator(McpStateDot, McpState, "Stopped", System.Windows.Media.Brushes.IndianRed);
+        SetIndicator(AiStateDot, AiState, "No client activity while stopped", System.Windows.Media.Brushes.SlateGray);
+    }
     private async void RefreshStatus_Click(object sender, RoutedEventArgs e) => await RefreshStatusAsync();
     private async Task RefreshStatusAsync()
     {
@@ -331,14 +357,10 @@ public partial class MainWindow : Window
                 (localBridge ? "\nLocal launcher bridge process: running" : "");
             var ready = bridgeRunning && serverRunning && apiConnected;
             ConnectionSummary.Text = (ready ? "Ready" : "Needs attention") + " — MCP " +
-                (bridgeRunning && serverRunning ? "online" : "not ready") + ", OpticStudio " +
-                (apiConnected ? "connected" : apiLoaded ? "waiting" : "not connected") + ", license " + licenseStatus + "\n" +
-                endpoint + " · " + (authenticationRequired ? "token protected" : "unprotected") +
-                " · " + (readOnly ? "read-only" : "snapshot protected") +
-                " · AI active: " + activeClients + " · requests: " + activeRequests + activeOperationText + activeJobText +
-                (restartCount > 0 ? " · restarts: " + restartCount : "") +
-                (hardRecoveryCount > 0 ? " · hard recoveries: " + hardRecoveryCount : "") +
-                (string.IsNullOrWhiteSpace(lastServerError) ? "" : "\nLast error: " + lastServerError);
+                (bridgeRunning && serverRunning ? "online" : "not ready") + " · OpticStudio " +
+                (apiConnected ? "connected" : apiLoaded ? "waiting" : "not connected") + " · " +
+                (authenticationRequired ? "token protected" : "unprotected") +
+                (activeClients > 0 ? " · " + activeClients + " active AI client(s)" : "");
             if (bridgeRunning && serverRunning) SetIndicator(McpStateDot, McpState, "Online — MCP server is accepting connections", System.Windows.Media.Brushes.SeaGreen);
             else SetIndicator(McpStateDot, McpState, "Endpoint reachable, but a service is not running", System.Windows.Media.Brushes.DarkOrange);
             if (apiConnected) SetIndicator(ZosStateDot, ZosState, "Connected to OpticStudio", System.Windows.Media.Brushes.SeaGreen);

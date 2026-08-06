@@ -223,6 +223,18 @@
             </Grid>
             <CheckBox x:Name="StartOnLogin" Content="Start Zemax MCP when I sign in" Margin="1,11,0,0"
                       Checked="StartOnLogin_Changed" Unchecked="StartOnLogin_Changed"/>
+            <Grid Margin="0,8,0,0">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <TextBlock Text="Run configuration" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}"/>
+              <ComboBox Grid.Column="2" x:Name="ToolsetProfile" SelectedIndex="4" SelectionChanged="ToolsetProfile_SelectionChanged"
+                        ToolTip="Controls which task-oriented MCP tool domains are exposed to AI clients.">
+                <ComboBoxItem Tag="basic-viewing">View &amp; analyze</ComboBoxItem>
+                <ComboBoxItem Tag="sequential-design">Sequential design</ComboBoxItem>
+                <ComboBoxItem Tag="nonsequential-stray-light">Non-sequential &amp; stray light</ComboBoxItem>
+                <ComboBoxItem Tag="optimization-tolerance">Optimization &amp; tolerancing</ComboBoxItem>
+                <ComboBoxItem Tag="full-expert">Full expert</ComboBoxItem>
+              </ComboBox>
+            </Grid>
           </StackPanel>
           <StackPanel Grid.Column="1" Margin="24,0,0,0">
             <TextBlock Text="Network access" Style="{StaticResource SectionLabel}"/>
@@ -230,18 +242,6 @@
                       Checked="ShareOnLan_Changed" Unchecked="ShareOnLan_Changed"/>
             <CheckBox x:Name="ReadOnlyMode" Content="Read-only mode (block lens changes)" Margin="0,8,0,0"
                       Checked="ReadOnlyMode_Changed" Unchecked="ReadOnlyMode_Changed"/>
-            <Grid Margin="0,8,0,0">
-              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-              <TextBlock Text="Run configuration" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}"/>
-              <ComboBox Grid.Column="2" x:Name="ToolsetProfile" SelectedIndex="4" SelectionChanged="ToolsetProfile_SelectionChanged"
-                        ToolTip="Controls which task-oriented MCP tool domains are exposed to AI clients.">
-                <ComboBoxItem Tag="basic-viewing">基础查看 · inspect and analysis</ComboBoxItem>
-                <ComboBoxItem Tag="sequential-design">顺序成像设计 · sequential editing</ComboBoxItem>
-                <ComboBoxItem Tag="nonsequential-stray-light">非序列与杂散光 · NSC and analysis</ComboBoxItem>
-                <ComboBoxItem Tag="optimization-tolerance">优化与公差 · sequential, optimization, tolerance</ComboBoxItem>
-                <ComboBoxItem Tag="full-expert">完整专家模式 · all tool domains</ComboBoxItem>
-              </ComboBox>
-            </Grid>
             <Grid Margin="0,9,0,0">
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="70"/>
@@ -390,9 +390,9 @@
         </Grid>
       </Grid>
 
-      <Border Grid.Row="4" Style="{StaticResource Card}" Margin="0,14,0,0" MinHeight="120">
+      <Border Grid.Row="4" Style="{StaticResource Card}" Margin="0,14,0,0" MinHeight="96">
         <StackPanel>
-          <Grid Margin="0,0,0,10">
+          <Grid Margin="0,0,0,7">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <TextBlock Text="Status overview" Style="{StaticResource StatusHeading}" VerticalAlignment="Center"/>
             <StackPanel Grid.Column="1" Orientation="Horizontal">
@@ -402,11 +402,9 @@
             </StackPanel>
           </Grid>
           <TextBlock x:Name="ConnectionSummary" Text="Checking status automatically…" TextWrapping="Wrap"
-                     Foreground="{StaticResource BodyBrush}" FontSize="13.5" LineHeight="20"/>
-          <TextBlock Text="Tool guide: System information · Lens editing · Analysis · Optimization · Files. High-impact changes should be confirmed; read-only mode blocks recognized lens changes."
-                     TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="11.5" LineHeight="17" Margin="0,8,0,0"/>
+                     Foreground="{StaticResource BodyBrush}" FontSize="13" LineHeight="18"/>
           <TextBox x:Name="Status" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
-                   Height="48" Margin="0,11,0,0" Padding="10,7" Background="#F7F9FC" Foreground="#536277"
+                   Height="38" Margin="0,8,0,0" Padding="10,6" Background="#F7F9FC" Foreground="#536277"
                    BorderBrush="#DCE4EE" BorderThickness="1" FontFamily="Consolas" FontSize="12"/>
         </StackPanel>
       </Border>
