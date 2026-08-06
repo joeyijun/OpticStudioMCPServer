@@ -28,7 +28,10 @@ public sealed class ToolCatalogTool
     public CatalogResult Execute(
         [Description("When true, return only high-impact operations that deserve an explicit confirmation.")] bool highImpactOnly = false)
     {
-        var entries = ToolCatalog.Build(highImpactOnly);
+        var profile = ToolsetCatalog.NormalizeProfile(Environment.GetEnvironmentVariable("ZEMAX_MCP_TOOLSET") ?? ToolsetCatalog.FullExpert);
+        var entries = ToolCatalog.Build(highImpactOnly)
+            .Where(entry => ToolsetCatalog.IsToolAllowed(profile, entry.Name))
+            .ToArray();
         var groups = ToolCatalog.Groups
             .Select(group => new ToolGroup(group.Id, group.Title, group.Purpose, entries.Count(entry => entry.Group == group.Title)))
             .Where(group => group.ToolCount > 0)
@@ -37,7 +40,7 @@ public sealed class ToolCatalogTool
 
         return new CatalogResult(
             "Inspect the current system first, edit only the required data, run an analysis to verify the change, then save or export deliberately. For high-impact tools, confirm the target system and intended change before running.",
-            entries.Count,
+            entries.Length,
             highImpact,
             groups,
             entries);
