@@ -1108,12 +1108,17 @@ internal sealed class StdioMcpBridge : IDisposable
 
     private async Task PumpServerOutputAsync(Process server)
     {
+        var pumpFailed = false;
         try
         {
             while (!_disposed && ReferenceEquals(_server, server))
             {
                 var line = await server.StandardOutput.ReadLineAsync().ConfigureAwait(false);
-                if (line == null) break;
+                if (line == null)
+                {
+                    pumpFailed = true;
+                    break;
+                }
                 JObject message;
                 try { message = JObject.Parse(line); }
                 catch (Exception ex)
@@ -1150,17 +1155,34 @@ internal sealed class StdioMcpBridge : IDisposable
                         }
                         continue;
                     }
-                    _ = PublishServerMessageAsync(line, owner?.OperationId);
+                    // Keep stdout processing ordered: a final response cannot
+                    // close this SSE stream before its preceding notification.
+                    await PublishServerMessageAsync(line, owner?.OperationId).ConfigureAwait(false);
                 }
             }
         }
         catch (Exception ex)
         {
-            if (!_disposed) Log.Warning(ex, "MCP stdio stdout pump stopped unexpectedly");
+            pumpFailed = true;
+            if (!_disposed) Log.Error(ex, "MCP stdout pump failed");
         }
         finally
         {
+            if (pumpFailed) TerminateServerAfterPumpFailure(server);
             FailResponseWaiters(server, new EndOfStreamException("MCP server closed stdout."));
+        }
+    }
+
+    private void TerminateServerAfterPumpFailure(Process server)
+    {
+        if (_disposed || !ReferenceEquals(_server, server)) return;
+        try
+        {
+            if (!server.HasExited) server.Kill();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Could not terminate the MCP server after its stdout pump failed");
         }
     }
 
