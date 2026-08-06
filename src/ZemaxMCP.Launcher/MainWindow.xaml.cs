@@ -283,6 +283,10 @@ public partial class MainWindow : Window
                 " (" + FormatUptime(activeJob["elapsedSeconds"]?.Value<long?>()) + ")" +
                 (activeJob["queuePosition"]?.Value<int?>() is { } queue && queue > 0 ? " · queue " + queue : "");
             var restartCount = health["serverRestartCount"]?.Value<int>() ?? 0;
+            var hardRecoveryCount = health["hardRecoveryCount"]?.Value<int>() ?? 0;
+            var softTimeout = health["requestTimeoutSeconds"]?.Value<int?>();
+            var hardTimeout = health["hardRecoveryTimeoutSeconds"]?.Value<int?>();
+            var clientIsolation = health["clientIsolation"]?.ToString();
             var uptime = FormatUptime(health["bridgeUptimeSeconds"]?.Value<long?>());
             var authenticationRequired = health["authenticationRequired"]?.Value<bool>() == true;
             var originValidationEnabled = health["originValidationEnabled"]?.Value<bool>() == true;
@@ -299,7 +303,7 @@ public partial class MainWindow : Window
             _fullDiagnostics = "MCP endpoint: reachable\n" +
                 "Bridge: " + (bridgeRunning ? "running" : "not running") +
                 "; MCP server: " + (serverRunning ? "running" : "not running") +
-                "; uptime: " + uptime + "; restarts: " + restartCount + "\n" +
+                "; uptime: " + uptime + "; restarts: " + restartCount + "; hard recoveries: " + hardRecoveryCount + "\n" +
                 "ZOS-API files: " + (apiFiles ? "found" : root == null ? "remote endpoint" : "missing") +
                 "; loaded: " + (apiLoaded ? "yes" : "not yet") +
                 "; OpticStudio connected: " + (apiConnected ? "yes" : "not yet") +
@@ -309,6 +313,8 @@ public partial class MainWindow : Window
                 "; lens access: " + (readOnly ? "read-only" : "read/write with pre-change snapshots") + "\n" +
                 "Snapshot folder: " + (string.IsNullOrWhiteSpace(snapshotDirectory) ? "not reported" : snapshotDirectory) +
                 "; latest snapshot: " + (string.IsNullOrWhiteSpace(lastSnapshotPath) ? "none this session" : lastSnapshotPath) + "\n" +
+                "Transport: " + (string.IsNullOrWhiteSpace(clientIsolation) ? "session policy not reported" : clientIsolation) +
+                (softTimeout.HasValue && hardTimeout.HasValue ? "; timeout " + softTimeout + "s / hard recovery " + hardTimeout + "s" : "") + "\n" +
                 pathDetails + "\n" +
                 "AI clients active recently: " + activeClients + "; requests in progress: " + activeRequests + activeOperationText + activeJobText +
                 (string.IsNullOrWhiteSpace(lastServerError) ? "" : "\nLast MCP server error: " + lastServerError) +
@@ -321,6 +327,7 @@ public partial class MainWindow : Window
                 " · " + (readOnly ? "read-only" : "snapshot protected") +
                 " · AI active: " + activeClients + " · requests: " + activeRequests + activeOperationText + activeJobText +
                 (restartCount > 0 ? " · restarts: " + restartCount : "") +
+                (hardRecoveryCount > 0 ? " · hard recoveries: " + hardRecoveryCount : "") +
                 (string.IsNullOrWhiteSpace(lastServerError) ? "" : "\nLast error: " + lastServerError);
             if (bridgeRunning && serverRunning) SetIndicator(McpStateDot, McpState, "Online — MCP server is accepting connections", System.Windows.Media.Brushes.SeaGreen);
             else SetIndicator(McpStateDot, McpState, "Endpoint reachable, but a service is not running", System.Windows.Media.Brushes.DarkOrange);

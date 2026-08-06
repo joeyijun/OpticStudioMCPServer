@@ -1,5 +1,6 @@
 using System;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 public static class Program
 {
@@ -15,8 +16,18 @@ public static class Program
         while ((line = Console.ReadLine()) != null)
         {
             if (!line.Contains("\"id\"")) continue;
+            if (line.Contains("\"method\":\"test/hang\""))
+            {
+                Thread.Sleep(60000);
+                continue;
+            }
             var id = Id(line);
             var initialize = line.Contains("\"method\":\"initialize\"");
+            if (line.Contains("\"method\":\"tools/list\""))
+            {
+                Console.WriteLine("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progress\":50}}");
+                Console.Out.Flush();
+            }
             Console.WriteLine(initialize
                 ? "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"protocolVersion\":\"2025-03-26\",\"serverInfo\":{\"name\":\"fake-mcp\",\"version\":\"1.0\"}}}"
                 : "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{}}");

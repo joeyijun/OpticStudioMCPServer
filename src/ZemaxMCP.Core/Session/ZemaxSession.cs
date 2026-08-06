@@ -239,7 +239,7 @@ public class ZemaxSession : IZemaxSession
             try
             {
                 EnsureConnected();
-                _safety.BeforeOperation(_primarySystem!, commandName);
+                _safety.BeforeOperation(new ZosApiSystemSnapshot(_primarySystem!), commandName);
                 var result = operation(_primarySystem!);
                 _commandLog.LogResult(commandName, true, result, sw.ElapsedMilliseconds);
                 return result;
@@ -277,7 +277,7 @@ public class ZemaxSession : IZemaxSession
             try
             {
                 EnsureConnected();
-                _safety.BeforeOperation(_primarySystem!, commandName);
+                _safety.BeforeOperation(new ZosApiSystemSnapshot(_primarySystem!), commandName);
                 operation(_primarySystem!);
                 _commandLog.LogResult(commandName, true, null, sw.ElapsedMilliseconds);
             }

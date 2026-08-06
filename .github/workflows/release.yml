@@ -12,10 +12,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
-        with: { dotnet-version: '8.0.x' }
+        with: { dotnet-version: '10.0.x' }
       - name: Verify MCP tool registration
         shell: pwsh
         run: ./scripts/verify-tool-registration.ps1
+      - name: Verify explicit operation safety metadata
+        shell: pwsh
+        run: ./scripts/verify-operation-metadata.ps1
+      - name: Build and simulate ZOS-independent Core/Server logic
+        shell: pwsh
+        run: dotnet run --project tests/ZemaxMCP.SimulationTests/ZemaxMCP.SimulationTests.csproj -c Release
       - name: Build public desktop components
         shell: pwsh
         run: |

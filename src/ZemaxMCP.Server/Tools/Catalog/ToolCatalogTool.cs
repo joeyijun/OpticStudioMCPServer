@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Reflection;
 using ModelContextProtocol.Server;
+using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Catalog;
 
@@ -95,23 +96,12 @@ internal static class ToolCatalog
         return "System information";
     }
 
-    private static string GetRisk(string name)
+    private static string GetRisk(string name) => ZemaxOperationMetadata.GetToolImpact(name) switch
     {
-        if (name.StartsWith("zemax_set_", StringComparison.Ordinal) ||
-            name.StartsWith("zemax_add_", StringComparison.Ordinal) ||
-            name.StartsWith("zemax_delete_", StringComparison.Ordinal) ||
-            name.StartsWith("zemax_remove_", StringComparison.Ordinal) ||
-            name.StartsWith("zemax_clear_", StringComparison.Ordinal) ||
-            name.StartsWith("zemax_calculate_", StringComparison.Ordinal) ||
-            name is "zemax_new_system" or "zemax_save_file" or "zemax_load_merit_function_file" or "zemax_save_merit_function_file" or
-                "zemax_optimize" or "zemax_constrained_optimize" or "zemax_global_search" or "zemax_hammer_optimization" or
-                "zemax_multistart_optimize" or "zemax_quick_focus" or "zemax_scale_lens" or "zemax_optimization_wizard" or
-                "zemax_forbes_merit_function") return HighImpactRisk;
-
-        if (name is "zemax_open_file" or "zemax_connect" or "zemax_disconnect" or "zemax_restart" or "zemax_job_cancel" or "zemax_multistart_stop")
-            return CautionRisk;
-        return ReadOnlyRisk;
-    }
+        ZemaxOperationImpact.HighImpact => HighImpactRisk,
+        ZemaxOperationImpact.Caution => CautionRisk,
+        _ => ReadOnlyRisk
+    };
 
     private static string GetSafetyGuidance(string risk, string name)
     {
