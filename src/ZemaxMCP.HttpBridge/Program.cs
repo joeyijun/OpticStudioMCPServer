@@ -5,6 +5,9 @@ using System.IO;
 using System.IO.Pipes;
 using System.Linq;
 using System.Net;
+using System.Security.AccessControl;
+using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -63,6 +66,7 @@ internal sealed class BridgeOptions
     public string LogDirectory { get; private set; } = System.IO.Path.Combine(AppContext.BaseDirectory, "logs");
     public int RequestTimeoutSeconds { get; private set; } = 300;
     public int HardRecoveryTimeoutSeconds { get; private set; } = 360;
+    public int WorkerStartupTimeoutSeconds { get; private set; } = 90;
     public int MaxActiveMcpClients { get; private set; } = 1;
     public int MaxQueuedRequests { get; private set; } = 16;
     public string AccessToken { get; private set; } = Environment.GetEnvironmentVariable("ZEMAX_MCP_TOKEN") ?? "";
@@ -71,6 +75,7 @@ internal sealed class BridgeOptions
     // Production launches always isolate ZOS-API behind a named-pipe Worker.
     public bool UseStdioBackend { get; private set; }
     internal bool TestFailSseOpen { get; private set; }
+    internal bool TestFailInitializeResponseWrite { get; private set; }
     public string ToolsetProfile { get; private set; } = ToolsetPolicy.FullExpert;
     public string SnapshotDirectory { get; private set; } = Environment.GetEnvironmentVariable("ZEMAX_MCP_SNAPSHOT_DIR") ??
         System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZemaxMCP", "snapshots");
@@ -104,6 +109,11 @@ internal sealed class BridgeOptions
                         throw new ArgumentException("--hard-recovery-timeout-seconds must be between 20 and 7200.");
                     result.HardRecoveryTimeoutSeconds = hardTimeout;
                     break;
+                case "--worker-startup-timeout-seconds":
+                    if (!int.TryParse(value, out var workerStartupTimeout) || workerStartupTimeout < 10 || workerStartupTimeout > 600)
+                        throw new ArgumentException("--worker-startup-timeout-seconds must be between 10 and 600.");
+                    result.WorkerStartupTimeoutSeconds = workerStartupTimeout;
+                    break;
                 case "--max-active-mcp-clients":
                     if (!int.TryParse(value, out var maxClients) || maxClients < 1 || maxClients > MaximumActiveMcpClients)
                         throw new ArgumentException("--max-active-mcp-clients must be between 1 and " + MaximumActiveMcpClients + ".");
@@ -126,6 +136,10 @@ internal sealed class BridgeOptions
                     if (!bool.TryParse(value, out var failSseOpen)) throw new ArgumentException("--test-fail-sse-open must be true or false.");
                     result.TestFailSseOpen = failSseOpen;
                     break;
+                case "--test-fail-initialize-response-write":
+                    if (!bool.TryParse(value, out var failInitializeWrite)) throw new ArgumentException("--test-fail-initialize-response-write must be true or false.");
+                    result.TestFailInitializeResponseWrite = failInitializeWrite;
+                    break;
                 case "--snapshot-dir": result.SnapshotDirectory = value; break;
                 case "--toolset": result.ToolsetProfile = ToolsetPolicy.NormalizeProfile(value); break;
                 default: throw new ArgumentException("Unknown bridge option: " + args[i]);
@@ -145,7 +159,16 @@ internal sealed class StdioMcpBridge : IDisposable
 {
     private const int MaxRequestBytes = 1024 * 1024;
     private const int MaxTrackedClients = 20;
+    private const string DefaultMcpProtocolVersion = "2025-03-26";
+    private static readonly HashSet<string> SupportedMcpProtocolVersions = new HashSet<string>(StringComparer.Ordinal)
+    {
+        DefaultMcpProtocolVersion
+    };
     private static readonly TimeSpan ClientSessionIdleTimeout = TimeSpan.FromMinutes(15);
+    // An initialize response is the only point at which a provisional session
+    // can become visible. Keep abandoned handshakes short-lived so a client
+    // disconnect cannot consume the single-client slot for fifteen minutes.
+    private static readonly TimeSpan ProvisionalSessionTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan SseWriteTimeout = TimeSpan.FromSeconds(10);
     private readonly BridgeOptions _options;
     // A main MCP request may hold the OpticStudio session for minutes.  Never
@@ -162,7 +185,7 @@ internal sealed class StdioMcpBridge : IDisposable
     private readonly Dictionary<string, SseResponseStream> _sseStreams = new Dictionary<string, SseResponseStream>(StringComparer.Ordinal);
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
     private Process? _server;
-    private NamedPipeClientStream? _workerPipe;
+    private NamedPipeServerStream? _workerPipe;
     private StreamReader? _workerReader;
     private StreamWriter? _workerWriter;
     private HttpListener? _listener;
@@ -184,9 +207,14 @@ internal sealed class StdioMcpBridge : IDisposable
     private int _activeRequests;
     private int _queuedRequests;
     private int _hardRecoveryCount;
+    private int _remainingTestInitializeWriteFailures;
     private bool _disposed;
 
-    public StdioMcpBridge(BridgeOptions options) => _options = options;
+    public StdioMcpBridge(BridgeOptions options)
+    {
+        _options = options;
+        _remainingTestInitializeWriteFailures = options.TestFailInitializeResponseWrite ? 1 : 0;
+    }
 
     public async Task RunAsync()
     {
@@ -211,6 +239,9 @@ internal sealed class StdioMcpBridge : IDisposable
         if (_disposed) throw new ObjectDisposedException(nameof(StdioMcpBridge));
         DisposeServerProcess();
         var pipeName = "ZemaxMcpWorker-" + Process.GetCurrentProcess().Id + "-" + Guid.NewGuid().ToString("N");
+        var pipeSecret = _options.UseStdioBackend ? null : CreatePipeSecret();
+        NamedPipeServerStream? workerPipe = null;
+        if (!_options.UseStdioBackend) workerPipe = CreatePrivateWorkerPipe(pipeName);
         var psi = new ProcessStartInfo(_options.ServerPath, _options.UseStdioBackend ? "" : "--pipe \"" + pipeName + "\"")
         {
             WorkingDirectory = System.IO.Path.GetDirectoryName(_options.ServerPath) ?? AppContext.BaseDirectory,
@@ -227,7 +258,14 @@ internal sealed class StdioMcpBridge : IDisposable
         psi.EnvironmentVariables["ZEMAX_MCP_READ_ONLY"] = _options.ReadOnly ? "1" : "0";
         psi.EnvironmentVariables["ZEMAX_MCP_TOOLSET"] = _options.ToolsetProfile;
         psi.EnvironmentVariables["ZEMAX_MCP_SNAPSHOT_DIR"] = _options.SnapshotDirectory;
-        var process = Process.Start(psi) ?? throw new InvalidOperationException("Unable to launch the Zemax MCP Worker.");
+        if (!string.IsNullOrWhiteSpace(pipeSecret)) psi.EnvironmentVariables["ZEMAX_MCP_PIPE_SECRET"] = pipeSecret;
+        Process process;
+        try { process = Process.Start(psi) ?? throw new InvalidOperationException("Unable to launch the Zemax MCP Worker."); }
+        catch
+        {
+            workerPipe?.Dispose();
+            throw;
+        }
         process.EnableRaisingEvents = true;
         process.ErrorDataReceived += (_, e) => HandleServerStatus(e.Data);
         process.Exited += (_, _) => HandleServerExited(process);
@@ -236,15 +274,21 @@ internal sealed class StdioMcpBridge : IDisposable
         {
             if (!_options.UseStdioBackend)
             {
-                var workerPipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
-                workerPipe.Connect(30000);
+                WaitForWorkerStartup(workerPipe!.WaitForConnectionAsync(), process, "connect to the private Worker pipe");
                 _workerPipe = workerPipe;
                 _workerReader = new StreamReader(workerPipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
                 _workerWriter = new StreamWriter(workerPipe, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), 4096, leaveOpen: true) { AutoFlush = true };
+                AuthenticateWorkerPipe(process, pipeSecret!);
             }
         }
         catch
         {
+            try { _workerWriter?.Dispose(); } catch { }
+            try { _workerReader?.Dispose(); } catch { }
+            try { workerPipe?.Dispose(); } catch { }
+            _workerWriter = null;
+            _workerReader = null;
+            _workerPipe = null;
             try { if (!process.HasExited) process.Kill(); } catch { }
             _server = null;
             process.Dispose();
@@ -270,6 +314,58 @@ internal sealed class StdioMcpBridge : IDisposable
             ? "Started MCP test backend with PID {Pid}{Restart} over stdio"
             : "Started MCP Worker with PID {Pid}{Restart}; Host connected through private named pipe",
             process.Id, isRestart ? " after recovery" : string.Empty);
+    }
+
+    private static NamedPipeServerStream CreatePrivateWorkerPipe(string pipeName)
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        var sid = identity.User ?? throw new InvalidOperationException("Could not determine the current Windows user for the private Worker pipe.");
+        var security = new PipeSecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.AddAccessRule(new PipeAccessRule(sid, PipeAccessRights.FullControl, AccessControlType.Allow));
+        return new NamedPipeServerStream(
+            pipeName,
+            PipeDirection.InOut,
+            maxNumberOfServerInstances: 1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous,
+            inBufferSize: 4096,
+            outBufferSize: 4096,
+            pipeSecurity: security);
+    }
+
+    private static string CreatePipeSecret()
+    {
+        var bytes = new byte[32];
+        using var random = RandomNumberGenerator.Create();
+        random.GetBytes(bytes);
+        return Convert.ToBase64String(bytes);
+    }
+
+    private void WaitForWorkerStartup(Task task, Process process, string activity)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(_options.WorkerStartupTimeoutSeconds);
+        while (!task.Wait(100))
+        {
+            if (process.HasExited)
+                throw new InvalidOperationException("The MCP Worker exited before it could " + activity + ". Exit code: " + process.ExitCode + ".");
+            if (DateTimeOffset.UtcNow >= deadline)
+                throw new TimeoutException("Timed out after " + _options.WorkerStartupTimeoutSeconds + " seconds waiting for the MCP Worker to " + activity + ".");
+        }
+        task.GetAwaiter().GetResult();
+    }
+
+    private void AuthenticateWorkerPipe(Process process, string secret)
+    {
+        var reader = _workerReader ?? throw new InvalidOperationException("The private Worker pipe reader was not created.");
+        var writer = _workerWriter ?? throw new InvalidOperationException("The private Worker pipe writer was not created.");
+        var expected = "ZEMAX_MCP_PIPE_HELLO|" + process.Id + "|" + secret;
+        var helloTask = reader.ReadLineAsync();
+        WaitForWorkerStartup(helloTask, process, "complete the private Worker pipe handshake");
+        if (!string.Equals(helloTask.GetAwaiter().GetResult(), expected, StringComparison.Ordinal))
+            throw new InvalidOperationException("The private Worker pipe handshake did not identify the launched Worker process.");
+        writer.WriteLine("ZEMAX_MCP_PIPE_OK");
+        writer.Flush();
     }
 
     private void HandleServerStatus(string? message)
@@ -470,6 +566,16 @@ internal sealed class StdioMcpBridge : IDisposable
                     context.Response.Close();
                     return;
                 }
+                if (SessionExists(sessionId) && !TryValidateMcpProtocolVersion(sessionId, context.Request.Headers["MCP-Protocol-Version"], out var deleteProtocolVersionError))
+                {
+                    await WriteJsonAsync(context, new JObject
+                    {
+                        ["jsonrpc"] = "2.0",
+                        ["error"] = new JObject { ["code"] = -32602, ["message"] = deleteProtocolVersionError },
+                        ["id"] = null
+                    }, HttpStatusCode.BadRequest).ConfigureAwait(false);
+                    return;
+                }
                 if (SessionHasActiveOperation(sessionId))
                 {
                     context.Response.StatusCode = (int)HttpStatusCode.Conflict;
@@ -558,6 +664,16 @@ internal sealed class StdioMcpBridge : IDisposable
             {
                 context.Response.StatusCode = (int)HttpStatusCode.NotFound;
                 context.Response.Close();
+                return;
+            }
+            else if (!isInitialize && !TryValidateMcpProtocolVersion(requestedSession, context.Request.Headers["MCP-Protocol-Version"], out var protocolVersionError))
+            {
+                await WriteJsonAsync(context, new JObject
+                {
+                    ["jsonrpc"] = "2.0",
+                    ["error"] = new JObject { ["code"] = -32602, ["message"] = protocolVersionError },
+                    ["id"] = id
+                }, HttpStatusCode.BadRequest).ConfigureAwait(false);
                 return;
             }
             if (!isClientResponse && !isFastPathNotification && json["method"] == null)
@@ -650,19 +766,32 @@ internal sealed class StdioMcpBridge : IDisposable
                 return;
             }
             response = ToolsetPolicy.FilterToolsListResponse(_options.ToolsetProfile, method, response);
-            if (provisionalSession != null)
+            var canCommitInitialization = provisionalSession != null && IsSuccessfulInitializeResponse(response);
+            if (provisionalSession != null && !canCommitInitialization)
             {
-                if (!IsSuccessfulInitializeResponse(response) || !CommitClientRegistration(provisionalSession))
-                {
-                    DiscardProvisionalClientRegistration(provisionalSession);
-                    responseSession = null;
-                }
-                else initializationCommitted = true;
+                DiscardProvisionalClientRegistration(provisionalSession);
+                responseSession = null;
             }
             if (sse != null)
                 await WriteSseWithTimeoutAsync(sse, () => sse.WriteMessageAsync(response)).ConfigureAwait(false);
             else
+            {
+                if (canCommitInitialization && Interlocked.Decrement(ref _remainingTestInitializeWriteFailures) >= 0)
+                    throw new IOException("Injected initialize-response write failure for protocol regression verification.");
                 await WriteMcpJsonAsync(context, response, responseSession).ConfigureAwait(false);
+            }
+
+            // Commit only after the complete HTTP initialize response (including
+            // its Mcp-Session-Id header) has been written without an exception.
+            // If the client disconnects during that write, finally rolls the
+            // provisional entry back instead of leaving an orphan client slot.
+            if (canCommitInitialization)
+            {
+                var negotiatedProtocolVersion = GetNegotiatedMcpProtocolVersion(response);
+                if (!CommitClientRegistration(provisionalSession!, negotiatedProtocolVersion))
+                    throw new InvalidOperationException("The provisional MCP initialize session disappeared before it could be committed.");
+                initializationCommitted = true;
+            }
         }
         catch (RequestTooLargeException ex)
         {
@@ -789,6 +918,8 @@ internal sealed class StdioMcpBridge : IDisposable
                     ["lastRequestAt"] = x.LastRequestAt.ToString("O"),
                     ["lastMethod"] = x.LastMethod,
                     ["requestCount"] = x.RequestCount,
+                    ["provisional"] = x.IsProvisional,
+                    ["protocolVersion"] = x.ProtocolVersion,
                     ["active"] = now - x.LastRequestAt <= TimeSpan.FromMinutes(5)
                 }));
             var activeOperations = new JArray(_activeOperations.Values
@@ -836,6 +967,7 @@ internal sealed class StdioMcpBridge : IDisposable
                 ["hardRecoveryCount"] = _hardRecoveryCount,
                 ["requestTimeoutSeconds"] = _options.RequestTimeoutSeconds,
                 ["hardRecoveryTimeoutSeconds"] = _options.HardRecoveryTimeoutSeconds,
+                ["workerStartupTimeoutSeconds"] = _options.WorkerStartupTimeoutSeconds,
                 ["activeRequests"] = _activeRequests,
                 ["queuedRequests"] = _queuedRequests,
                 ["maxQueuedRequests"] = _options.MaxQueuedRequests,
@@ -862,6 +994,7 @@ internal sealed class StdioMcpBridge : IDisposable
                 ["lastRequestAt"] = _lastRequestAt?.ToString("O"),
                 ["lastClient"] = _lastClient,
                 ["clientCount"] = clients.Count,
+                ["provisionalSessionCount"] = _clients.Values.Count(x => x.IsProvisional),
                 ["activeClientCount"] = _clients.Values.Count(x => now - x.LastRequestAt <= TimeSpan.FromMinutes(5)),
                 ["maxActiveMcpClients"] = _options.MaxActiveMcpClients,
                 ["clientIsolation"] = "single shared OpticStudio session; concurrent MCP clients are rejected",
@@ -880,7 +1013,7 @@ internal sealed class StdioMcpBridge : IDisposable
         lock (_stateLock)
         {
             var expired = _clients
-                .Where(pair => now - pair.Value.LastRequestAt > ClientSessionIdleTimeout && !SessionHasActiveOperation(pair.Key))
+                .Where(pair => IsExpiredClientSession(pair.Key, pair.Value, now))
                 .Select(pair => pair.Key)
                 .ToArray();
             foreach (var key in expired) _clients.Remove(key);
@@ -911,17 +1044,60 @@ internal sealed class StdioMcpBridge : IDisposable
         return true;
     }
 
+    private bool IsExpiredClientSession(string sessionId, ClientActivity client, DateTimeOffset now)
+    {
+        if (SessionHasActiveOperation(sessionId)) return false;
+        var timeout = client.IsProvisional ? ProvisionalSessionTimeout : ClientSessionIdleTimeout;
+        return now - client.LastRequestAt > timeout;
+    }
+
     private bool SessionExists(string sessionId)
     {
         lock (_stateLock) return _clients.TryGetValue(sessionId, out var client) && !client.IsProvisional;
     }
 
-    private bool CommitClientRegistration(string sessionId)
+    private bool CommitClientRegistration(string sessionId, string protocolVersion)
     {
         lock (_stateLock)
         {
-            if (!_clients.TryGetValue(sessionId, out var client) || !client.IsProvisional) return false;
+            if (!_clients.TryGetValue(sessionId, out var client) || !client.IsProvisional || !SupportedMcpProtocolVersions.Contains(protocolVersion)) return false;
             client.IsProvisional = false;
+            client.ProtocolVersion = protocolVersion;
+            return true;
+        }
+    }
+
+    private static string GetNegotiatedMcpProtocolVersion(string response)
+    {
+        try
+        {
+            var negotiated = JObject.Parse(response)["result"]?["protocolVersion"]?.ToString();
+            return SupportedMcpProtocolVersions.Contains(negotiated ?? string.Empty) ? negotiated! : DefaultMcpProtocolVersion;
+        }
+        catch { return DefaultMcpProtocolVersion; }
+    }
+
+    private bool TryValidateMcpProtocolVersion(string sessionId, string? headerValue, out string error)
+    {
+        lock (_stateLock)
+        {
+            if (!_clients.TryGetValue(sessionId, out var client) || client.IsProvisional)
+            {
+                error = "Mcp-Session-Id is not an active initialized session.";
+                return false;
+            }
+            var version = string.IsNullOrWhiteSpace(headerValue) ? client.ProtocolVersion : headerValue!.Trim();
+            if (!SupportedMcpProtocolVersions.Contains(version))
+            {
+                error = "Unsupported MCP-Protocol-Version '" + version + "'. Supported versions: " + string.Join(", ", SupportedMcpProtocolVersions) + ".";
+                return false;
+            }
+            if (!string.Equals(version, client.ProtocolVersion, StringComparison.Ordinal))
+            {
+                error = "MCP-Protocol-Version must match the version negotiated during initialize (" + client.ProtocolVersion + ").";
+                return false;
+            }
+            error = string.Empty;
             return true;
         }
     }
@@ -1486,6 +1662,7 @@ internal sealed class StdioMcpBridge : IDisposable
             LastRequestAt = connectedAt;
             LastMethod = "initialize";
             IsProvisional = isProvisional;
+            ProtocolVersion = DefaultMcpProtocolVersion;
         }
 
         public string Name { get; }
@@ -1495,6 +1672,7 @@ internal sealed class StdioMcpBridge : IDisposable
         public string LastMethod { get; set; }
         public long RequestCount { get; set; }
         public bool IsProvisional { get; set; }
+        public string ProtocolVersion { get; set; }
     }
 
     private sealed class ActiveRequest

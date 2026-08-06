@@ -20,7 +20,7 @@ public class ConnectTool
     );
 
     [McpServerTool(Name = "zemax_connect")]
-    [Description("Connect to Zemax OpticStudio. Modes: 'standalone' (default, launches headless instance) or 'extension' (connect to running OpticStudio with UI - requires Programming > Interactive Extension enabled in OpticStudio). Note: The server pre-connects in standalone mode at startup, so this tool is mainly for reconnection or switching modes.")]
+    [Description("Connect to Zemax OpticStudio. Modes: 'standalone' (default, launches headless instance) or 'extension' (connect to running OpticStudio with UI - requires Programming > Interactive Extension enabled in OpticStudio). A call switches modes or extension instance IDs when necessary.")]
     public async Task<ConnectResult> ExecuteAsync(
         [Description("Connection mode: 'standalone' (headless, no UI) or 'extension' (attach to running OpticStudio with UI). Default: standalone.")]
         string mode = "standalone",
@@ -36,66 +36,38 @@ public class ConnectTool
                 _ => throw new ArgumentException($"Invalid mode '{mode}'. Use 'standalone' or 'extension'.")
             };
 
-            // Already connected — return immediately
-            if (_session.IsConnected)
-            {
-                return new ConnectResult(
-                    Success: true,
-                    Error: null,
-                    IsConnected: true,
-                    CurrentFile: _session.CurrentFilePath,
-                    Mode: connectionMode.ToString()
-                );
-            }
-
-            // Background connection in progress — wait for it to complete
+            // The Worker begins a standalone connection in the background. Wait
+            // for it before deciding whether the caller wants the same target or
+            // a mode/instance switch.
             if (_session.IsConnecting)
             {
                 await _session.WaitForBackgroundConnectAsync();
-                return new ConnectResult(
-                    Success: _session.IsConnected,
-                    Error: _session.IsConnected ? null : "Background connection completed but OpticStudio is not connected",
-                    IsConnected: _session.IsConnected,
-                    CurrentFile: _session.CurrentFilePath,
-                    Mode: connectionMode.ToString()
-                );
             }
 
-            // No connection in progress — connect synchronously
-            var connected = await _session.ConnectAsync(connectionMode, instanceId);
+            if (_session.IsConnected &&
+                _session.CurrentMode == connectionMode &&
+                _session.CurrentInstanceId == instanceId)
+            {
+                return Result(success: true);
+            }
 
-            return new ConnectResult(
-                Success: connected,
-                Error: connected ? null : "Failed to connect to OpticStudio",
-                IsConnected: _session.IsConnected,
-                CurrentFile: _session.CurrentFilePath,
-                Mode: connectionMode.ToString()
-            );
+            if (_session.IsConnected)
+            {
+                await _session.DisconnectAsync();
+            }
+
+            var connected = await _session.ConnectAsync(connectionMode, instanceId);
+            return Result(connected, connected ? null : "Failed to connect to OpticStudio");
         }
         catch (Exception ex)
         {
-            return new ConnectResult(
-                Success: false,
-                Error: ex.Message,
-                IsConnected: false,
-                CurrentFile: null,
-                Mode: null
-            );
+            return Result(success: false, error: ex.Message);
         }
     }
 
     [McpServerTool(Name = "zemax_status")]
-    [Description("Get the current connection status")]
-    public Task<ConnectResult> GetStatusAsync()
-    {
-        return Task.FromResult(new ConnectResult(
-            Success: true,
-            Error: null,
-            IsConnected: _session.IsConnected,
-            CurrentFile: _session.CurrentFilePath,
-            Mode: null
-        ));
-    }
+    [Description("Get the current OpticStudio connection status, including the actual connection mode.")]
+    public Task<ConnectResult> GetStatusAsync() => Task.FromResult(Result(_session.IsConnected));
 
     [McpServerTool(Name = "zemax_disconnect")]
     [Description("Disconnect from Zemax OpticStudio and close the application. Use this to cleanly close the session.")]
@@ -104,62 +76,39 @@ public class ConnectTool
         try
         {
             await _session.DisconnectAsync();
-
-            return new ConnectResult(
-                Success: true,
-                Error: null,
-                IsConnected: _session.IsConnected,
-                CurrentFile: _session.CurrentFilePath,
-                Mode: null
-            );
+            return Result(success: true);
         }
         catch (Exception ex)
         {
-            return new ConnectResult(
-                Success: false,
-                Error: ex.Message,
-                IsConnected: _session.IsConnected,
-                CurrentFile: _session.CurrentFilePath,
-                Mode: null
-            );
+            return Result(success: false, error: ex.Message);
         }
     }
 
     [McpServerTool(Name = "zemax_restart")]
-    [Description("Restart the Zemax OpticStudio connection. Disconnects the current session and creates a new connection. Use this when OpticStudio becomes unresponsive or times out.")]
+    [Description("Restart the Zemax OpticStudio connection using the configured default connection mode.")]
     public async Task<ConnectResult> RestartAsync()
     {
         try
         {
-            // First disconnect if connected
             if (_session.IsConnected)
             {
                 await _session.DisconnectAsync();
             }
 
-            // Wait a moment for cleanup
             await Task.Delay(500);
-
-            // Reconnect
             var connected = await _session.ConnectAsync();
-
-            return new ConnectResult(
-                Success: connected,
-                Error: connected ? null : "Failed to reconnect to OpticStudio",
-                IsConnected: _session.IsConnected,
-                CurrentFile: _session.CurrentFilePath,
-                Mode: null
-            );
+            return Result(connected, connected ? null : "Failed to reconnect to OpticStudio");
         }
         catch (Exception ex)
         {
-            return new ConnectResult(
-                Success: false,
-                Error: ex.Message,
-                IsConnected: _session.IsConnected,
-                CurrentFile: _session.CurrentFilePath,
-                Mode: null
-            );
+            return Result(success: false, error: ex.Message);
         }
     }
+
+    private ConnectResult Result(bool success, string? error = null) => new(
+        Success: success,
+        Error: error,
+        IsConnected: _session.IsConnected,
+        CurrentFile: _session.CurrentFilePath,
+        Mode: _session.CurrentMode?.ToString());
 }

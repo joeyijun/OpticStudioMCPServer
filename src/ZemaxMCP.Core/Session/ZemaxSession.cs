@@ -22,6 +22,8 @@ public class ZemaxSession : IZemaxSession
 
     public bool IsConnected => _primarySystem != null;
     public bool IsConnecting => _backgroundConnectTask != null && !_backgroundConnectTask.IsCompleted;
+    public ConnectionMode? CurrentMode { get; private set; }
+    public int? CurrentInstanceId { get; private set; }
     public string? CurrentFilePath { get; private set; }
     public string? ZemaxDataDir { get; private set; }
 
@@ -71,9 +73,15 @@ public class ZemaxSession : IZemaxSession
         {
             if (IsConnected)
             {
-                _logger.LogInformation("Already connected to OpticStudio");
-                _commandLog.LogResult("Connect", true, "Already connected", sw.ElapsedMilliseconds);
-                return true;
+                if (CurrentMode == mode && CurrentInstanceId == instanceId)
+                {
+                    _logger.LogInformation("Already connected to OpticStudio in the requested {Mode} mode", mode);
+                    _commandLog.LogResult("Connect", true, "Already connected", sw.ElapsedMilliseconds);
+                    return true;
+                }
+
+                throw new ZemaxConnectionException(
+                    $"Already connected in {CurrentMode?.ToString() ?? "unknown"} mode. Disconnect before switching to {mode} mode.");
             }
 
             _logger.LogInformation("Connecting to OpticStudio in {Mode} mode", mode);
@@ -154,6 +162,8 @@ public class ZemaxSession : IZemaxSession
             // actually opened before this MCP process attached to it.
             var systemFile = _primarySystem.SystemFile;
             CurrentFilePath = string.IsNullOrWhiteSpace(systemFile) ? null : systemFile;
+            CurrentMode = mode;
+            CurrentInstanceId = instanceId;
 
             _logger.LogInformation("Successfully connected to OpticStudio in {Mode} mode", mode);
             Console.Error.WriteLine("ZEMAX_MCP_STATUS:ZOS_API_CONNECTED");
@@ -377,6 +387,8 @@ public class ZemaxSession : IZemaxSession
 
         CurrentFilePath = null;
         ZemaxDataDir = null;
+        CurrentMode = null;
+        CurrentInstanceId = null;
     }
 
     public void Dispose()

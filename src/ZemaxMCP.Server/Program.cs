@@ -5,6 +5,7 @@ using Serilog;
 using System.Reflection;
 using System.Globalization;
 using System.IO.Pipes;
+using System.Text;
 using ZemaxMCP.Core.Logging;
 using ZemaxMCP.Core.Services.ConstrainedOptimization;
 using ZemaxMCP.Core.Session;
@@ -18,7 +19,9 @@ internal static class ServerApplication
     public static async Task RunAsync(string[] args)
     {
         var pipeName = ReadOption(args, "--pipe");
-        NamedPipeServerStream? workerPipe = null;
+        NamedPipeClientStream? workerPipe = null;
+        StreamReader? workerPipeReader = null;
+        StreamWriter? workerPipeWriter = null;
         // Redirect Console.Out so ZOSAPI or another dependency cannot pollute
         // the optional developer stdio transport or the production named pipe.
         Console.SetOut(TextWriter.Null);
@@ -111,14 +114,18 @@ internal static class ServerApplication
             // stdio remains available only for developer diagnostics.
             if (!string.IsNullOrWhiteSpace(pipeName))
             {
-                workerPipe = new NamedPipeServerStream(
-                    pipeName,
-                    PipeDirection.InOut,
-                    maxNumberOfServerInstances: 1,
-                    PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous);
-                Console.Error.WriteLine("ZEMAX_MCP_STATUS:WORKER_PIPE_WAITING:" + pipeName);
-                await workerPipe.WaitForConnectionAsync().ConfigureAwait(false);
+                var pipeSecret = Environment.GetEnvironmentVariable("ZEMAX_MCP_PIPE_SECRET");
+                if (string.IsNullOrWhiteSpace(pipeSecret))
+                    throw new InvalidOperationException("The private Worker pipe did not receive its handshake secret.");
+                workerPipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+                Console.Error.WriteLine("ZEMAX_MCP_STATUS:WORKER_PIPE_CONNECTING");
+                await Task.Run(() => workerPipe.Connect()).ConfigureAwait(false);
+                workerPipeReader = new StreamReader(workerPipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
+                workerPipeWriter = new StreamWriter(workerPipe, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), 4096, leaveOpen: true) { AutoFlush = true };
+                await workerPipeWriter.WriteLineAsync("ZEMAX_MCP_PIPE_HELLO|" + System.Diagnostics.Process.GetCurrentProcess().Id + "|" + pipeSecret).ConfigureAwait(false);
+                var acknowledgement = await workerPipeReader.ReadLineAsync().ConfigureAwait(false);
+                if (!string.Equals(acknowledgement, "ZEMAX_MCP_PIPE_OK", StringComparison.Ordinal))
+                    throw new InvalidOperationException("The private Worker pipe handshake was rejected by the Host.");
                 Console.Error.WriteLine("ZEMAX_MCP_STATUS:WORKER_PIPE_CONNECTED");
             }
 
@@ -127,7 +134,7 @@ internal static class ServerApplication
                 options.ServerInfo = new()
                 {
                     Name = "zemax-mcp",
-                    Version = "1.0.0"
+                    Version = typeof(ServerApplication).Assembly.GetName().Version?.ToString(3) ?? "unknown"
                 };
             });
             if (workerPipe == null) mcpServer.WithStdioServerTransport();
@@ -284,6 +291,8 @@ internal static class ServerApplication
         }
         finally
         {
+            workerPipeWriter?.Dispose();
+            workerPipeReader?.Dispose();
             workerPipe?.Dispose();
             Log.CloseAndFlush();
         }
