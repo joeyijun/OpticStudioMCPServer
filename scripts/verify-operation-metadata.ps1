@@ -4,12 +4,12 @@ $toolsRoot = Join-Path $root "src\ZemaxMCP.Server\Tools"
 $metadataPath = Join-Path $root "src\ZemaxMCP.Core\Session\ZemaxOperationMetadata.cs"
 $catalogPath = Join-Path $toolsRoot "Catalog\ToolCatalogTool.cs"
 
-if (-not (Get-Command rg -ErrorAction SilentlyContinue)) { throw "ripgrep (rg) is required for operation metadata verification." }
-$sourceCommands = @(rg -o 'ExecuteAsync\("[^"]+"' $toolsRoot | ForEach-Object {
-    if ($_ -match '"([^"]+)"') { $Matches[1] }
+$sourceFiles = @(Get-ChildItem -LiteralPath $toolsRoot -Recurse -Filter "*.cs" -File)
+$sourceCommands = @($sourceFiles | Select-String -Pattern 'ExecuteAsync\("([^"]+)"' -AllMatches | ForEach-Object {
+    foreach ($match in $_.Matches) { $match.Groups[1].Value }
 } | Sort-Object -Unique)
-$sourceTools = @(rg -o 'McpServerTool\(Name = "[^"]+"\)' $toolsRoot | ForEach-Object {
-    if ($_ -match 'Name = "([^"]+)"') { $Matches[1] }
+$sourceTools = @($sourceFiles | Select-String -Pattern 'McpServerTool\(Name = "([^"]+)"\)' -AllMatches | ForEach-Object {
+    foreach ($match in $_.Matches) { $match.Groups[1].Value }
 } | Sort-Object -Unique)
 $metadata = Get-Content -Raw $metadataPath
 $metadataCommands = @([regex]::Matches($metadata, '"[A-Za-z][A-Za-z0-9]+"') | ForEach-Object {
