@@ -28,7 +28,7 @@ try {
   & $csc /nologo /target:exe /out:$fakeServer $fixture
   if ($LASTEXITCODE -ne 0) { throw "Could not compile the streamable HTTP test server." }
   $env:ZEMAX_MCP_TOKEN = "streamable-verifier-token"
-  $arguments = @("--server", $fakeServer, "--host", "127.0.0.1", "--port", [string]$port, "--log-dir", $testRoot, "--snapshot-dir", (Join-Path $testRoot "snapshots"), "--read-only", "true", "--request-timeout-seconds", "10", "--hard-recovery-timeout-seconds", "20")
+  $arguments = @("--server", $fakeServer, "--host", "127.0.0.1", "--port", [string]$port, "--log-dir", $testRoot, "--snapshot-dir", (Join-Path $testRoot "snapshots"), "--read-only", "true", "--request-timeout-seconds", "10", "--hard-recovery-timeout-seconds", "20", "--max-queued-requests", "0")
   $process = Start-Process -FilePath $bridge -ArgumentList $arguments -PassThru -WindowStyle Hidden
   $url = "http://127.0.0.1:$port/mcp/"
   $headers = @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json, text/event-stream" }
@@ -51,23 +51,35 @@ try {
   $sse = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $sseHeaders -Body $list }
   if ($sse.StatusCode -ne 200 -or $sse.Headers["Content-Type"] -notmatch "text/event-stream" -or $sse.Content -notmatch "notifications/progress" -or ([regex]::Matches($sse.Content, "event: message").Count -lt 2)) { throw "SSE MCP stream did not carry both an MCP notification and the final response." }
 
+  $serverRequest = '{"jsonrpc":"2.0","id":"server-request-1","method":"test/server-request","params":{}}'
+  $serverRequestSse = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $sseHeaders -Body $serverRequest }
+  if ($serverRequestSse.StatusCode -ne 200 -or $serverRequestSse.Content -notmatch '"method":"sampling/createMessage"' -or $serverRequestSse.Content -notmatch '"completed":true') { throw "A server-initiated JSON-RPC request was mistaken for the response to the client request." }
+  $serverRequestResponse = '{"jsonrpc":"2.0","id":"server-request-1","result":{"accepted":true}}'
+  $acceptedServerRequestResponse = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $sseHeaders -Body $serverRequestResponse }
+  if ($acceptedServerRequestResponse.StatusCode -ne 202) { throw "The response to a server-initiated JSON-RPC request was incorrectly awaited as a new backend request." }
+
   $badAccept = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/xml"; "Mcp-Session-Id" = $session } -Body $list }
   if ([int]$badAccept.StatusCode -ne 406) { throw "Unsupported Accept header was not rejected with HTTP 406." }
+
+  $missingSession = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json" } -Body $list }
+  if ([int]$missingSession.StatusCode -ne 400) { throw "A post-initialize request without Mcp-Session-Id bypassed session enforcement." }
+
+  $notification = '{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}'
+  $accepted = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json"; "Mcp-Session-Id" = $session } -Body $notification }
+  if ($accepted.StatusCode -ne 202) { throw "MCP notification did not return HTTP 202." }
 
   $deleted = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Delete -Headers @{ Authorization = "Bearer streamable-verifier-token"; "Mcp-Session-Id" = $session } }
   if ($deleted.StatusCode -ne 200) { throw "Session DELETE did not return HTTP 200." }
   $afterDelete = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json, text/event-stream"; "Mcp-Session-Id" = $session } -Body $list }
   if ([int]$afterDelete.StatusCode -ne 404) { throw "Deleted MCP session was accepted." }
 
-  $notification = '{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}'
-  $accepted = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $headers -Body $notification }
-  if ($accepted.StatusCode -ne 202) { throw "MCP notification did not return HTTP 202." }
-
   $hangInitialize = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $headers -Body $initialize }
   $hangSession = [string]$hangInitialize.Headers["Mcp-Session-Id"]
   $hang = '{"jsonrpc":"2.0","id":3,"method":"test/hang","params":{}}'
   $timedOut = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers (@{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json"; "Mcp-Session-Id" = $hangSession }) -Body $hang -TimeoutSec 15 }
   if ([int]$timedOut.StatusCode -ne 504) { throw "Hung MCP request did not receive the soft timeout response." }
+  $queueFull = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers (@{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json"; "Mcp-Session-Id" = $hangSession }) -Body $list }
+  if ([int]$queueFull.StatusCode -ne 429) { throw "A request was accepted even though the configured MCP queue had no capacity." }
   $activeDelete = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Delete -Headers @{ Authorization = "Bearer streamable-verifier-token"; "Mcp-Session-Id" = $hangSession } }
   if ([int]$activeDelete.StatusCode -ne 409) { throw "The active MCP session was deleted while its shared OpticStudio operation was still draining." }
   $recoveryDeadline = [DateTime]::UtcNow.AddSeconds(18)
@@ -77,7 +89,7 @@ try {
     $postRecovery = $postRecoveryHealth.Content | ConvertFrom-Json
   } while (($postRecovery.hardRecoveryCount -lt 1 -or -not $postRecovery.mcpServerRunning) -and [DateTime]::UtcNow -lt $recoveryDeadline)
   if ($postRecovery.hardRecoveryCount -lt 1 -or -not $postRecovery.mcpServerRunning) { throw "Hard timeout did not terminate and recover the stuck stdio MCP server." }
-  Write-Host "Streamable HTTP negotiation, single-client isolation, session lifecycle, soft timeout, and hard process recovery verified."
+  Write-Host "Streamable HTTP negotiation, session enforcement, server requests, bounded queueing, soft timeout, and hard process recovery verified."
 }
 finally {
   $env:ZEMAX_MCP_TOKEN = $oldToken
