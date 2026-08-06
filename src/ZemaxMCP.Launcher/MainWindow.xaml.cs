@@ -591,29 +591,28 @@ public partial class MainWindow : Window
     {
         var endpoint = McpUrl;
         var accessToken = McpToken;
-        Report("Testing MCP handshake: " + endpoint + "…");
+        Report("Testing MCP service: " + endpoint + "…");
         try { Report(await Task.Run(() => TestMcp(endpoint, accessToken))); }
         catch (Exception ex) { Report("MCP connection failed: " + ex.Message + Environment.NewLine + "On the OpticStudio computer, keep Start-Zemax-MCP open, start the bridge, then enable Share with a trusted LAN computer."); }
         await RefreshStatusAsync();
     }
     private static string TestMcp(string endpoint, string accessToken)
     {
-        var request = (HttpWebRequest)WebRequest.Create(endpoint);
-        request.Method = "POST";
-        request.ContentType = "application/json";
-        request.Accept = "application/json, text/event-stream";
+        var healthEndpoint = endpoint.TrimEnd('/') + "/health";
+        var request = (HttpWebRequest)WebRequest.Create(healthEndpoint);
+        request.Method = "GET";
+        request.Accept = "application/json";
         request.Timeout = 10000;
         AddAuthorization(request, accessToken);
-        var payload = "{\"jsonrpc\":\"2.0\",\"id\":\"zemax-mcp-healthcheck\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"zemax-mcp-launcher\",\"version\":\"1.0\"}}}";
-        var bytes = Encoding.UTF8.GetBytes(payload);
-        using (var stream = request.GetRequestStream()) stream.Write(bytes, 0, bytes.Length);
         using (var response = (HttpWebResponse)request.GetResponse())
         using (var reader = new StreamReader(response.GetResponseStream()))
         {
             var result = JObject.Parse(reader.ReadToEnd());
-            var name = result["result"]?["serverInfo"]?["name"]?.ToString();
-            if (response.StatusCode != HttpStatusCode.OK || string.IsNullOrWhiteSpace(name)) throw new InvalidOperationException("the endpoint did not return an MCP initialize response.");
-            return "MCP connection succeeded: " + name + " responded at " + endpoint;
+            var bridgeRunning = result["bridgeRunning"]?.Value<bool>() == true;
+            var serverRunning = result["mcpServerRunning"]?.Value<bool>() == true;
+            if (response.StatusCode != HttpStatusCode.OK || !bridgeRunning || !serverRunning)
+                throw new InvalidOperationException("the endpoint health check did not report a running MCP service.");
+            return "MCP connection succeeded: Zemax MCP service is reachable at " + endpoint;
         }
     }
     private static void AddAuthorization(HttpWebRequest request, string accessToken)
