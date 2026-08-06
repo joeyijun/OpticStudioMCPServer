@@ -225,6 +225,7 @@ internal sealed class StdioMcpBridge : IDisposable
         psi.EnvironmentVariables.Remove("ZEMAX_MCP_TOKEN");
         if (!string.IsNullOrWhiteSpace(_options.ZemaxRoot)) psi.EnvironmentVariables["ZEMAX_ROOT"] = _options.ZemaxRoot;
         psi.EnvironmentVariables["ZEMAX_MCP_READ_ONLY"] = _options.ReadOnly ? "1" : "0";
+        psi.EnvironmentVariables["ZEMAX_MCP_TOOLSET"] = _options.ToolsetProfile;
         psi.EnvironmentVariables["ZEMAX_MCP_SNAPSHOT_DIR"] = _options.SnapshotDirectory;
         var process = Process.Start(psi) ?? throw new InvalidOperationException("Unable to launch the Zemax MCP Worker.");
         process.EnableRaisingEvents = true;
