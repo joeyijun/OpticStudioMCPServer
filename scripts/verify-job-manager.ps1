@@ -3,7 +3,7 @@ param([string]$Configuration = "Release")
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 $serverDir = Join-Path $root "src\ZemaxMCP.Server\bin\$Configuration\net48"
-$server = Join-Path $serverDir "ZemaxMCP.Server.exe"
+$server = Join-Path $serverDir "ZemaxMCP.Worker.exe"
 $fixture = Join-Path $PSScriptRoot "fixtures\VerifyJobManager.cs"
 $verifier = Join-Path $serverDir "VerifyJobManager.exe"
 if (-not (Test-Path -LiteralPath $server)) { throw "Build the MCP server before verifying the job manager." }

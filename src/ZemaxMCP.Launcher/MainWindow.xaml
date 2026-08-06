@@ -230,6 +230,18 @@
                       Checked="ShareOnLan_Changed" Unchecked="ShareOnLan_Changed"/>
             <CheckBox x:Name="ReadOnlyMode" Content="Read-only mode (block lens changes)" Margin="0,8,0,0"
                       Checked="ReadOnlyMode_Changed" Unchecked="ReadOnlyMode_Changed"/>
+            <Grid Margin="0,8,0,0">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <TextBlock Text="Run configuration" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}"/>
+              <ComboBox Grid.Column="2" x:Name="ToolsetProfile" SelectedIndex="4" SelectionChanged="ToolsetProfile_SelectionChanged"
+                        ToolTip="Controls which task-oriented MCP tool domains are exposed to AI clients.">
+                <ComboBoxItem Tag="basic-viewing">基础查看 · inspect and analysis</ComboBoxItem>
+                <ComboBoxItem Tag="sequential-design">顺序成像设计 · sequential editing</ComboBoxItem>
+                <ComboBoxItem Tag="nonsequential-stray-light">非序列与杂散光 · NSC and analysis</ComboBoxItem>
+                <ComboBoxItem Tag="optimization-tolerance">优化与公差 · sequential, optimization, tolerance</ComboBoxItem>
+                <ComboBoxItem Tag="full-expert">完整专家模式 · all tool domains</ComboBoxItem>
+              </ComboBox>
+            </Grid>
             <Grid Margin="0,9,0,0">
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="70"/>

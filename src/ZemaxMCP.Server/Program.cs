@@ -4,6 +4,7 @@ using ModelContextProtocol.Server;
 using Serilog;
 using System.Reflection;
 using System.Globalization;
+using System.IO.Pipes;
 using ZemaxMCP.Core.Logging;
 using ZemaxMCP.Core.Services.ConstrainedOptimization;
 using ZemaxMCP.Core.Session;
@@ -16,8 +17,10 @@ internal static class ServerApplication
 {
     public static async Task RunAsync(string[] args)
     {
-        // Redirect Console.Out to prevent ZOSAPI (or any library) from polluting stdout.
-        // MCP stdio transport uses the raw process stdout stream, not Console.Out.
+        var pipeName = ReadOption(args, "--pipe");
+        NamedPipeServerStream? workerPipe = null;
+        // Redirect Console.Out so ZOSAPI or another dependency cannot pollute
+        // the optional developer stdio transport or the production named pipe.
         Console.SetOut(TextWriter.Null);
 
         // Initialize ZOSAPI assembly resolver BEFORE any ZOSAPI types are loaded.
@@ -64,7 +67,7 @@ internal static class ServerApplication
 
         try
         {
-            Log.Information("Starting ZemaxMCP Server");
+            Log.Information("Starting ZemaxMCP Worker");
 
             // Use CreateEmptyApplicationBuilder for stdio transport (avoids console output)
             var builder = Host.CreateEmptyApplicationBuilder(settings: null);
@@ -103,16 +106,33 @@ internal static class ServerApplication
             }));
             builder.Services.AddSingleton(jobManager);
 
-            // Add MCP server with stdio transport
-            builder.Services.AddMcpServer(options =>
+            // The Worker keeps all ZOS-API state in this process. In normal
+            // product operation the Host connects through a private named pipe;
+            // stdio remains available only for developer diagnostics.
+            if (!string.IsNullOrWhiteSpace(pipeName))
+            {
+                workerPipe = new NamedPipeServerStream(
+                    pipeName,
+                    PipeDirection.InOut,
+                    maxNumberOfServerInstances: 1,
+                    PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous);
+                Console.Error.WriteLine("ZEMAX_MCP_STATUS:WORKER_PIPE_WAITING:" + pipeName);
+                await workerPipe.WaitForConnectionAsync().ConfigureAwait(false);
+                Console.Error.WriteLine("ZEMAX_MCP_STATUS:WORKER_PIPE_CONNECTED");
+            }
+
+            var mcpServer = builder.Services.AddMcpServer(options =>
             {
                 options.ServerInfo = new()
                 {
                     Name = "zemax-mcp",
                     Version = "1.0.0"
                 };
-            })
-            .WithStdioServerTransport()
+            });
+            if (workerPipe == null) mcpServer.WithStdioServerTransport();
+            else mcpServer.WithStreamServerTransport(workerPipe, workerPipe);
+            mcpServer
             .WithTools<ZemaxMCP.Server.Tools.Catalog.ToolCatalogTool>()
             .WithTools<ZemaxMCP.Server.Tools.Jobs.McpJobTools>()
             // Analysis Tools
@@ -252,7 +272,9 @@ internal static class ServerApplication
             session.StartConnectInBackground(ConnectionMode.Standalone);
             Log.Information("OpticStudio background connection started");
 
-            Log.Information("MCP Server configured, starting...");
+            Log.Information(workerPipe == null
+                ? "MCP Worker configured for developer stdio transport."
+                : "MCP Worker configured for private named-pipe transport.");
             await host.RunAsync();
         }
         catch (Exception ex)
@@ -262,7 +284,17 @@ internal static class ServerApplication
         }
         finally
         {
+            workerPipe?.Dispose();
             Log.CloseAndFlush();
         }
+    }
+
+    private static string? ReadOption(string[] args, string option)
+    {
+        for (var index = 0; index + 1 < args.Length; index++)
+        {
+            if (string.Equals(args[index], option, StringComparison.OrdinalIgnoreCase)) return args[index + 1];
+        }
+        return null;
     }
 }

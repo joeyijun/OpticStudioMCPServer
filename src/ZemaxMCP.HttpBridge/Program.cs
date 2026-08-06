@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Pipes;
 using System.Linq;
 using System.Net;
 using System.Text;
@@ -9,12 +10,13 @@ using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using Serilog;
+using ZemaxMCP.Toolsets;
 
 namespace ZemaxMCP.HttpBridge;
 
 /// <summary>
-/// A Windows-only, stateful HTTP-to-stdio MCP bridge.  It removes the Node.js /
-/// supergateway dependency while keeping the established net48 ZOS-API server.
+/// A Windows-only, stateful Streamable HTTP MCP Host. It removes the Node.js /
+/// supergateway dependency and keeps ZOS-API isolated in a private Worker process.
 /// </summary>
 internal static class Program
 {
@@ -53,7 +55,7 @@ internal static class Program
 internal sealed class BridgeOptions
 {
     private const int MaximumActiveMcpClients = 20;
-    public string ServerPath { get; private set; } = System.IO.Path.Combine(AppContext.BaseDirectory, "ZemaxMCP.Server.exe");
+    public string ServerPath { get; private set; } = System.IO.Path.Combine(AppContext.BaseDirectory, "ZemaxMCP.Worker.exe");
     public string ZemaxRoot { get; private set; } = "";
     public string Host { get; private set; } = "127.0.0.1";
     public int Port { get; private set; } = 8000;
@@ -65,6 +67,11 @@ internal sealed class BridgeOptions
     public int MaxQueuedRequests { get; private set; } = 16;
     public string AccessToken { get; private set; } = Environment.GetEnvironmentVariable("ZEMAX_MCP_TOKEN") ?? "";
     public bool ReadOnly { get; private set; }
+    // Development-only compatibility transport used by the protocol fixture.
+    // Production launches always isolate ZOS-API behind a named-pipe Worker.
+    public bool UseStdioBackend { get; private set; }
+    internal bool TestFailSseOpen { get; private set; }
+    public string ToolsetProfile { get; private set; } = ToolsetPolicy.FullExpert;
     public string SnapshotDirectory { get; private set; } = Environment.GetEnvironmentVariable("ZEMAX_MCP_SNAPSHOT_DIR") ??
         System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZemaxMCP", "snapshots");
 
@@ -111,7 +118,16 @@ internal sealed class BridgeOptions
                     if (!bool.TryParse(value, out var readOnly)) throw new ArgumentException("--read-only must be true or false.");
                     result.ReadOnly = readOnly;
                     break;
+                case "--stdio-backend":
+                    if (!bool.TryParse(value, out var stdioBackend)) throw new ArgumentException("--stdio-backend must be true or false.");
+                    result.UseStdioBackend = stdioBackend;
+                    break;
+                case "--test-fail-sse-open":
+                    if (!bool.TryParse(value, out var failSseOpen)) throw new ArgumentException("--test-fail-sse-open must be true or false.");
+                    result.TestFailSseOpen = failSseOpen;
+                    break;
                 case "--snapshot-dir": result.SnapshotDirectory = value; break;
+                case "--toolset": result.ToolsetProfile = ToolsetPolicy.NormalizeProfile(value); break;
                 default: throw new ArgumentException("Unknown bridge option: " + args[i]);
             }
         }
@@ -146,6 +162,9 @@ internal sealed class StdioMcpBridge : IDisposable
     private readonly Dictionary<string, SseResponseStream> _sseStreams = new Dictionary<string, SseResponseStream>(StringComparer.Ordinal);
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
     private Process? _server;
+    private NamedPipeClientStream? _workerPipe;
+    private StreamReader? _workerReader;
+    private StreamWriter? _workerWriter;
     private HttpListener? _listener;
     private DateTimeOffset? _lastRequestAt;
     private string _lastClient = "None yet";
@@ -191,12 +210,13 @@ internal sealed class StdioMcpBridge : IDisposable
     {
         if (_disposed) throw new ObjectDisposedException(nameof(StdioMcpBridge));
         DisposeServerProcess();
-        var psi = new ProcessStartInfo(_options.ServerPath)
+        var pipeName = "ZemaxMcpWorker-" + Process.GetCurrentProcess().Id + "-" + Guid.NewGuid().ToString("N");
+        var psi = new ProcessStartInfo(_options.ServerPath, _options.UseStdioBackend ? "" : "--pipe \"" + pipeName + "\"")
         {
             WorkingDirectory = System.IO.Path.GetDirectoryName(_options.ServerPath) ?? AppContext.BaseDirectory,
             UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
+            RedirectStandardInput = _options.UseStdioBackend,
+            RedirectStandardOutput = _options.UseStdioBackend,
             RedirectStandardError = true,
             CreateNoWindow = true
         };
@@ -206,11 +226,29 @@ internal sealed class StdioMcpBridge : IDisposable
         if (!string.IsNullOrWhiteSpace(_options.ZemaxRoot)) psi.EnvironmentVariables["ZEMAX_ROOT"] = _options.ZemaxRoot;
         psi.EnvironmentVariables["ZEMAX_MCP_READ_ONLY"] = _options.ReadOnly ? "1" : "0";
         psi.EnvironmentVariables["ZEMAX_MCP_SNAPSHOT_DIR"] = _options.SnapshotDirectory;
-        var process = Process.Start(psi) ?? throw new InvalidOperationException("Unable to launch ZemaxMCP.Server.exe");
+        var process = Process.Start(psi) ?? throw new InvalidOperationException("Unable to launch the Zemax MCP Worker.");
         process.EnableRaisingEvents = true;
         process.ErrorDataReceived += (_, e) => HandleServerStatus(e.Data);
         process.Exited += (_, _) => HandleServerExited(process);
         _server = process;
+        try
+        {
+            if (!_options.UseStdioBackend)
+            {
+                var workerPipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+                workerPipe.Connect(30000);
+                _workerPipe = workerPipe;
+                _workerReader = new StreamReader(workerPipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
+                _workerWriter = new StreamWriter(workerPipe, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), 4096, leaveOpen: true) { AutoFlush = true };
+            }
+        }
+        catch
+        {
+            try { if (!process.HasExited) process.Kill(); } catch { }
+            _server = null;
+            process.Dispose();
+            throw;
+        }
         lock (_stateLock)
         {
             _zosApiLoaded = false;
@@ -227,7 +265,10 @@ internal sealed class StdioMcpBridge : IDisposable
         }
         process.BeginErrorReadLine();
         _ = Task.Run(() => PumpServerOutputAsync(process));
-        Log.Information("Started MCP stdio server with PID {Pid}{Restart}", process.Id, isRestart ? " after recovery" : string.Empty);
+        Log.Information(_options.UseStdioBackend
+            ? "Started MCP test backend with PID {Pid}{Restart} over stdio"
+            : "Started MCP Worker with PID {Pid}{Restart}; Host connected through private named pipe",
+            process.Id, isRestart ? " after recovery" : string.Empty);
     }
 
     private void HandleServerStatus(string? message)
@@ -393,7 +434,10 @@ internal sealed class StdioMcpBridge : IDisposable
     {
         SseResponseStream? sse = null;
         string? provisionalSession = null;
+        string? activeOperationId = null;
         var initializationCommitted = false;
+        var operationReleased = false;
+        var operationOwnershipTransferredToRecovery = false;
         try
         {
             if (!ValidateOrigin(context)) return;
@@ -545,14 +589,25 @@ internal sealed class StdioMcpBridge : IDisposable
                 context.Response.Close();
                 return;
             }
+            if (method.Equals("tools/call", StringComparison.OrdinalIgnoreCase) &&
+                !ToolsetPolicy.IsToolAllowed(_options.ToolsetProfile, json["params"]?["name"]?.ToString()))
+            {
+                await TryWriteRpcErrorAsync(context, -32601,
+                    "This tool is not enabled by the selected Launcher run configuration.",
+                    HttpStatusCode.Forbidden).ConfigureAwait(false);
+                return;
+            }
 
             var operationId = BeginOperation(method, json, requestedSession, now);
+            activeOperationId = operationId;
             // The session header must only be exposed after initialization has
             // completed successfully, so initialize always uses JSON.
             if (!isInitialize && id != null && ShouldUseSse(context.Request.Headers["Accept"]))
             {
-                sse = new SseResponseStream(context, responseSession ?? requestedSession);
-                await sse.OpenAsync().ConfigureAwait(false);
+                var candidateSse = new SseResponseStream(context, responseSession ?? requestedSession);
+                if (_options.TestFailSseOpen) throw new IOException("Injected SSE-open failure for protocol regression verification.");
+                await candidateSse.OpenAsync().ConfigureAwait(false);
+                sse = candidateSse;
                 RegisterSseStream(operationId, sse);
             }
 
@@ -573,6 +628,7 @@ internal sealed class StdioMcpBridge : IDisposable
             catch (BridgeRequestTimeoutException ex) when (ex.ResponseIsStillDraining)
             {
                 releaseRequestLock = false;
+                operationOwnershipTransferredToRecovery = true;
                 throw;
             }
             finally
@@ -580,6 +636,7 @@ internal sealed class StdioMcpBridge : IDisposable
                 if (releaseRequestLock)
                 {
                     EndOperation(operationId);
+                    operationReleased = true;
                     if (ownsRequestLock) _requestExecutionLock.Release();
                 }
                 Interlocked.Decrement(ref _activeRequests);
@@ -591,6 +648,7 @@ internal sealed class StdioMcpBridge : IDisposable
                 context.Response.Close();
                 return;
             }
+            response = ToolsetPolicy.FilterToolsListResponse(_options.ToolsetProfile, method, response);
             if (provisionalSession != null)
             {
                 if (!IsSuccessfulInitializeResponse(response) || !CommitClientRegistration(provisionalSession))
@@ -645,6 +703,13 @@ internal sealed class StdioMcpBridge : IDisposable
         }
         finally
         {
+            // Opening an SSE response can fail before the execution-lock block
+            // below is entered (for example when a client disconnects while the
+            // response headers are being written).  The operation has already
+            // been registered at that point, so clean it up here.  A soft timeout
+            // deliberately transfers ownership to DrainOrRecoverAsync instead.
+            if (!operationReleased && !operationOwnershipTransferredToRecovery && activeOperationId != null)
+                EndOperation(activeOperationId);
             if (!initializationCommitted) DiscardProvisionalClientRegistration(provisionalSession);
             if (sse != null)
             {
@@ -756,6 +821,9 @@ internal sealed class StdioMcpBridge : IDisposable
                 ["authenticationRequired"] = !string.IsNullOrWhiteSpace(_options.AccessToken),
                 ["originValidationEnabled"] = true,
                 ["readOnly"] = _options.ReadOnly,
+                ["transport"] = _options.UseStdioBackend ? "stdio-test" : "private-named-pipe",
+                ["toolsetProfile"] = _options.ToolsetProfile,
+                ["enabledToolDomains"] = new JArray(ToolsetPolicy.EnabledDomains(_options.ToolsetProfile)),
                 ["snapshotDirectory"] = _options.SnapshotDirectory,
                 ["lastSnapshotPath"] = _lastSnapshotPath,
                 ["bridgeStartedAt"] = _startedAt.ToString("O"),
@@ -1085,9 +1153,18 @@ internal sealed class StdioMcpBridge : IDisposable
         try
         {
             if (!ReferenceEquals(_server, server) || !IsServerRunning())
-                throw new InvalidOperationException("The MCP stdio server is no longer available.");
-            await server.StandardInput.WriteLineAsync(message).ConfigureAwait(false);
-            await server.StandardInput.FlushAsync().ConfigureAwait(false);
+                throw new InvalidOperationException("The MCP Worker is no longer available.");
+            if (_options.UseStdioBackend)
+            {
+                await server.StandardInput.WriteLineAsync(message).ConfigureAwait(false);
+                await server.StandardInput.FlushAsync().ConfigureAwait(false);
+            }
+            else
+            {
+                var writer = _workerWriter ?? throw new InvalidOperationException("The private Worker pipe is not connected.");
+                await writer.WriteLineAsync(message).ConfigureAwait(false);
+                await writer.FlushAsync().ConfigureAwait(false);
+            }
         }
         finally { _stdinWriteLock.Release(); }
     }
@@ -1114,7 +1191,9 @@ internal sealed class StdioMcpBridge : IDisposable
         {
             while (!_disposed && ReferenceEquals(_server, server))
             {
-                var line = await server.StandardOutput.ReadLineAsync().ConfigureAwait(false);
+                var line = _options.UseStdioBackend
+                    ? await server.StandardOutput.ReadLineAsync().ConfigureAwait(false)
+                    : await (_workerReader ?? throw new EndOfStreamException("The private Worker pipe is not connected.")).ReadLineAsync().ConfigureAwait(false);
                 if (line == null)
                 {
                     pumpFailed = true;
@@ -1124,7 +1203,7 @@ internal sealed class StdioMcpBridge : IDisposable
                 try { message = JObject.Parse(line); }
                 catch (Exception ex)
                 {
-                    Log.Warning(ex, "MCP server wrote a non-JSON line to stdout");
+                    Log.Warning(ex, "MCP Worker wrote a non-JSON message to the private pipe");
                     continue;
                 }
 
@@ -1165,7 +1244,7 @@ internal sealed class StdioMcpBridge : IDisposable
         catch (Exception ex)
         {
             pumpFailed = true;
-            if (!_disposed) Log.Error(ex, "MCP stdout pump failed");
+            if (!_disposed) Log.Error(ex, "MCP Worker pipe pump failed");
         }
         finally
         {
@@ -1183,7 +1262,7 @@ internal sealed class StdioMcpBridge : IDisposable
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Could not terminate the MCP server after its stdout pump failed");
+            Log.Warning(ex, "Could not terminate the MCP Worker after its pipe pump failed");
         }
     }
 
@@ -1382,6 +1461,15 @@ internal sealed class StdioMcpBridge : IDisposable
     {
         var process = _server;
         _server = null;
+        var writer = _workerWriter;
+        var reader = _workerReader;
+        var pipe = _workerPipe;
+        _workerWriter = null;
+        _workerReader = null;
+        _workerPipe = null;
+        try { writer?.Dispose(); } catch { }
+        try { reader?.Dispose(); } catch { }
+        try { pipe?.Dispose(); } catch { }
         if (process == null) return;
         try { if (!process.HasExited) process.Kill(); } catch { }
         try { process.Dispose(); } catch { }
@@ -1557,6 +1645,41 @@ internal sealed class StdioMcpBridge : IDisposable
 internal sealed class RequestTooLargeException : Exception
 {
     public RequestTooLargeException() : base("MCP request exceeds the 1 MiB bridge limit.") { }
+}
+
+/// <summary>
+/// The Host is the single policy boundary for the client-visible tool surface.
+/// Keep the categorization here rather than duplicating it in the Launcher:
+/// the Launcher selects a profile, and the Host enforces it for tools/list and
+/// tools/call alike.
+/// </summary>
+internal static class ToolsetPolicy
+{
+    internal const string FullExpert = ToolsetCatalog.FullExpert;
+    internal static string NormalizeProfile(string? profile) => ToolsetCatalog.NormalizeProfile(profile);
+    internal static IEnumerable<string> EnabledDomains(string profile) => ToolsetCatalog.EnabledDomains(profile);
+    internal static bool IsToolAllowed(string profile, string? toolName) => ToolsetCatalog.IsToolAllowed(profile, toolName);
+
+    internal static string FilterToolsListResponse(string profile, string method, string response)
+    {
+        if (!method.Equals("tools/list", StringComparison.OrdinalIgnoreCase) || profile == FullExpert) return response;
+        try
+        {
+            var message = JObject.Parse(response);
+            if (message["result"]?["tools"] is not JArray tools) return response;
+            foreach (var tool in tools.OfType<JObject>().ToArray())
+            {
+                if (!IsToolAllowed(profile, tool["name"]?.ToString())) tool.Remove();
+            }
+            return message.ToString(Newtonsoft.Json.Formatting.None);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Could not apply the selected toolset profile to tools/list");
+            return response;
+        }
+    }
+
 }
 
 internal sealed class BridgeRequestTimeoutException : Exception

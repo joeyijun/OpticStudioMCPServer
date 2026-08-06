@@ -2,8 +2,11 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net48</TargetFramework>
-    <AssemblyName>ZemaxMCP.HttpBridge</AssemblyName>
+    <AssemblyName>ZemaxMCP.Host</AssemblyName>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\ZemaxMCP.Toolsets\ToolsetCatalog.cs" Link="Toolsets\ToolsetCatalog.cs" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" />
     <PackageReference Include="Serilog" />

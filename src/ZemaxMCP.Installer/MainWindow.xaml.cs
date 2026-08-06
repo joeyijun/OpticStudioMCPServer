@@ -51,7 +51,7 @@ public partial class MainWindow : Window
     }
     private static void StopExistingProcesses()
     {
-        foreach (var name in new[] { "Start-Zemax-MCP", "ZemaxMCP.ClientProxy", "ZemaxMCP.HttpBridge", "ZemaxMCP.Server" })
+        foreach (var name in new[] { "Start-Zemax-MCP", "ZemaxMCP.ClientProxy", "ZemaxMCP.Host", "ZemaxMCP.Worker", "ZemaxMCP.HttpBridge", "ZemaxMCP.Server" })
         {
             foreach (var process in Process.GetProcessesByName(name))
             {

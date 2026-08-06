@@ -2,7 +2,7 @@ param([string]$Configuration = "Release")
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
-$bridge = Join-Path $root "src\ZemaxMCP.HttpBridge\bin\$Configuration\net48\ZemaxMCP.HttpBridge.exe"
+$bridge = Join-Path $root "src\ZemaxMCP.HttpBridge\bin\$Configuration\net48\ZemaxMCP.Host.exe"
 if (-not (Test-Path -LiteralPath $bridge)) { throw "HTTP bridge build output is missing." }
 
 $probe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
@@ -22,7 +22,8 @@ try {
     "--port", [string]$port,
     "--log-dir", $testRoot,
     "--snapshot-dir", (Join-Path $testRoot "snapshots"),
-    "--read-only", "true"
+    "--read-only", "true",
+    "--stdio-backend", "true"
   )
   $process = Start-Process -FilePath $bridge -ArgumentList $arguments -PassThru -WindowStyle Hidden
   $healthUrl = "http://127.0.0.1:$port/mcp/health"
