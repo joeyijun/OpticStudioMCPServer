@@ -24,6 +24,16 @@ public static class Program
             }
             var id = Id(line);
             var initialize = line.Contains("\"method\":\"initialize\"");
+            if (line.Contains("\"method\":\"test/duplicate-server-request\""))
+            {
+                // The bridge must treat this protocol violation as a fatal
+                // stdout-pump failure and restart the stdio process.
+                Console.WriteLine("{\"jsonrpc\":\"2.0\",\"id\":\"duplicate-server-request\",\"method\":\"sampling/createMessage\",\"params\":{\"messages\":[]}}");
+                Console.WriteLine("{\"jsonrpc\":\"2.0\",\"id\":\"duplicate-server-request\",\"method\":\"sampling/createMessage\",\"params\":{\"messages\":[]}}");
+                Console.Out.Flush();
+                Thread.Sleep(60000);
+                continue;
+            }
             if (line.Contains("\"method\":\"test/server-request\""))
             {
                 // Deliberately wait for the client response. This exercises the

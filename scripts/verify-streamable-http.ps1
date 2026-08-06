@@ -49,7 +49,9 @@ try {
   $sseHeaders = @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json, text/event-stream"; "Mcp-Session-Id" = $session }
   $list = '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
   $sse = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $sseHeaders -Body $list }
-  if ($sse.StatusCode -ne 200 -or $sse.Headers["Content-Type"] -notmatch "text/event-stream" -or $sse.Content -notmatch "notifications/progress" -or ([regex]::Matches($sse.Content, "event: message").Count -lt 2)) { throw "SSE MCP stream did not carry both an MCP notification and the final response." }
+  $progressIndex = $sse.Content.IndexOf('notifications/progress')
+  $resultIndex = $sse.Content.IndexOf('"result"')
+  if ($sse.StatusCode -ne 200 -or $sse.Headers["Content-Type"] -notmatch "text/event-stream" -or $progressIndex -lt 0 -or $resultIndex -lt 0 -or $progressIndex -gt $resultIndex -or ([regex]::Matches($sse.Content, "event: message").Count -lt 2)) { throw "SSE MCP stream did not preserve notification-before-response ordering." }
 
   $unsafeNotification = '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"zemax_get_system","arguments":{}}}'
   $unsafeNotificationResponse = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json"; "Mcp-Session-Id" = $session } -Body $unsafeNotification }
@@ -142,7 +144,21 @@ try {
     $postRecovery = $postRecoveryHealth.Content | ConvertFrom-Json
   } while (($postRecovery.hardRecoveryCount -lt 1 -or -not $postRecovery.mcpServerRunning) -and [DateTime]::UtcNow -lt $recoveryDeadline)
   if ($postRecovery.hardRecoveryCount -lt 1 -or -not $postRecovery.mcpServerRunning) { throw "Hard timeout did not terminate and recover the stuck stdio MCP server." }
-  Write-Host "Streamable HTTP negotiation, provisional sessions, server-request round trips, in-flight cancellation, bounded queueing, soft timeout, and hard process recovery verified."
+
+  $pumpRestartBaseline = [int]$postRecovery.serverRestartCount
+  $pumpInitialize = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $headers -Body $initialize }
+  $pumpSession = [string]$pumpInitialize.Headers["Mcp-Session-Id"]
+  if ([string]::IsNullOrWhiteSpace($pumpSession)) { throw "Could not initialize a client after hard recovery." }
+  $duplicateServerRequest = '{"jsonrpc":"2.0","id":"duplicate-parent","method":"test/duplicate-server-request","params":{}}'
+  $null = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json, text/event-stream"; "Mcp-Session-Id" = $pumpSession } -Body $duplicateServerRequest -TimeoutSec 10 }
+  $pumpRecoveryDeadline = [DateTime]::UtcNow.AddSeconds(12)
+  do {
+    Start-Sleep -Milliseconds 500
+    $pumpHealth = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri ($url + "health") -Headers @{ Authorization = "Bearer streamable-verifier-token" } -TimeoutSec 5 }
+    $afterPumpFailure = $pumpHealth.Content | ConvertFrom-Json
+  } while (($afterPumpFailure.serverRestartCount -le $pumpRestartBaseline -or -not $afterPumpFailure.mcpServerRunning) -and [DateTime]::UtcNow -lt $pumpRecoveryDeadline)
+  if ($afterPumpFailure.serverRestartCount -le $pumpRestartBaseline -or -not $afterPumpFailure.mcpServerRunning) { throw "A stdout pump failure did not terminate and recover the MCP stdio server." }
+  Write-Host "Streamable HTTP negotiation, provisional sessions, ordered SSE messages, server-request round trips, in-flight cancellation, bounded queueing, and stdout-pump recovery verified."
 }
 finally {
   $env:ZEMAX_MCP_TOKEN = $oldToken
