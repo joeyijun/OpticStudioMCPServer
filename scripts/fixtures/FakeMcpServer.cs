@@ -65,8 +65,8 @@ public static class Program
                 Console.WriteLine("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"message\":\"ready-cancel\"}}");
                 Console.Out.Flush();
                 var cancellation = Console.ReadLine();
-                if (cancellation == null || !cancellation.Contains("\"method\":\"notifications/cancelled\""))
-                    throw new InvalidOperationException("Expected notifications/cancelled while request was active.");
+                if (cancellation == null || !cancellation.Contains("\"method\":\"notifications/cancelled\"") || !cancellation.Contains("\"requestId\":\"cancel-parent\""))
+                    throw new InvalidOperationException("Expected cancellation for the active request.");
                 Console.WriteLine("{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"cancelled\":true}}");
                 Console.Out.Flush();
                 continue;
