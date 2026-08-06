@@ -6,6 +6,8 @@ public interface IZemaxSession : IDisposable
 {
     bool IsConnected { get; }
     bool IsConnecting { get; }
+    ConnectionMode? CurrentMode { get; }
+    int? CurrentInstanceId { get; }
     string? CurrentFilePath { get; }
     string? ZemaxDataDir { get; }
 

@@ -48,7 +48,7 @@ public static class ZemaxOperationMetadata
                 "RelativeIllumination", "RmsSpot", "SeidelCoefficients", "SpotDiagram"
             }, new[]
             {
-            "zemax_cardinal_points", "zemax_chromatic_focal_shift", "zemax_diffraction_encircled_energy", "zemax_fft_mtf", "zemax_fft_mtf_vs_field",
+            "zemax_aperture_throughput", "zemax_cardinal_points", "zemax_chromatic_focal_shift", "zemax_diffraction_encircled_energy", "zemax_fft_mtf", "zemax_fft_mtf_vs_field",
             "zemax_fft_psf", "zemax_field_curvature_distortion", "zemax_filter_glasses", "zemax_geometric_encircled_energy", "zemax_geometric_image_analysis",
             "zemax_geometric_mtf", "zemax_geometric_mtf_vs_field", "zemax_get_advanced_system_settings", "zemax_get_afocal_mode", "zemax_get_aperture_settings",
             "zemax_get_apodization", "zemax_get_aspheric_surface", "zemax_get_clear_semi_diameter_margin", "zemax_get_configuration",
@@ -86,7 +86,7 @@ public static class ZemaxOperationMetadata
             "zemax_set_configuration_operand_value", "zemax_set_current_configuration", "zemax_set_environment", "zemax_set_extra_data", "zemax_set_fields",
             "zemax_set_mtf_units", "zemax_set_number_of_configurations", "zemax_set_number_of_fields", "zemax_set_number_of_wavelengths", "zemax_set_polarization",
             "zemax_set_ray_aiming", "zemax_set_stop_surface", "zemax_set_surface", "zemax_set_surface_aperture", "zemax_set_surface_parameter", "zemax_set_surface_solve",
-            "zemax_set_surface_type", "zemax_set_system_metadata", "zemax_set_variable_constraints", "zemax_set_vignetting", "zemax_set_wavelengths"
+            "zemax_set_surface_type", "zemax_set_system_metadata", "zemax_set_variable_constraints", "zemax_set_vignetting", "zemax_set_wavelengths", "zemax_set_off_axis_conic"
             })
         };
     }
