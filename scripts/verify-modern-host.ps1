@@ -10,6 +10,7 @@ $rpcClient = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHo
 $rpcProtocol = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Rpc\Protocol\ZemaxRpcProtocol.cs")
 $rpcContracts = Get-ChildItem (Join-Path $root "src\ZemaxMCP.Rpc\Contracts") -Filter *.cs | ForEach-Object { Get-Content -Raw $_.FullName } | Out-String
 $workerSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Program.cs")
+$bootstrapSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\BootstrapProgram.cs")
 $workerRpc = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Rpc\WorkerRpcServer.cs")
 $workerProject = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\ZemaxMCP.Server.csproj")
 $workerRegistry = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Tooling\ZemaxToolAttributes.cs")
@@ -25,6 +26,10 @@ if ($hostProject -notmatch '<TargetFramework>net10\.0-windows</TargetFramework>'
     $hostProject -notmatch 'ModelContextProtocol\.AspNetCore') {
   throw "The public Host must target .NET 10 and use ModelContextProtocol.AspNetCore."
 }
+if ($hostProject -notmatch 'InternalsVisibleTo Include="ZemaxMCP\.PrivateRpcTests"' -or
+    Test-Path (Join-Path $root "src\ZemaxMCP.HttpBridge\Properties\AssemblyInfo.cs")) {
+  throw "SDK-style Host assembly metadata must stay in the project file; the redundant hand-written AssemblyInfo must not return."
+}
 if ($packages -notmatch 'ModelContextProtocol\.AspNetCore" Version="2\.1\.0"' -or
     $packages -notmatch 'Microsoft\.CodeAnalysis\.CSharp" Version="5\.6\.0"') {
   throw "The Host SDK and build-time manifest generator dependencies must remain pinned to verified stable versions."
@@ -38,6 +43,10 @@ if ($workerSource -match 'WithStdioServerTransport|WithStreamServerTransport|Add
     $workerProject -match 'PackageReference Include="ModelContextProtocol"' -or
     $workerTools -match 'ModelContextProtocol|McpServerTool') {
   throw "The Worker must not own an MCP transport."
+}
+if ($bootstrapSource -notmatch 'AssemblyResolve' -or $bootstrapSource -notmatch 'CandidateFolders' -or
+    $workerSource -match 'AssemblyResolve|Assembly\.LoadFrom') {
+  throw "ZOS-API CLR binding must have one owner in BootstrapProgram; ServerApplication must not register a duplicate resolver."
 }
 if (Test-Path (Join-Path $root "src\ZemaxMCP.Server\Prompts") -or
     Test-Path (Join-Path $root "src\ZemaxMCP.Server\Resources") -or
