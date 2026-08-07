@@ -101,7 +101,7 @@ internal static class ServerApplication
             var commandLog = host.Services.GetRequiredService<IZemaxCommandLog>();
             Log.Information("ZEMAX Command Log: {LogPath}", commandLog.LogFilePath);
 
-            var session = host.Services.GetRequiredServiceService<IZemaxSession>();
+            var session = host.Services.GetRequiredService<IZemaxSession>();
             session.StartConnectInBackground(ConnectionMode.Standalone);
             Log.Information("OpticStudio background connection started");
 
