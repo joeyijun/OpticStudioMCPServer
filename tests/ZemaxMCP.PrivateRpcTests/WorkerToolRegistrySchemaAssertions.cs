@@ -13,7 +13,7 @@ internal static class StaticToolManifestAssertions
             throw new InvalidOperationException("Static Host tool manifest must contain all 126 Worker commands.");
 
         var openFileEntry = StaticToolManifest.GetRequired("zemax_open_file");
-        if (openFileEntry.DomainId != "files" || openFileEntry.Impact != "HighImpact")
+        if (openFileEntry.DomainId != "files" || openFileEntry.Impact != "Caution")
             throw new InvalidOperationException("Static manifest must carry explicit domain and impact metadata.");
         var openFile = openFileEntry.InputSchema;
         var openFileRequired = openFile.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
@@ -26,7 +26,7 @@ internal static class StaticToolManifestAssertions
             !StaticToolManifest.IsAllowed("full-expert", statusEntry.Name, readOnly: true))
             throw new InvalidOperationException("Read-only policy metadata must be available directly from the static manifest.");
         if (StaticToolManifest.IsAllowed("full-expert", openFileEntry.Name, readOnly: true))
-            throw new InvalidOperationException("Static manifest read-only admission must reject high-impact tools.");
+            throw new InvalidOperationException("Static manifest read-only admission must reject non-read-only tools.");
 
         var setFields = StaticToolManifest.GetRequired("zemax_set_fields").InputSchema;
         var setFieldsRequired = setFields.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
