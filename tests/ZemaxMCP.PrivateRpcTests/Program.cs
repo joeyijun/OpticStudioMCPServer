@@ -157,7 +157,11 @@ internal static class Program
 
         try
         {
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+            // Worker startup on a cold CI runner can legitimately exceed two
+            // seconds. Keep individual HTTP requests bounded, but leave enough
+            // room for the first lazy Worker startup and the deliberate 3 s
+            // fake hold operation.
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
             var endpoint = new Uri($"http://127.0.0.1:{port}/mcp");
             await Task.Delay(250).ConfigureAwait(false);
             if (File.Exists(workerLog))
@@ -165,7 +169,7 @@ internal static class Program
 
             HttpResponseMessage? echo = null;
             var lastModernFailure = string.Empty;
-            var deadline = DateTime.UtcNow.AddSeconds(10);
+            var deadline = DateTime.UtcNow.AddSeconds(15);
             while (DateTime.UtcNow < deadline && !process.HasExited)
             {
                 try
@@ -175,7 +179,8 @@ internal static class Program
                     lastModernFailure = ((int)echo.StatusCode) + " " + await echo.Content.ReadAsStringAsync().ConfigureAwait(false);
                     echo.Dispose();
                 }
-                catch (HttpRequestException) { }
+                catch (HttpRequestException ex) { lastModernFailure = ex.Message; }
+                catch (TaskCanceledException ex) { lastModernFailure = ex.Message; }
                 await Task.Delay(100).ConfigureAwait(false);
             }
             if (echo == null || !echo.IsSuccessStatusCode)
