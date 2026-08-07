@@ -113,19 +113,23 @@ if ($throughput -notmatch 'SuccessfulRays' -or
     throw "zemax_aperture_throughput must keep trace errors separate from aperture loss and remain cancellable."
 }
 
-# Stage D MCE mutations must be atomic or explicitly checked. Invalid operand
-# types are validated before inserting a row; official boolean/status returns
-# are not ignored; typed cell values preserve Double/Integer/String semantics.
+# Stage D MCE mutations must be atomic where validation can make them so, and
+# otherwise expose/check the underlying OpticStudio mutation result. Invalid
+# operand types are validated before inserting a row; typed cell values preserve
+# Double/Integer/String semantics and ConfigPickup source metadata.
 $addConfigOperand = Get-Content -LiteralPath (Join-Path $configRoot "AddConfigurationOperandTool.cs") -Raw
 if ($addConfigOperand.IndexOf('Enum.GetNames(typeof(MultiConfigOperandType))', [StringComparison]::Ordinal) -lt 0 -or
     $addConfigOperand.IndexOf('row = insertAt == 0 ? mce.AddOperand()', [StringComparison]::Ordinal) -lt 0 -or
     $addConfigOperand.IndexOf('Enum.GetNames(typeof(MultiConfigOperandType))', [StringComparison]::Ordinal) -gt $addConfigOperand.IndexOf('row = insertAt == 0 ? mce.AddOperand()', [StringComparison]::Ordinal) -or
     $addConfigOperand -notmatch '!row\.ChangeType\(parsedType\)' -or
-    $addConfigOperand -notmatch 'mce\.RemoveOperandAt\(row\.OperandNumber\)') {
-    throw "zemax_add_configuration_operand must validate the named operand type before mutation, check ChangeType, and roll back failed insertions."
+    $addConfigOperand -notmatch 'rolledBack = mce\.RemoveOperandAt\(row\.OperandNumber\)' -or
+    $addConfigOperand -notmatch 'if \(!rolledBack\)') {
+    throw "zemax_add_configuration_operand must validate the named operand type before mutation, check ChangeType, and report rollback failure explicitly."
 }
 
 $setConfigValue = Get-Content -LiteralPath (Join-Path $configRoot "SetConfigurationOperandValueTool.cs") -Raw
+$fixedTypeValidationIndex = $setConfigValue.IndexOf('ValidateFixedValueMatchesCellType(cell.DataType', [StringComparison]::Ordinal)
+$makeFixedIndex = $setConfigValue.IndexOf('cell.MakeSolveFixed()', [StringComparison]::Ordinal)
 if ($setConfigValue -match '\bdynamic\b' -or
     $setConfigValue -notmatch 'CellDataType\.Double' -or
     $setConfigValue -notmatch 'CellDataType\.Integer' -or
@@ -134,8 +138,9 @@ if ($setConfigValue -match '\bdynamic\b' -or
     $setConfigValue -notmatch 'pickup\.Operand' -or
     $setConfigValue -notmatch 'SolveStatus\.Success' -or
     $setConfigValue -notmatch '!cell\.MakeSolveFixed\(\)' -or
-    $setConfigValue -notmatch 'Fixed value parameters and pickupConfig are mutually exclusive') {
-    throw "zemax_set_configuration_operand_value must preserve typed MCE values and use the official checked ConfigPickup/fixed-solve contract."
+    $setConfigValue -notmatch 'Fixed value parameters and pickupConfig are mutually exclusive' -or
+    $fixedTypeValidationIndex -lt 0 -or $makeFixedIndex -lt 0 -or $fixedTypeValidationIndex -gt $makeFixedIndex) {
+    throw "zemax_set_configuration_operand_value must preserve typed MCE values, validate fixed-value type before solve mutation, and use the checked ConfigPickup/fixed-solve contract."
 }
 
 $getConfigOperands = Get-Content -LiteralPath (Join-Path $configRoot "GetConfigurationOperandsTool.cs") -Raw
@@ -148,20 +153,19 @@ if ($getConfigOperands -match '\bdynamic\b' -or
     throw "zemax_get_configuration_operands must return type-preserving MCE cell data and typed ConfigPickup metadata."
 }
 
-foreach ($mceMutation in @(
-    @{ File = "SetCurrentConfigurationTool.cs"; Check = '!mce\.SetCurrentConfiguration\(' },
-    @{ File = "DeleteConfigurationOperandTool.cs"; Check = '!mce\.RemoveOperandAt\(' },
-    @{ File = "SetNumberOfConfigurationsTool.cs"; Check = '!mce\.AddConfiguration\(false\)|!mce\.DeleteConfiguration\(' }
-)) {
-    $source = Get-Content -LiteralPath (Join-Path $configRoot $mceMutation.File) -Raw
-    if ($source -notmatch $mceMutation.Check) {
-        throw "$($mceMutation.File) must retain explicit checks of OpticStudio's MCE mutation return values."
-    }
+$setCurrentConfiguration = Get-Content -LiteralPath (Join-Path $configRoot "SetCurrentConfigurationTool.cs") -Raw
+$deleteConfigurationOperand = Get-Content -LiteralPath (Join-Path $configRoot "DeleteConfigurationOperandTool.cs") -Raw
+$setConfigurationCount = Get-Content -LiteralPath (Join-Path $configRoot "SetNumberOfConfigurationsTool.cs") -Raw
+if ($setCurrentConfiguration -notmatch '!mce\.SetCurrentConfiguration\(' -or
+    $deleteConfigurationOperand -notmatch '!mce\.RemoveOperandAt\(' -or
+    $setConfigurationCount -notmatch '!mce\.AddConfiguration\(false\)' -or
+    $setConfigurationCount -notmatch '!mce\.DeleteConfiguration\(') {
+    throw "Reviewed MCE mutators must retain explicit checks of OpticStudio's boolean mutation results."
 }
 
 # Glass-catalog filtering/export must not silently use incomplete source sets,
-# accept non-finite criteria, fabricate malformed AGF numeric values, or escape
-# the Zemax Glasscat directory through catalogName path traversal.
+# accept non-finite criteria, fabricate malformed AGF numeric values, escape the
+# Zemax Glasscat directory, or violate overwrite=false after an earlier TOCTOU check.
 $filterService = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Core\Services\GlassCatalog\GlassFilterService.cs") -Raw
 $agfParser = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Core\Services\GlassCatalog\AgfFileParser.cs") -Raw
 $catalogExport = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Core\Services\GlassCatalog\CatalogExportService.cs") -Raw
@@ -182,9 +186,13 @@ if ($agfParser -notmatch 'Malformed AGF catalog' -or
 }
 if ($catalogExport -notmatch 'ValidateCatalogName' -or
     $catalogExport -notmatch 'target\.StartsWith\(prefix, StringComparison\.OrdinalIgnoreCase\)' -or
+    $catalogExport -notmatch 'if \(overwrite\)' -or
     $catalogExport -notmatch 'File\.Replace\(tempPath, fullOutputPath, null\)' -or
     $catalogExport -notmatch 'File\.Move\(tempPath, fullOutputPath\)') {
-    throw "Glass catalog export must confine catalogName to Glasscat and use a same-directory temporary file before replacement."
+    throw "Glass catalog export must confine catalogName to Glasscat and enforce overwrite through the final atomic move/replace path."
+}
+if ($exportTool -notmatch 'CatalogExportService\.Export\(filtered, outputPath, catalogName, overwrite\)') {
+    throw "zemax_export_glass_catalog must pass the public overwrite contract to the final Core filesystem write."
 }
 foreach ($sourceTool in @($filterTool, $exportTool)) {
     if ($sourceTool -notmatch 'missing = requestedNames\.Where\(name => !availableCatalogs\.ContainsKey\(name\)\)' -or
