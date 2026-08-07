@@ -1,84 +1,43 @@
 using System.Runtime.CompilerServices;
-using System.Text.Json;
-using Microsoft.Extensions.DependencyInjection;
-using ZemaxMCP.Server.Tooling;
+using ZemaxMCP.ToolManifest;
 
 namespace ZemaxMCP.PrivateRpcTests;
 
-internal static class WorkerToolRegistrySchemaAssertions
+internal static class StaticToolManifestAssertions
 {
     [ModuleInitializer]
-    internal static void VerifyWorkerToolSchemaContract()
+    internal static void VerifyStaticToolManifestContract()
     {
-        using var services = new ServiceCollection().BuildServiceProvider();
-        var registry = new WorkerToolRegistry(services);
-        if (!registry.Tools.TryGetValue("zemax_test_schema_contract", out var tool))
-            throw new InvalidOperationException("Worker schema regression tool was not discovered.");
+        if (StaticToolManifest.All.Count != 126)
+            throw new InvalidOperationException("Static Host tool manifest must contain all 126 Worker commands.");
 
-        var schema = tool.InputSchema;
-        var properties = schema.GetProperty("properties");
-        var required = schema.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
+        var openFile = StaticToolManifest.GetRequired("zemax_open_file").InputSchema;
+        var openFileRequired = openFile.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
+        if (!openFileRequired.SetEquals(new[] { "filePath" }) ||
+            openFile.GetProperty("properties").GetProperty("filePath").GetProperty("type").GetString() != "string")
+            throw new InvalidOperationException("zemax_open_file must advertise filePath as a required string.");
 
-        if (!required.SetEquals(new[] { "filePath", "fields" }))
-            throw new InvalidOperationException("Worker schema required parameters no longer match runtime binding semantics.");
-        if (properties.TryGetProperty("cancellationToken", out _))
-            throw new InvalidOperationException("CancellationToken must not be exposed in Worker tool schemas.");
-
-        var mode = properties.GetProperty("mode");
-        if (mode.GetProperty("type").GetString() != "string" || mode.GetProperty("default").GetString() != "Fast" ||
-            !mode.GetProperty("enum").EnumerateArray().Select(value => value.GetString()).SequenceEqual(new[] { "Fast", "Accurate" }))
-            throw new InvalidOperationException("Enum Worker schema metadata is invalid.");
-
-        var fields = properties.GetProperty("fields");
+        var setFields = StaticToolManifest.GetRequired("zemax_set_fields").InputSchema;
+        var setFieldsRequired = setFields.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
+        if (!setFieldsRequired.SetEquals(new[] { "fields" }))
+            throw new InvalidOperationException("zemax_set_fields must advertise fields as required and fieldType as optional.");
+        var fields = setFields.GetProperty("properties").GetProperty("fields");
         if (fields.GetProperty("type").GetString() != "array")
-            throw new InvalidOperationException("Collection Worker parameters must publish array schemas.");
+            throw new InvalidOperationException("zemax_set_fields.fields must be an array.");
         var item = fields.GetProperty("items");
-        var itemProperties = item.GetProperty("properties");
         var itemRequired = item.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
-        if (!itemRequired.SetEquals(new[] { "x", "y" }) || !itemProperties.TryGetProperty("weight", out var weight) ||
+        var itemProperties = item.GetProperty("properties");
+        if (!itemRequired.SetEquals(new[] { "x", "y" }) ||
+            !itemProperties.TryGetProperty("weight", out var weight) ||
             Math.Abs(weight.GetProperty("default").GetDouble() - 1.0) > double.Epsilon)
-            throw new InvalidOperationException("Nested record Worker schemas must preserve camelCase names, required fields, and defaults.");
+            throw new InvalidOperationException("Nested field schemas must preserve camelCase names, required values, and defaults.");
 
-        var coefficients = properties.GetProperty("coefficients");
-        if (coefficients.GetProperty("type").GetString() != "object" ||
-            coefficients.GetProperty("additionalProperties").GetProperty("type").GetString() != "number")
-            throw new InvalidOperationException("String-keyed dictionaries must publish object schemas with typed additional properties.");
+        var optimize = StaticToolManifest.GetRequired("zemax_optimize").InputSchema.GetProperty("properties");
+        if (optimize.GetProperty("algorithm").GetProperty("default").GetString() != "DLS" ||
+            optimize.GetProperty("cycles").GetProperty("default").GetInt32() != 0)
+            throw new InvalidOperationException("Static manifest must preserve tool parameter defaults.");
 
-        using var validDocument = JsonDocument.Parse("{\"filePath\":\"probe.zos\",\"fields\":[{\"x\":1.0,\"y\":2.0}],\"mode\":\"Accurate\",\"coefficients\":{\"a\":3.5}}");
-        var result = registry.InvokeAsync("zemax_test_schema_contract", validDocument.RootElement.Clone(), CancellationToken.None)
-            .GetAwaiter().GetResult();
-        var modeValue = result?.GetType().GetProperty("mode")?.GetValue(result)?.ToString();
-        if (!string.Equals(modeValue, "Accurate", StringComparison.Ordinal))
-            throw new InvalidOperationException("Worker binder did not accept the string enum contract advertised by its schema.");
-
-        using var missingRequiredDocument = JsonDocument.Parse("{\"fields\":[]}");
-        try
-        {
-            registry.InvokeAsync("zemax_test_schema_contract", missingRequiredDocument.RootElement.Clone(), CancellationToken.None)
-                .GetAwaiter().GetResult();
-            throw new InvalidOperationException("Worker binder accepted a request that omitted a required argument.");
-        }
-        catch (ArgumentException ex) when (ex.Message.Contains("filePath", StringComparison.Ordinal)) { }
+        if (StaticToolManifest.All.Select(tool => tool.Name).Distinct(StringComparer.Ordinal).Count() != StaticToolManifest.All.Count)
+            throw new InvalidOperationException("Static Host tool manifest contains duplicate tool names.");
     }
-}
-
-[ZemaxToolType]
-public sealed class WorkerSchemaProbeTool
-{
-    public enum ProbeMode
-    {
-        Fast,
-        Accurate
-    }
-
-    public sealed record FieldDefinition(double X, double Y, double Weight = 1.0);
-
-    [ZemaxTool(Name = "zemax_test_schema_contract")]
-    public Task<object> ExecuteAsync(
-        string filePath,
-        List<FieldDefinition> fields,
-        ProbeMode mode = ProbeMode.Fast,
-        Dictionary<string, double>? coefficients = null,
-        CancellationToken cancellationToken = default)
-        => Task.FromResult<object>(new { filePath, fields, mode, coefficients });
 }
