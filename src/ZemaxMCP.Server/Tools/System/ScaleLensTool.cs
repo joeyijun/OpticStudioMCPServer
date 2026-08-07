@@ -18,7 +18,8 @@ public sealed class ScaleLensTool
     public async Task<ScaleLensResult> ExecuteAsync(
         [Description("Positive geometric scale factor; mutually exclusive with targetUnits")] double? factor = null,
         [Description("Target units: Millimeters, Centimeters, Inches, or Meters; mutually exclusive with factor")] string? targetUnits = null,
-        [Description("Maximum run time in seconds (1-300)")] double timeoutSeconds = 30)
+        [Description("Maximum run time in seconds (1-300)")] double timeoutSeconds = 30,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -28,9 +29,19 @@ public sealed class ScaleLensTool
                 throw new ArgumentOutOfRangeException(nameof(factor), "Scale factor must be finite and positive.");
             if (double.IsNaN(timeoutSeconds) || double.IsInfinity(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 300)
                 throw new ArgumentOutOfRangeException(nameof(timeoutSeconds), "Timeout must be between 1 and 300 seconds.");
+
             ZOSAPI.Tools.General.ScaleToUnits parsedUnits = default;
-            if (targetUnits != null && !Enum.TryParse(targetUnits, true, out parsedUnits))
-                throw new ArgumentException("Target units must be Millimeters, Centimeters, Inches, or Meters.");
+            if (!string.IsNullOrWhiteSpace(targetUnits))
+            {
+                parsedUnits = targetUnits.Trim().ToLowerInvariant() switch
+                {
+                    "millimeters" => ZOSAPI.Tools.General.ScaleToUnits.Millimeters,
+                    "centimeters" => ZOSAPI.Tools.General.ScaleToUnits.Centimeters,
+                    "inches" => ZOSAPI.Tools.General.ScaleToUnits.Inches,
+                    "meters" => ZOSAPI.Tools.General.ScaleToUnits.Meters,
+                    _ => throw new ArgumentException("Target units must be Millimeters, Centimeters, Inches, or Meters.")
+                };
+            }
 
             return await _session.ExecuteAsync("ScaleLens", new Dictionary<string, object?>
             {
@@ -61,7 +72,7 @@ public sealed class ScaleLensTool
                         system.SystemData.Units.LensUnits.ToString(), factor, tool.FirstComponent, tool.LastComponent, system.NeedsSave);
                 }
                 finally { tool.Close(); }
-            });
+            }, cancellationToken);
         }
         catch (Exception ex) { return new ScaleLensResult(false, ex.Message, "Failed", "", "", factor, 0, 0, false); }
     }
