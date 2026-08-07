@@ -24,10 +24,11 @@ if ([string]::IsNullOrWhiteSpace($ZosApiBuildRoot)) {
 }
 $ZosApiBuildRoot = (Resolve-Path -LiteralPath $ZosApiBuildRoot).Path
 
+$opticStudioPath = Join-Path $ZosApiBuildRoot "OpticStudio.exe"
 $zosApiPath = Join-Path $ZosApiBuildRoot "ZOSAPI.dll"
 $interfacesPath = Join-Path $ZosApiBuildRoot "ZOSAPI_Interfaces.dll"
-foreach ($dll in $zosApiPath, $interfacesPath) {
-  if (-not (Test-Path -LiteralPath $dll)) { throw "Missing ZOS-API assembly under build baseline root: $dll" }
+foreach ($file in $opticStudioPath, $zosApiPath, $interfacesPath) {
+  if (-not (Test-Path -LiteralPath $file)) { throw "Missing OpticStudio/ZOS-API build-baseline component: $file" }
 }
 $netHelperCandidates = @(
   (Join-Path $ZosApiBuildRoot "ZOSAPI_NetHelper.dll"),
@@ -41,18 +42,21 @@ if (-not $netHelperPath) {
 
 function Get-VersionMetadata([string]$Path) {
   $file = [Diagnostics.FileVersionInfo]::GetVersionInfo($Path)
-  $assembly = [Reflection.AssemblyName]::GetAssemblyName($Path)
   $fileVersion = if ($null -eq $file.FileVersion) { "" } else { $file.FileVersion }
   $productVersion = if ($null -eq $file.ProductVersion) { "" } else { $file.ProductVersion }
+  $assemblyVersion = ""
+  try { $assemblyVersion = [Reflection.AssemblyName]::GetAssemblyName($Path).Version.ToString() }
+  catch [System.BadImageFormatException] { }
   return [PSCustomObject]@{
     FileVersion = $fileVersion.Replace("`r", " ").Replace("`n", " ").Trim()
     ProductVersion = $productVersion.Replace("`r", " ").Replace("`n", " ").Trim()
-    AssemblyVersion = $assembly.Version.ToString()
+    AssemblyVersion = $assemblyVersion
   }
 }
 
 function Write-ZosApiBuildInfo([string]$Destination) {
   $components = [ordered]@{
+    "OpticStudio" = $opticStudioPath
     "ZOSAPI_Interfaces" = $interfacesPath
     "ZOSAPI" = $zosApiPath
     "ZOSAPI_NetHelper" = $netHelperPath
@@ -105,12 +109,12 @@ foreach ($project in $projects) {
   # PDB files contain the absolute source path used by the release builder.
   # They are not needed to run the application and would expose that path in
   # user-facing exception logs.
-  Copy-Item "$root\src\$project\bin\$Configuration\net48\*" $publish -Recurse -Force -Exclude "*.pdb", "*.xml", "*.log", "logs", "ZOSAPI*.dll", "ZemaxMCP.HttpBridge.exe", "ZemaxMCP.HttpBridge.exe.config", "ZemaxMCP.Server.exe", "ZemaxMCP.Server.exe.config"
+  Copy-Item "$root\src\$project\bin\$Configuration\net48\*" $publish -Recurse -Force -Exclude "*.pdb", "*.xml", "*.log", "logs", "ZOSAPI*.dll", "ZemaxMCP.HttpBridge.exe", "ZemaxMCP.Server.exe.config", "ZemaxMCP.Server.exe", "ZemaxMCP.HttpBridge.exe.config"
 }
 
 # Record only version identities, never the release builder's installation path.
-# BootstrapProgram compares these with the user's selected runtime assemblies
-# before loading any Worker type that has compile-time ZOS-API references.
+# OpticStudio.exe ProductVersion is the primary product-release anchor; the
+# three ZOS-API DLL versions are retained as secondary cross-checks.
 Write-ZosApiBuildInfo (Join-Path $publish "ZOSAPI_BUILD_INFO.txt")
 
 $launcherAssemblyVersion = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $root "src\ZemaxMCP.Launcher\bin\$Configuration\net48\Start-Zemax-MCP.exe")).Version
