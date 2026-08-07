@@ -10,6 +10,7 @@ using ZemaxMCP.Core.Logging;
 using ZemaxMCP.Core.Services.ConstrainedOptimization;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Documentation;
+using ZemaxMCP.Server.Rpc;
 using ZemaxMCP.Server.Services.Jobs;
 
 namespace ZemaxMCP.Server;
@@ -129,6 +130,9 @@ internal static class ServerApplication
                 Console.Error.WriteLine("ZEMAX_MCP_STATUS:WORKER_PIPE_CONNECTED");
             }
 
+            // MCP is terminated by the .NET Host. The Worker retains the
+            // existing attribute-driven binding catalogue during migration,
+            // but exposes it only through the private typed RPC server below.
             var mcpServer = builder.Services.AddMcpServer(options =>
             {
                 options.ServerInfo = new()
@@ -137,8 +141,6 @@ internal static class ServerApplication
                     Version = typeof(ServerApplication).Assembly.GetName().Version?.ToString(3) ?? "unknown"
                 };
             });
-            if (workerPipe == null) mcpServer.WithStdioServerTransport();
-            else mcpServer.WithStreamServerTransport(workerPipe, workerPipe);
             mcpServer
             .WithTools<ZemaxMCP.Server.Tools.Catalog.ToolCatalogTool>()
             .WithTools<ZemaxMCP.Server.Tools.Jobs.McpJobTools>()
@@ -279,10 +281,11 @@ internal static class ServerApplication
             session.StartConnectInBackground(ConnectionMode.Standalone);
             Log.Information("OpticStudio background connection started");
 
-            Log.Information(workerPipe == null
-                ? "MCP Worker configured for developer stdio transport."
-                : "MCP Worker configured for private named-pipe transport.");
-            await host.RunAsync();
+            if (workerPipe == null)
+                throw new InvalidOperationException("The production Worker requires the private Host RPC pipe. Use the Host executable to start it.");
+            Log.Information("Worker configured for private versioned RPC transport.");
+            var rpcServer = new WorkerRpcServer(host.Services);
+            await rpcServer.RunAsync(workerPipe, workerPipe, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

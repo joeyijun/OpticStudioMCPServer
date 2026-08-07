@@ -224,9 +224,12 @@ public partial class MainWindow : Window
         StopBridge();
         if (!automaticRestart) _bridgeRestartAttempts = 0;
         SaveSettings();
-        var bridge = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZemaxMCP.Host.exe");
+        // Host is self-contained .NET 10 so it must keep its runtime files in
+        // a private directory rather than collide with net48 desktop binaries.
+        var bridge = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Host", "ZemaxMCP.Host.exe");
+        if (!File.Exists(bridge)) bridge = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZemaxMCP.Host.exe"); // legacy package fallback
         var server = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZemaxMCP.Worker.exe");
-        if (!File.Exists(bridge) || !File.Exists(server)) { Report("Release package is incomplete: ZemaxMCP.Host.exe and ZemaxMCP.Worker.exe must be beside this launcher."); return; }
+        if (!File.Exists(bridge) || !File.Exists(server)) { Report("Release package is incomplete: the Host folder and ZemaxMCP.Worker.exe are required."); return; }
         if (!EnsureZosApiBootstrap(Installation)) return;
         // URL ACL/firewall setup is a user-approved configuration step, not
         // something an automatic recovery attempt should prompt for again.

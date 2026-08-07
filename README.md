@@ -19,8 +19,8 @@ For the complete one- and two-computer guide, see [Windows Quick Start](docs/QUI
 
 ```mermaid
 flowchart LR
-  A["OpticStudio computer\nInstall.exe → Start-Zemax-MCP.exe"] --> B["ZemaxMCP.Host\nStreamable HTTP, auth, protocol + control lease"]
-  B -->|"private Named Pipe"| C["ZemaxMCP.Worker\nsingle STA + ZOS-API"]
+  A["OpticStudio computer\nInstall.exe → Start-Zemax-MCP.exe"] --> B["ZemaxMCP.Host (.NET 10)\nofficial MCP HTTP, auth + control lease"]
+  B -->|"versioned private Named Pipe RPC"| C["ZemaxMCP.Worker (net48)\nsingle STA + ZOS-API"]
   C --> F["Licensed OpticStudio"]
   D["Codex / Claude / Cursor / Kimi / WorkBuddy / Copilot\nlocal or trusted LAN computer"] -->|"HTTP MCP"| B
   B --> E["Live dashboard\nMCP · ZOS-API · AI activity"]
@@ -31,13 +31,14 @@ For a single computer, the AI client uses the local MCP address. For two compute
 ## Highlights
 
 - **Graphical install and update** — `Install.exe` installs or updates the per-user application. `Portable-Install.cmd` is available where an organisation blocks the installer executable.
-- **Hardened Host / Worker isolation** — `ZemaxMCP.Host` owns Streamable HTTP, authentication, sessions, client policy, SSE, and audit status. It creates a private Windows named pipe restricted to the current Windows user; `ZemaxMCP.Worker` connects as its client and proves the launched PID plus a random handshake secret before carrying the one STA ZOS-API connection.
-- **Dual-era built-in HTTP MCP** — Supports legacy session-based 2025 clients and stateless 2026 clients. A separate OpticStudio control lease preserves one safe STA/ZOS-API owner without treating an MCP transport session as device ownership.
-- **Authenticated LAN use** — Every launcher-managed request uses a random Bearer token. LAN listening is refused without a token, browser origins are restricted, and token rotation is one click.
+- **Official .NET 10 MCP Host** — `ZemaxMCP.Host` uses the stable `ModelContextProtocol.AspNetCore` 2.1 transport for Streamable HTTP, protocol negotiation, request IDs, cancellation, and compatibility. The application no longer maintains a hand-written HTTP/JSON-RPC dispatcher.
+- **Hardened Host / Worker isolation** — MCP ends at the Host. The `net48` Worker accepts only versioned private command RPC, keeps the STA/ZOS-API state, and never exposes a network transport. The Host creates a current-user-only named pipe and verifies the launched Worker PID plus a per-launch random secret.
+- **Transport-independent control lease** — Modern MCP requests can be stateless while OpticStudio remains deliberately single-owner, single-STA, and serialized. The Host maintains the independent client control lease.
+- **Authenticated LAN use** — Every launcher-managed request uses a random Bearer token. LAN listening is refused without a token, and token rotation is one click.
 - **Lens-change safety** — One explicit metadata catalogue drives both the MCP risk display and ZOS-API protection. Read-only mode blocks high-impact operations; in read/write mode, every recognised mutation first saves a timestamped copy of the current lens, while unknown execution commands fail closed as high impact.
 - **Verified, clean updates** — Release metadata is RSA-signed, the ZIP size and SHA-256 are checked before extraction, and the updater replaces superseded program files while retaining logs and snapshots; it restores the previous installation if replacement fails.
 - **Dedicated ZOS-API thread** — The Worker serializes every connection and tool operation on one long-lived STA thread to respect the COM threading model and avoid cross-thread session access.
-- **Streamable HTTP lifecycle** — The bridge validates response negotiation and version-specific metadata, supports JSON and request-scoped multi-message SSE, preserves legacy session cleanup where applicable, and never lets an HTTP session stand in for OpticStudio ownership.
+- **Standards-maintained Streamable HTTP** — The official SDK owns response negotiation, SSE, request IDs, protocol-version validation, legacy compatibility, and modern stateless behavior; an MCP transport session never represents OpticStudio ownership.
 - **Long-job control** — POP, global search, and multistart optimization can return immediately with a job id. Use `zemax_job_status`, `zemax_job_list`, and `zemax_job_cancel` for queue position, live progress, result retrieval, and cooperative cancellation; the launcher also shows the active tool/job and elapsed time.
 - **Per-client live dashboard** — Colour-coded cards distinguish installation, configuration, historical activity, and a real request made within the last five minutes. The launcher health check is excluded from AI activity.
 - **Multi-version OpticStudio detection** — Detects classic Zemax and current `ANSYS Inc\v*` layouts from environment variables, both registry views, uninstall entries, and known Program Files locations. The launcher validates all three ZOS-API assemblies before offering a version.
@@ -52,14 +53,9 @@ The Host starts the Worker through a current-user-only named pipe. The Host is t
 
 ### MCP protocol compatibility
 
-The Worker uses the stable C# MCP SDK 2.0. The Host supports both protocol eras without conflating their transport state with control of the live optical system:
+The .NET 10 Host uses `ModelContextProtocol.AspNetCore` 2.1.0, so the upstream SDK owns Streamable HTTP negotiation, protocol compatibility, headers, request IDs, SSE, and future protocol upgrades. The Worker is intentionally not an MCP server: it receives a versioned `command + arguments` RPC envelope and returns typed results, progress, cancellation acknowledgements, and errors.
 
-| Client protocol | HTTP lifecycle | Host ownership rule |
-|---|---|---|
-| `2025-03-26` / `2025-11-25` | Legacy `initialize`, optional `Mcp-Session-Id`, and `DELETE` cleanup. `MCP-Protocol-Version` is checked against the negotiated version. | The initialized legacy client holds the OpticStudio control lease. |
-| `2026-07-28` | Stateless POST requests. Every request carries matching `MCP-Protocol-Version`, `Mcp-Method`, and `_meta` body metadata; tool/resource/prompt requests also carry `Mcp-Name`. `server/discover` is available and no session is minted. Browser CORS preflight permits these two MCP headers. | The Host derives a stable client key from authenticated-request metadata and network endpoint, then grants one independent OpticStudio control lease. |
-
-The lease expires after fifteen minutes without activity (unless an operation is still draining) and is cleared when the Worker is restarted. Thus a modern stateless client can use independent POSTs while OpticStudio remains intentionally single-owner, single-STA, and serialized. A modern client that runs more than one same-name/version instance on one computer may add a per-instance `params._meta.io.zemaxmcp/clientInstanceId` (1–128 ASCII letters, digits, `.`, `_`, or `-`) to distinguish their control identities.
+The separate OpticStudio control lease expires after fifteen minutes without activity (unless an operation is active). This keeps a live optical system single-owner even when a modern client uses independent stateless requests.
 
 ## Connection modes
 

@@ -6,7 +6,8 @@
     <!-- MCP SDK -->
     <!-- v2 adds the stateless 2026-07-28 protocol while retaining legacy
          initialize/session compatibility for 2025-era clients. -->
-    <PackageVersion Include="ModelContextProtocol" Version="2.0.0" />
+    <PackageVersion Include="ModelContextProtocol" Version="2.1.0" />
+    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.1.0" />
 
     <!-- .NET Extensions -->
     <!-- Keep direct references aligned with the ModelContextProtocol net48 runtime. -->
@@ -27,7 +28,8 @@
     <PackageVersion Include="Serilog" Version="3.1.1" />
     <PackageVersion Include="Serilog.Extensions.Hosting" Version="8.0.0" />
     <PackageVersion Include="Serilog.Sinks.Console" Version="5.0.1" />
-    <PackageVersion Include="Serilog.Sinks.File" Version="5.0.0" />
+    <PackageVersion Include="Serilog.Sinks.File" Version="6.0.0" />
+    <PackageVersion Include="Serilog.AspNetCore" Version="9.0.0" />
 
     <!-- Math -->
     <PackageVersion Include="MathNet.Numerics" Version="5.0.0" />

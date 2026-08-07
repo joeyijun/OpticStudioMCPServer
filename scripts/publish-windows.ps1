@@ -28,13 +28,13 @@ Remove-Item $publish -Recurse -Force -ErrorAction SilentlyContinue
 New-Item $publish -ItemType Directory -Force | Out-Null
 
 dotnet build "$root\src\ZemaxMCP.Server\ZemaxMCP.Server.csproj" -c $Configuration -p:ZEMAX_ROOT="$ZemaxRoot" -p:ZOSAPI_NETHELPER_PATH="$netHelperPath"
-dotnet build "$root\src\ZemaxMCP.HttpBridge\ZemaxMCP.HttpBridge.csproj" -c $Configuration
+dotnet publish "$root\src\ZemaxMCP.HttpBridge\ZemaxMCP.HttpBridge.csproj" -c $Configuration -r win-x64 --self-contained true -o "$root\artifacts\Host-publish"
 dotnet build "$root\src\ZemaxMCP.ClientProxy\ZemaxMCP.ClientProxy.csproj" -c $Configuration
 dotnet build "$root\src\ZemaxMCP.Launcher\ZemaxMCP.Launcher.csproj" -c $Configuration
 dotnet build "$root\src\ZemaxMCP.Installer\ZemaxMCP.Installer.csproj" -c $Configuration
 dotnet build "$root\src\ZemaxMCP.Updater\ZemaxMCP.Updater.csproj" -c $Configuration
 
-$projects = "ZemaxMCP.Server", "ZemaxMCP.HttpBridge", "ZemaxMCP.ClientProxy", "ZemaxMCP.Launcher", "ZemaxMCP.Installer", "ZemaxMCP.Updater"
+$projects = "ZemaxMCP.Server", "ZemaxMCP.ClientProxy", "ZemaxMCP.Launcher", "ZemaxMCP.Installer", "ZemaxMCP.Updater"
 $releaseAssemblies = @{}
 foreach ($project in $projects) {
   Get-ChildItem "$root\src\$project\bin\$Configuration\net48" -Filter "*.dll" -File | Where-Object {
@@ -53,6 +53,8 @@ foreach ($project in $projects) {
     }
   }
 }
+New-Item (Join-Path $publish "Host") -ItemType Directory -Force | Out-Null
+Copy-Item "$root\artifacts\Host-publish\*" (Join-Path $publish "Host") -Recurse -Force -Exclude "*.pdb", "*.xml", "*.log", "logs"
 foreach ($project in $projects) {
   # PDB files contain the absolute source path used by the release builder.
   # They are not needed to run the application and would expose that path in
@@ -73,8 +75,9 @@ $forbiddenReleaseFiles = @(Get-ChildItem $publish -Recurse -File | Where-Object 
 if ($forbiddenReleaseFiles.Count -gt 0) {
   throw "Release staging contains forbidden files: $($forbiddenReleaseFiles.FullName -join ', ')"
 }
-foreach ($requiredExecutable in "ZemaxMCP.Host.exe", "ZemaxMCP.Worker.exe", "Start-Zemax-MCP.exe") {
+foreach ($requiredExecutable in "ZemaxMCP.Worker.exe", "Start-Zemax-MCP.exe") {
   if (-not (Test-Path -LiteralPath (Join-Path $publish $requiredExecutable))) { throw "Release staging is missing $requiredExecutable." }
 }
+if (-not (Test-Path -LiteralPath (Join-Path $publish "Host\ZemaxMCP.Host.exe"))) { throw "Release staging is missing Host\ZemaxMCP.Host.exe." }
 Compress-Archive "$publish\*" "$root\artifacts\ZemaxMCP-win-x64.zip" -Force
 Write-Host "Release package: $root\artifacts\ZemaxMCP-win-x64.zip"
