@@ -42,7 +42,7 @@ public static class ZemaxOperationMetadata
                 "GetAdvancedSystemSettings", "GetAfocalMode", "GetApertureSettings", "GetApodization", "GetAsphericSurface", "GetConfiguration",
                 "GetConfigurationOperands", "GetExtraData", "GetFieldSettings", "GetFirstOrderData", "GetGlobalMatrix", "GetMaterialCatalogSettings",
                 "GetMeritFunction", "GetMtfUnits", "GetNonSequentialSystemSettings", "GetNscDetector", "GetNscObjectParameters", "GetNscObjects",
-                "GetRayAiming", "GetRayAimingSettings", "GetSurface", "GetSurfaceAperture", "GetSurfaceSolves", "GetSystem", "GetSystemFiles",
+                "GetRayAiming", "GetRayAimingSettings", "GetSurface", "GetSurfaceAperture", "GetSurfaceParameter", "GetSurfaceSolves", "GetSystem", "GetSystemFiles",
                 "GetSystemMetadata", "GetTolerances", "GetUnits", "GetVariables", "GetWavelengthSettings", "HuygensPsf", "LateralColor",
                 "LongitudinalAberration", "MTF", "OpdFan", "Pop", "PupilAberrationFan", "RayFan", "RayTrace", "RayTraceExtended", "read",
                 "RelativeIllumination", "RmsSpot", "SeidelCoefficients", "SpotDiagram"
