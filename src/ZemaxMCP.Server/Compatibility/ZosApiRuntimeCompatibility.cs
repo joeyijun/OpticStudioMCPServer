@@ -41,32 +41,34 @@ internal static class ZosApiRuntimeCompatibility
         }
 
         var buildInfo = ReadKeyValueFile(markerPath);
-        if (!buildInfo.TryGetValue("format", out var format) || format != "1")
-            throw new InvalidDataException($"Unsupported or malformed {BuildInfoFileName} format.");
+        string format;
+        if (!buildInfo.TryGetValue("format", out format) || format != "1")
+            throw new InvalidDataException("Unsupported or malformed " + BuildInfoFileName + " format.");
 
         var messages = new List<string>();
         var incompatible = new List<string>();
         foreach (var component in Components)
         {
-            if (!runtimeAssemblyPaths.TryGetValue(component, out var runtimePath) || string.IsNullOrWhiteSpace(runtimePath) || !File.Exists(runtimePath))
-                throw new FileNotFoundException($"The selected OpticStudio installation did not load {component}.dll for compatibility validation.", runtimePath);
+            string runtimePath;
+            if (!runtimeAssemblyPaths.TryGetValue(component, out runtimePath) || string.IsNullOrWhiteSpace(runtimePath) || !File.Exists(runtimePath))
+                throw new FileNotFoundException("The selected OpticStudio installation did not load " + component + ".dll for compatibility validation.", runtimePath);
 
             var buildVersion = GetBuildComparableVersion(buildInfo, component);
             var runtimeVersion = GetFileComparableVersion(runtimePath);
             if (buildVersion == null)
             {
-                messages.Add($"{component}: packaged build version could not be compared.");
+                messages.Add(component + ": packaged build version could not be compared.");
                 continue;
             }
             if (runtimeVersion == null)
             {
-                messages.Add($"{component}: runtime version could not be compared with build baseline {buildVersion}.");
+                messages.Add(component + ": runtime version could not be compared with build baseline " + buildVersion + ".");
                 continue;
             }
 
-            messages.Add($"{component}: build baseline {buildVersion}; runtime {runtimeVersion}.");
+            messages.Add(component + ": build baseline " + buildVersion + "; runtime " + runtimeVersion + ".");
             if (runtimeVersion.CompareTo(buildVersion) < 0)
-                incompatible.Add($"{component} runtime {runtimeVersion} is older than build baseline {buildVersion}");
+                incompatible.Add(component + " runtime " + runtimeVersion + " is older than build baseline " + buildVersion);
         }
 
         if (incompatible.Count > 0)
@@ -87,15 +89,25 @@ internal static class ZosApiRuntimeCompatibility
         var match = Regex.Match(value, @"(?<!\d)(\d+)(?:\.(\d+))(?:\.(\d+))?(?:\.(\d+))?");
         if (!match.Success) return null;
 
-        static int Part(Group group) => group.Success && int.TryParse(group.Value, out var parsed) ? parsed : 0;
-        return new Version(Part(match.Groups[1]), Part(match.Groups[2]), Part(match.Groups[3]), Part(match.Groups[4]));
+        return new Version(
+            ParsePart(match.Groups[1]),
+            ParsePart(match.Groups[2]),
+            ParsePart(match.Groups[3]),
+            ParsePart(match.Groups[4]));
+    }
+
+    private static int ParsePart(Group group)
+    {
+        int parsed;
+        return group.Success && int.TryParse(group.Value, out parsed) ? parsed : 0;
     }
 
     private static Version? GetBuildComparableVersion(IReadOnlyDictionary<string, string> buildInfo, string component)
     {
         foreach (var suffix in new[] { "fileVersion", "productVersion", "assemblyVersion" })
         {
-            if (buildInfo.TryGetValue(component + "." + suffix, out var value))
+            string value;
+            if (buildInfo.TryGetValue(component + "." + suffix, out value))
             {
                 var parsed = ParseComparableVersion(value);
                 if (parsed != null) return parsed;
@@ -130,11 +142,12 @@ internal static class ZosApiRuntimeCompatibility
             if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal)) continue;
             var separator = line.IndexOf('=');
             if (separator <= 0)
-                throw new InvalidDataException($"Malformed line in {BuildInfoFileName}: '{rawLine}'.");
+                throw new InvalidDataException("Malformed line in " + BuildInfoFileName + ": '" + rawLine + "'.");
             var key = line.Substring(0, separator).Trim();
             var value = line.Substring(separator + 1).Trim();
-            if (key.Length == 0 || !result.TryAdd(key, value))
-                throw new InvalidDataException($"Duplicate or empty key in {BuildInfoFileName}: '{key}'.");
+            if (key.Length == 0 || result.ContainsKey(key))
+                throw new InvalidDataException("Duplicate or empty key in " + BuildInfoFileName + ": '" + key + "'.");
+            result.Add(key, value);
         }
         return result;
     }
