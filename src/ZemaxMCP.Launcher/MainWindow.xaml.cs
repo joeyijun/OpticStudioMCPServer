@@ -238,8 +238,11 @@ public partial class MainWindow : Window
         try
         {
             var snapshots = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZemaxMCP", "snapshots");
+            var networkAllowlist = ShareOnLan.IsChecked == true
+                ? $" --allowed-host {GetLanAddress()} --allowed-origin http://{GetLanAddress()}:*"
+                : string.Empty;
             var startInfo = new ProcessStartInfo(bridge,
-                $"--server \"{server}\" --zemax-root \"{Installation.Root}\" --host {HostName} --port {port} --read-only {(ReadOnlyMode.IsChecked == true ? "true" : "false")} --toolset {SelectedToolsetProfile} --snapshot-dir \"{snapshots}\"")
+                $"--server \"{server}\" --zemax-root \"{Installation.Root}\" --host {HostName} --port {port} --read-only {(ReadOnlyMode.IsChecked == true ? "true" : "false")} --toolset {SelectedToolsetProfile} --snapshot-dir \"{snapshots}\"" + networkAllowlist)
             { UseShellExecute = false, CreateNoWindow = true };
             startInfo.EnvironmentVariables["ZEMAX_MCP_TOKEN"] = _localAccessToken;
             process = Process.Start(startInfo);

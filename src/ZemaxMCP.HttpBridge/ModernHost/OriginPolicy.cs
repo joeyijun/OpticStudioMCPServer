@@ -10,11 +10,11 @@ internal static class OriginPolicy
 {
     private const string AllowedHeaders = "Authorization, Content-Type, Accept, MCP-Protocol-Version, Mcp-Method, Mcp-Name, Mcp-Session-Id";
 
-    public static bool TryApply(HttpContext context)
+    public static bool TryApply(HttpContext context, IReadOnlyCollection<OriginRule> allowedOrigins)
     {
         var origin = context.Request.Headers.Origin.ToString();
         if (string.IsNullOrWhiteSpace(origin)) return true;
-        if (!Uri.TryCreate(origin, UriKind.Absolute, out var originUri) || !IsAllowed(originUri, context.Request.Host))
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var originUri) || !IsAllowed(originUri, allowedOrigins))
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             return false;
@@ -27,16 +27,6 @@ internal static class OriginPolicy
         return true;
     }
 
-    internal static bool IsAllowed(Uri origin, HostString requestHost)
-    {
-        var endpointHost = requestHost.Host;
-        if (string.IsNullOrWhiteSpace(endpointHost)) return false;
-        if (string.Equals(origin.Host, endpointHost, StringComparison.OrdinalIgnoreCase)) return true;
-        return IsLoopback(origin.Host) && IsLoopback(endpointHost);
-    }
-
-    private static bool IsLoopback(string host) =>
-        host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
-        host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
-        host.Equals("::1", StringComparison.OrdinalIgnoreCase);
+    internal static bool IsAllowed(Uri origin, IReadOnlyCollection<OriginRule> allowedOrigins) =>
+        allowedOrigins.Any(rule => rule.Matches(origin));
 }

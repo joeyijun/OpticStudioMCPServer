@@ -172,7 +172,13 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
                 OperationId = operationId,
                 Payload = JsonSerializer.SerializeToElement(new { })
             };
-            await WriteAsync(writer, message, CancellationToken.None).ConfigureAwait(false);
+            await WriteAsync(writer, message, CancellationToken.None,
+                TimeSpan.FromSeconds(_options.CancellationWriteTimeoutSeconds)).ConfigureAwait(false);
+        }
+        catch (TimeoutException ex)
+        {
+            FaultWorkerConnection(ex, expectedWriter: writer);
+            Log.Warning(ex, "Timed out forwarding cancellation to Worker RPC");
         }
         catch (Exception ex) { Log.Warning(ex, "Could not forward cancellation to Worker RPC"); }
     }
@@ -216,18 +222,61 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         lock (_connectionGate) return _writer;
     }
 
-    private async Task WriteAsync(StreamWriter writer, ZemaxRpcEnvelope message, CancellationToken cancellationToken)
+    private async Task WriteAsync(StreamWriter writer, ZemaxRpcEnvelope message, CancellationToken cancellationToken, TimeSpan? writeTimeout = null)
     {
+        var lockTaken = false;
+        var started = Stopwatch.GetTimestamp();
+        CancellationTokenSource? deadline = null;
         try
         {
-            await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try { await writer.WriteLineAsync(JsonSerializer.Serialize(message, _jsonOptions)).ConfigureAwait(false); }
-            finally { _writeGate.Release(); }
+            var lockToken = cancellationToken;
+            if (writeTimeout.HasValue)
+            {
+                deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                deadline.CancelAfter(writeTimeout.Value);
+                lockToken = deadline.Token;
+            }
+            try
+            {
+                await _writeGate.WaitAsync(lockToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (deadline?.IsCancellationRequested == true)
+            {
+                var timeout = new TimeoutException("The Worker RPC pipe did not accept a cancellation message before its write deadline.");
+                FaultWorkerConnection(timeout, expectedWriter: writer);
+                throw timeout;
+            }
+            lockTaken = true;
+            var write = writer.WriteLineAsync(JsonSerializer.Serialize(message, _jsonOptions));
+            if (writeTimeout.HasValue)
+            {
+                var elapsed = Stopwatch.GetElapsedTime(started);
+                var remaining = writeTimeout.Value - elapsed;
+                if (remaining <= TimeSpan.Zero)
+                {
+                    var timeout = new TimeoutException("The Worker RPC pipe did not accept a cancellation message before its write deadline.");
+                    FaultWorkerConnection(timeout, expectedWriter: writer);
+                    throw timeout;
+                }
+                var completed = await Task.WhenAny(write, Task.Delay(remaining)).ConfigureAwait(false);
+                if (completed != write)
+                {
+                    var timeout = new TimeoutException("The Worker RPC pipe did not accept a cancellation message before its write deadline.");
+                    FaultWorkerConnection(timeout, expectedWriter: writer);
+                    throw timeout;
+                }
+            }
+            await write.ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is IOException or ObjectDisposedException)
         {
             FaultWorkerConnection(ex, expectedWriter: writer);
             throw;
+        }
+        finally
+        {
+            if (lockTaken) _writeGate.Release();
+            deadline?.Dispose();
         }
     }
 
@@ -239,15 +288,21 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         if (first == responseTask) return await responseTask.ConfigureAwait(false);
         if (first == callerCancellation)
         {
-            await SendCancellationAsync(operationId).ConfigureAwait(false);
+            _ = SendCancellationAsync(operationId);
             throw new OperationCanceledException(cancellationToken);
         }
 
         Log.Warning("Worker operation {OperationId} exceeded the {Timeout}s soft timeout; requesting cancellation.", operationId, _options.RequestTimeoutSeconds);
-        await SendCancellationAsync(operationId).ConfigureAwait(false);
         var recoveryDelay = TimeSpan.FromSeconds(_options.HardRecoveryTimeoutSeconds - _options.RequestTimeoutSeconds);
-        var afterCancellation = await Task.WhenAny(responseTask, Task.Delay(recoveryDelay)).ConfigureAwait(false);
-        if (afterCancellation == responseTask) return await responseTask.ConfigureAwait(false);
+        var hardDeadline = Task.Delay(recoveryDelay);
+        var cancellationDelivery = SendCancellationAsync(operationId);
+        var afterSoftTimeout = await Task.WhenAny(responseTask, hardDeadline, cancellationDelivery).ConfigureAwait(false);
+        if (afterSoftTimeout == responseTask) return await responseTask.ConfigureAwait(false);
+        if (afterSoftTimeout == cancellationDelivery)
+        {
+            var afterCancellation = await Task.WhenAny(responseTask, hardDeadline).ConfigureAwait(false);
+            if (afterCancellation == responseTask) return await responseTask.ConfigureAwait(false);
+        }
 
         var timeout = new TimeoutException("The Worker did not finish after the soft timeout and cancellation grace period.");
         FaultWorkerConnection(timeout, expectedWriter: writer);

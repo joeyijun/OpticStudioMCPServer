@@ -37,6 +37,9 @@ internal static class Program
         {
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = Array.Empty<string>() });
             builder.WebHost.UseUrls("http://" + options.Host + ":" + options.Port);
+            // Host filtering consumes this standard ASP.NET Core setting. It
+            // is intentionally never the framework's permissive "*" default.
+            builder.WebHost.UseSetting("AllowedHosts", string.Join(";", options.AllowedHosts));
             builder.Host.UseSerilog();
             builder.Services.AddSingleton(options);
             var workerClient = new WorkerRpcClient(options);
@@ -69,11 +72,10 @@ internal static class Program
 
             var app = builder.Build();
             var worker = app.Services.GetRequiredService<WorkerRpcClient>();
-            await worker.StartAsync(app.Lifetime.ApplicationStopping).ConfigureAwait(false);
 
             app.Use(async (context, next) =>
             {
-                if (!OriginPolicy.TryApply(context)) return;
+                if (!OriginPolicy.TryApply(context, options.AllowedOrigins)) return;
                 if (HttpMethods.IsOptions(context.Request.Method))
                 {
                     context.Response.StatusCode = StatusCodes.Status204NoContent;
@@ -118,6 +120,7 @@ internal static class Program
                     snapshotDirectory = options.SnapshotDirectory,
                     requestTimeoutSeconds = options.RequestTimeoutSeconds,
                     hardRecoveryTimeoutSeconds = options.HardRecoveryTimeoutSeconds,
+                    cancellationWriteTimeoutSeconds = options.CancellationWriteTimeoutSeconds,
                     lastClient = activityHealth.LastClient,
                     lastRequestAt = activityHealth.LastRequestAt,
                     activeRequests = activityHealth.ActiveRequests,

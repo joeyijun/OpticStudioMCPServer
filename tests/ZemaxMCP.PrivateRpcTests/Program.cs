@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.IO.Pipes;
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
@@ -23,7 +25,8 @@ internal static class Program
             VerifyOriginBoundary();
             await VerifyPipeFaultRecoveryAsync().ConfigureAwait(false);
             await VerifyHardTimeoutRecoveryAsync().ConfigureAwait(false);
-            Console.WriteLine("Private Host-to-Worker RPC recovery and Origin boundary verification passed.");
+            await VerifyMcpHttpToWorkerEndToEndAsync().ConfigureAwait(false);
+            Console.WriteLine("Private Host-to-Worker RPC recovery, Origin boundary, and MCP HTTP E2E verification passed.");
             return 0;
         }
         catch (Exception ex)
@@ -35,10 +38,20 @@ internal static class Program
 
     private static void VerifyOriginBoundary()
     {
-        if (!OriginPolicy.IsAllowed(new Uri("http://127.0.0.1:4567"), new HostString("127.0.0.1:8000")) ||
-            !OriginPolicy.IsAllowed(new Uri("http://localhost:4567"), new HostString("127.0.0.1:8000")) ||
-            OriginPolicy.IsAllowed(new Uri("https://attacker.example"), new HostString("127.0.0.1:8000")))
-            throw new InvalidOperationException("Origin allow-list did not enforce native/same-host/loopback policy.");
+        var localRules = new[]
+        {
+            OriginRule.AnyPort("http", "127.0.0.1"),
+            OriginRule.AnyPort("http", "localhost"),
+            OriginRule.AnyPort("http", "::1")
+        };
+        if (!OriginPolicy.IsAllowed(new Uri("http://127.0.0.1:4567"), localRules) ||
+            !OriginPolicy.IsAllowed(new Uri("http://localhost:4567"), localRules) ||
+            OriginPolicy.IsAllowed(new Uri("https://attacker.example"), localRules))
+            throw new InvalidOperationException("Origin allow-list did not enforce configured local origins.");
+        var lanRules = new[] { OriginRule.Parse("http://192.168.8.20:3000") };
+        if (!OriginPolicy.IsAllowed(new Uri("http://192.168.8.20:3000"), lanRules) ||
+            OriginPolicy.IsAllowed(new Uri("http://192.168.8.20:3001"), lanRules))
+            throw new InvalidOperationException("An explicit LAN Origin must not inherit a wildcard port.");
     }
 
     private static async Task VerifyPipeFaultRecoveryAsync()
@@ -87,6 +100,121 @@ internal static class Program
         });
     }
 
+    private static async Task VerifyMcpHttpToWorkerEndToEndAsync()
+    {
+        var root = FindRepositoryRoot();
+        var host = Path.Combine(root, "src", "ZemaxMCP.HttpBridge", "bin", "Release", "net10.0-windows", "ZemaxMCP.Host.exe");
+        if (!File.Exists(host)) throw new FileNotFoundException("Build the Host before the MCP HTTP E2E test.", host);
+        var worker = Environment.ProcessPath ?? throw new InvalidOperationException("Test executable path is unavailable.");
+        var port = ReserveLoopbackPort();
+        var testRoot = Path.Combine(Path.GetTempPath(), "ZemaxMCP-mcp-e2e", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(testRoot);
+        var workerLog = Path.Combine(testRoot, "fake-worker-started.txt");
+        var startInfo = new ProcessStartInfo(host,
+            $"--worker \"{worker}\" --host 127.0.0.1 --port {port} --log-dir \"{testRoot}\" --read-only true --allowed-host 127.0.0.1 --allowed-origin http://127.0.0.1:*")
+        {
+            UseShellExecute = false,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        startInfo.Environment["ZEMAX_MCP_TOKEN"] = "private-rpc-e2e-token";
+        startInfo.Environment["ZEMAX_MCP_FAKE_WORKER_LOG"] = workerLog;
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start the Host E2E process.");
+        var succeeded = false;
+
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+            var endpoint = new Uri($"http://127.0.0.1:{port}/mcp");
+            HttpResponseMessage? initialize = null;
+            var lastInitializeFailure = string.Empty;
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (DateTime.UtcNow < deadline && !process.HasExited)
+            {
+                try
+                {
+                    initialize = await SendMcpAsync(client, endpoint,
+                        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"private-rpc-e2e\",\"version\":\"1.0\"}}}", null).ConfigureAwait(false);
+                    if (initialize.IsSuccessStatusCode) break;
+                    lastInitializeFailure = ((int)initialize.StatusCode) + " " + await initialize.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    initialize.Dispose();
+                }
+                catch (HttpRequestException) { }
+                await Task.Delay(100).ConfigureAwait(false);
+            }
+            if (initialize == null || !initialize.IsSuccessStatusCode)
+                throw new InvalidOperationException("The Host did not accept an MCP initialize request: " + lastInitializeFailure);
+            var sessionId = initialize.Headers.TryGetValues("Mcp-Session-Id", out var values) ? values.FirstOrDefault() : null;
+            initialize.Dispose();
+            if (File.Exists(workerLog))
+                throw new InvalidOperationException("Host startup or initialize unexpectedly started the Worker.");
+
+            using var tools = await SendMcpAsync(client, endpoint,
+                "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}", sessionId).ConfigureAwait(false);
+            var toolsBody = await ReadFirstMcpPayloadAsync(tools).ConfigureAwait(false);
+            if (!tools.IsSuccessStatusCode || !toolsBody.Contains("\"tools\"", StringComparison.Ordinal) || !File.Exists(workerLog))
+                throw new InvalidOperationException("MCP HTTP tools/list did not reach the private Fake Worker.");
+
+            using var spoofed = new HttpRequestMessage(HttpMethod.Get, endpoint + "/health");
+            spoofed.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
+            spoofed.Headers.Host = "attacker.example";
+            // The Origin itself is configured as valid. Only Host filtering
+            // may reject this request, proving Origin never trusts Host.
+            spoofed.Headers.TryAddWithoutValidation("Origin", "http://127.0.0.1:4567");
+            using var rejected = await client.SendAsync(spoofed).ConfigureAwait(false);
+            if (rejected.StatusCode != HttpStatusCode.BadRequest)
+                throw new InvalidOperationException("Configured Host filtering did not reject a spoofed Host header.");
+            succeeded = true;
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill();
+            process.WaitForExit(3000);
+            if (succeeded) try { Directory.Delete(testRoot, recursive: true); } catch { }
+        }
+    }
+
+    private static async Task<HttpResponseMessage> SendMcpAsync(HttpClient client, Uri endpoint, string body, string? sessionId)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        };
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
+        request.Headers.TryAddWithoutValidation("Accept", "application/json, text/event-stream");
+        request.Headers.TryAddWithoutValidation("MCP-Protocol-Version", "2025-11-25");
+        if (!string.IsNullOrWhiteSpace(sessionId)) request.Headers.TryAddWithoutValidation("Mcp-Session-Id", sessionId);
+        return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+    }
+
+    private static async Task<string> ReadFirstMcpPayloadAsync(HttpResponseMessage response)
+    {
+        if (string.Equals(response.Content.Headers.ContentType?.MediaType, "text/event-stream", StringComparison.OrdinalIgnoreCase))
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token).ConfigureAwait(false);
+            using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: false);
+            while (await reader.ReadLineAsync(timeout.Token).ConfigureAwait(false) is { } line)
+                if (line.StartsWith("data:", StringComparison.Ordinal)) return line.Substring("data:".Length).Trim();
+            throw new InvalidOperationException("MCP SSE response ended before a data payload was received.");
+        }
+        return await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+    }
+
+    private static int ReserveLoopbackPort()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        return ((IPEndPoint)listener.LocalEndpoint).Port;
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory != null; directory = directory.Parent)
+            if (File.Exists(Path.Combine(directory.FullName, "OpticStudioMCPServer.sln"))) return directory.FullName;
+        throw new DirectoryNotFoundException("Could not locate the repository root from the test output directory.");
+    }
+
     private static async Task RunFakeWorkerAsync(string pipeName)
     {
         using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
@@ -99,6 +227,8 @@ internal static class Program
             throw new InvalidOperationException("Host rejected Fake Worker handshake.");
 
         var mode = Environment.GetEnvironmentVariable("ZEMAX_MCP_FAKE_WORKER_MODE") ?? string.Empty;
+        var workerLog = Environment.GetEnvironmentVariable("ZEMAX_MCP_FAKE_WORKER_LOG");
+        if (!string.IsNullOrWhiteSpace(workerLog)) File.AppendAllText(workerLog, "started" + Environment.NewLine);
         while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
         {
             using var message = JsonDocument.Parse(line);
