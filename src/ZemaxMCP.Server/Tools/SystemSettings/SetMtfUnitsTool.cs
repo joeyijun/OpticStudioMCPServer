@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.SystemSettings;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetMtfUnitsTool
 {
     private readonly IZemaxSession _session;
@@ -17,7 +17,7 @@ public class SetMtfUnitsTool
         string MtfUnits
     );
 
-    [McpServerTool(Name = "zemax_set_mtf_units")]
+    [ZemaxTool(Name = "zemax_set_mtf_units")]
     [Description("Set the MTF units for the system (cycles/mm or cycles/mr)")]
     public async Task<SetMtfUnitsResult> ExecuteAsync(
         [Description("MTF units: CyclesPerMillimeter or CyclesPerMilliradian")] string mtfUnits)

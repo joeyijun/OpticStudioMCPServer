@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Configuration;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GetConfigurationTool
 {
     private readonly IZemaxSession _session;
@@ -18,23 +18,17 @@ public class GetConfigurationTool
         int CurrentConfiguration
     );
 
-    [McpServerTool(Name = "zemax_get_configuration")]
-    [Description("Get the number of configurations and current configuration")]
-    public async Task<GetConfigurationResult> ExecuteAsync()
+    [ZemaxTool(Name = "zemax_get_configuration")]
+    [Description("Get the number of MCE configurations and the current active configuration.")]
+    public async Task<GetConfigurationResult> ExecuteAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            var result = await _session.ExecuteAsync("GetConfiguration", null, system =>
+            return await _session.ExecuteAsync("GetConfiguration", null, system =>
             {
                 var mce = system.MCE;
-                return new GetConfigurationResult(
-                    Success: true,
-                    Error: null,
-                    NumberOfConfigurations: mce.NumberOfConfigurations,
-                    CurrentConfiguration: mce.CurrentConfiguration
-                );
-            });
-            return result;
+                return new GetConfigurationResult(true, null, mce.NumberOfConfigurations, mce.CurrentConfiguration);
+            }, cancellationToken);
         }
         catch (Exception ex)
         {

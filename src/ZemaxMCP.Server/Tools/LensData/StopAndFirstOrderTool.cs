@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public sealed class StopAndFirstOrderTool
 {
     private readonly IZemaxSession _session;
@@ -14,11 +14,11 @@ public sealed class StopAndFirstOrderTool
     public record StopResult(bool Success, string? Error, int StopSurface, string Comment, bool NeedsSave);
     public record FirstOrderResult(bool Success, string? Error, double EffectiveFocalLength, double ParaxialWorkingFNumber, double RealWorkingFNumber, double ParaxialImageHeight, double ParaxialMagnification);
 
-    [McpServerTool(Name = "zemax_get_stop_surface")]
+    [ZemaxTool(Name = "zemax_get_stop_surface")]
     [Description("Read the sequential system stop-surface number and comment.")]
     public Task<StopResult> GetStopAsync() => ReadOrSetStopAsync(null);
 
-    [McpServerTool(Name = "zemax_set_stop_surface")]
+    [ZemaxTool(Name = "zemax_set_stop_surface")]
     [Description("Set the sequential aperture stop to an existing non-object, non-image surface. The file is not saved automatically.")]
     public Task<StopResult> SetStopAsync([Description("Surface number to make the aperture stop")] int surfaceNumber) => ReadOrSetStopAsync(surfaceNumber);
 
@@ -43,7 +43,7 @@ public sealed class StopAndFirstOrderTool
         catch (Exception ex) { return new StopResult(false, ex.Message, -1, "", false); }
     }
 
-    [McpServerTool(Name = "zemax_get_first_order_data")]
+    [ZemaxTool(Name = "zemax_get_first_order_data")]
     [Description("Calculate first-order sequential data directly from the LDE: EFL, paraxial/real working F-number, paraxial image height, and magnification.")]
     public async Task<FirstOrderResult> GetFirstOrderAsync()
     {

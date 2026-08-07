@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.System;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class ConnectTool
 {
     private readonly IZemaxSession _session;
@@ -19,44 +19,44 @@ public class ConnectTool
         string? Mode
     );
 
-    [McpServerTool(Name = "zemax_connect")]
-    [Description("Connect to Zemax OpticStudio. Modes: 'standalone' (default, launches headless instance) or 'extension' (connect to running OpticStudio with UI - requires Programming > Interactive Extension enabled in OpticStudio). A call switches modes or extension instance IDs when necessary.")]
+    [ZemaxTool(Name = "zemax_connect")]
+    [Description("Connect to Zemax OpticStudio. Modes: 'standalone' (default, launches an automated instance) or 'extension' (connect to a running OpticStudio UI with Programming > Interactive Extension enabled). A call switches modes or extension instance IDs when necessary.")]
     public async Task<ConnectResult> ExecuteAsync(
-        [Description("Connection mode: 'standalone' (headless, no UI) or 'extension' (attach to running OpticStudio with UI). Default: standalone.")]
+        [Description("Connection mode: 'standalone' or 'extension'. Default: standalone.")]
         string mode = "standalone",
-        [Description("OpticStudio instance ID for extension mode. Use 0 for the first available instance. Only used when mode is 'extension'.")]
-        int instanceId = 0)
+        [Description("OpticStudio instance ID for extension mode. Use 0 for the first available instance. Ignored in standalone mode.")]
+        int instanceId = 0,
+        CancellationToken cancellationToken = default)
     {
         try
         {
-            var connectionMode = mode.ToLowerInvariant() switch
+            if (string.IsNullOrWhiteSpace(mode))
+                throw new ArgumentException("Connection mode is required.", nameof(mode));
+            if (instanceId < 0)
+                throw new ArgumentOutOfRangeException(nameof(instanceId), "Instance ID cannot be negative.");
+
+            var connectionMode = mode.Trim().ToLowerInvariant() switch
             {
                 "standalone" => ConnectionMode.Standalone,
                 "extension" => ConnectionMode.Extension,
                 _ => throw new ArgumentException($"Invalid mode '{mode}'. Use 'standalone' or 'extension'.")
             };
+            var targetInstanceId = connectionMode == ConnectionMode.Standalone ? 0 : instanceId;
 
-            // The Worker begins a standalone connection in the background. Wait
-            // for it before deciding whether the caller wants the same target or
-            // a mode/instance switch.
             if (_session.IsConnecting)
-            {
-                await _session.WaitForBackgroundConnectAsync();
-            }
+                await _session.WaitForBackgroundConnectAsync(cancellationToken);
 
             if (_session.IsConnected &&
                 _session.CurrentMode == connectionMode &&
-                _session.CurrentInstanceId == instanceId)
+                _session.CurrentInstanceId == targetInstanceId)
             {
                 return Result(success: true);
             }
 
             if (_session.IsConnected)
-            {
                 await _session.DisconnectAsync();
-            }
 
-            var connected = await _session.ConnectAsync(connectionMode, instanceId);
+            var connected = await _session.ConnectAsync(connectionMode, targetInstanceId, cancellationToken);
             return Result(connected, connected ? null : "Failed to connect to OpticStudio");
         }
         catch (Exception ex)
@@ -65,12 +65,12 @@ public class ConnectTool
         }
     }
 
-    [McpServerTool(Name = "zemax_status")]
+    [ZemaxTool(Name = "zemax_status")]
     [Description("Get the current OpticStudio connection status, including the actual connection mode.")]
     public Task<ConnectResult> GetStatusAsync() => Task.FromResult(Result(_session.IsConnected));
 
-    [McpServerTool(Name = "zemax_disconnect")]
-    [Description("Disconnect from Zemax OpticStudio and close the application. Use this to cleanly close the session.")]
+    [ZemaxTool(Name = "zemax_disconnect")]
+    [Description("Disconnect the Worker from OpticStudio. A standalone application owned by the Worker is closed; an Interactive Extension connection is detached.")]
     public async Task<ConnectResult> DisconnectAsync()
     {
         try
@@ -84,19 +84,17 @@ public class ConnectTool
         }
     }
 
-    [McpServerTool(Name = "zemax_restart")]
-    [Description("Restart the Zemax OpticStudio connection using the configured default connection mode.")]
-    public async Task<ConnectResult> RestartAsync()
+    [ZemaxTool(Name = "zemax_restart")]
+    [Description("Restart the OpticStudio connection using the configured default connection mode.")]
+    public async Task<ConnectResult> RestartAsync(CancellationToken cancellationToken = default)
     {
         try
         {
             if (_session.IsConnected)
-            {
                 await _session.DisconnectAsync();
-            }
 
-            await Task.Delay(500);
-            var connected = await _session.ConnectAsync();
+            await Task.Delay(500, cancellationToken);
+            var connected = await _session.ConnectAsync(cancellationToken);
             return Result(connected, connected ? null : "Failed to reconnect to OpticStudio");
         }
         catch (Exception ex)

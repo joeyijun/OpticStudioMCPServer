@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetNumberOfWavelengthsTool
 {
     private readonly IZemaxSession _session;
@@ -17,7 +17,7 @@ public class SetNumberOfWavelengthsTool
         int NumberOfWavelengths
     );
 
-    [McpServerTool(Name = "zemax_set_number_of_wavelengths")]
+    [ZemaxTool(Name = "zemax_set_number_of_wavelengths")]
     [Description("Set the number of wavelengths in the system")]
     public async Task<SetNumberOfWavelengthsResult> ExecuteAsync(
         [Description("Number of wavelengths to set (1-24)")] int numberOfWavelengths)

@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class AddSurfaceTool
 {
     private readonly IZemaxSession _session;
@@ -19,7 +19,7 @@ public class AddSurfaceTool
         int TotalSurfaces
     );
 
-    [McpServerTool(Name = "zemax_add_surface")]
+    [ZemaxTool(Name = "zemax_add_surface")]
     [Description("Add a new surface to the lens system")]
     public async Task<AddSurfaceResult> ExecuteAsync(
         [Description("Position to insert (0 to append before image)")] int insertAt = 0,

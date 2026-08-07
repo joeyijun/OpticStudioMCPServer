@@ -2,7 +2,7 @@ namespace ZemaxMCP.Core.Services.ConstrainedOptimization;
 
 /// <summary>
 /// Persists multistart optimization state between calls to support resume,
-/// progress reporting, and cancellation.
+/// progress reporting, cancellation, and auxiliary save diagnostics.
 /// </summary>
 public class MultistartState
 {
@@ -14,12 +14,12 @@ public class MultistartState
     public bool InitialLmDone { get; set; }
     public int SaveCount { get; set; }
 
-    // Progress tracking (updated from background thread, read by status tool)
     private volatile int _currentTrial;
     private volatile int _maxTrials;
     private volatile bool _isRunning;
     private volatile bool _isInInitialLm;
     private volatile string? _errorMessage;
+    private volatile string? _lastWarning;
     private volatile int _initialLmIteration;
     private volatile int _initialLmMaxIterations;
     private double _initialLmMerit;
@@ -32,6 +32,7 @@ public class MultistartState
     public bool IsRunning => _isRunning;
     public bool IsInInitialLm => _isInInitialLm;
     public string? ErrorMessage => _errorMessage;
+    public string? LastWarning => _lastWarning;
     public int InitialLmIteration => _initialLmIteration;
     public int InitialLmMaxIterations => _initialLmMaxIterations;
     public double InitialLmMerit { get { lock (_lock) return _initialLmMerit; } }
@@ -52,6 +53,7 @@ public class MultistartState
         _isRunning = false;
         _isInInitialLm = false;
         _errorMessage = null;
+        _lastWarning = null;
         _initialLmIteration = 0;
         _initialLmMaxIterations = 0;
         _initialLmMerit = 0;
@@ -72,6 +74,7 @@ public class MultistartState
         _maxTrials = maxTrials;
         _currentTrial = 0;
         _errorMessage = null;
+        _lastWarning = null;
     }
 
     public void UpdateInitialLmProgress(int iteration, int maxIterations, double merit)
@@ -81,10 +84,7 @@ public class MultistartState
         lock (_lock) _initialLmMerit = merit;
     }
 
-    public void SetInitialLmComplete()
-    {
-        _isInInitialLm = false;
-    }
+    public void SetInitialLmComplete() => _isInInitialLm = false;
 
     public void SetCompleted(string? error = null)
     {
@@ -93,9 +93,10 @@ public class MultistartState
         _errorMessage = error;
     }
 
-    /// <summary>
-    /// Create a new CancellationTokenSource for this run.
-    /// </summary>
+    public void SetWarning(string warning) => _lastWarning = warning;
+
+    public void ClearWarning() => _lastWarning = null;
+
     public CancellationToken CreateCancellationToken(CancellationToken cancellationToken = default)
     {
         lock (_lock)
@@ -106,24 +107,12 @@ public class MultistartState
         }
     }
 
-    /// <summary>
-    /// Request cancellation of the running optimization.
-    /// </summary>
     public void RequestCancellation()
     {
-        lock (_lock)
-        {
-            _cts?.Cancel();
-        }
+        lock (_lock) _cts?.Cancel();
     }
 
-    /// <summary>
-    /// Store the background task reference so we can await it if needed.
-    /// </summary>
-    public void SetBackgroundTask(Task task)
-    {
-        _backgroundTask = task;
-    }
+    public void SetBackgroundTask(Task task) => _backgroundTask = task;
 
     public Task? BackgroundTask => _backgroundTask;
 }

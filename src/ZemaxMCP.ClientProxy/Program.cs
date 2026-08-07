@@ -10,6 +10,7 @@ namespace ZemaxMCP.ClientProxy;
 
 internal static class Program
 {
+    private const string ClientInstanceHeader = "X-Zemax-MCP-Client-Instance";
     private static readonly string LogPath = Path.Combine(AppContext.BaseDirectory, "logs", "client-proxy-" + DateTime.Now.ToString("yyyyMMdd") + ".log");
 
     private static int Main(string[] args)
@@ -23,9 +24,13 @@ internal static class Program
         var endpoint = ReadEndpoint(args);
         var accessToken = ReadOption(args, "--token");
         if (string.IsNullOrWhiteSpace(accessToken)) accessToken = Environment.GetEnvironmentVariable("ZEMAX_MCP_TOKEN") ?? "";
+        // One proxy process represents one Claude/Desktop client instance. A
+        // new launch deliberately gets a new identity so two concurrent local
+        // clients with identical clientInfo/IP cannot collapse into one lease.
+        var clientInstanceId = "proxy-" + Guid.NewGuid().ToString("N");
         using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(6) };
         string? sessionId = null;
-        Log("Started local stdio proxy for " + endpoint);
+        Log("Started local stdio proxy for " + endpoint + " instance=" + clientInstanceId);
 
         string? line;
         while ((line = await Console.In.ReadLineAsync().ConfigureAwait(false)) != null)
@@ -37,6 +42,7 @@ internal static class Program
                 request = JObject.Parse(line);
                 using var message = new HttpRequestMessage(HttpMethod.Post, endpoint);
                 message.Headers.TryAddWithoutValidation("Accept", "application/json, text/event-stream");
+                message.Headers.TryAddWithoutValidation(ClientInstanceHeader, clientInstanceId);
                 if (!string.IsNullOrWhiteSpace(accessToken)) message.Headers.TryAddWithoutValidation("Authorization", "Bearer " + accessToken);
                 if (!string.IsNullOrWhiteSpace(sessionId)) message.Headers.TryAddWithoutValidation("Mcp-Session-Id", sessionId);
                 message.Content = new StringContent(line, Encoding.UTF8, "application/json");

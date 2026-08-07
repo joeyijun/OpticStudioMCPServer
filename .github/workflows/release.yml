@@ -33,12 +33,9 @@ jobs:
       - name: Verify discovery, configuration paths, and icons
         shell: pwsh
         run: ./scripts/verify-desktop-components.ps1 -Configuration Release
-      - name: Verify live HTTP security behavior
+      - name: Verify official MCP Host and private RPC boundary
         shell: pwsh
-        run: ./scripts/verify-http-security.ps1 -Configuration Release
-      - name: Verify Streamable HTTP behavior
-        shell: pwsh
-        run: ./scripts/verify-streamable-http.ps1 -Configuration Release
+        run: ./scripts/verify-modern-host.ps1 -Configuration Release
       - name: Verify updater apply and rollback behavior
         shell: pwsh
         run: ./scripts/verify-updater.ps1 -Configuration Release

@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZOSAPI.Editors.LDE;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetAsphericSurfaceTool
 {
     private readonly IZemaxSession _session;
@@ -25,7 +25,7 @@ public class SetAsphericSurfaceTool
         List<AsphericCoefficient> Coefficients
     );
 
-    [McpServerTool(Name = "zemax_set_aspheric_surface")]
+    [ZemaxTool(Name = "zemax_set_aspheric_surface")]
     [Description("Convert a surface to Even Asphere type and set aspheric coefficients. The Even Asphere sag equation is: z = c*r²/(1+sqrt(1-(1+k)*c²*r²)) + α₁*r² + α₂*r⁴ + α₃*r⁶ + α₄*r⁸ + ... where c=1/R (curvature), k=conic, r=radial coordinate.")]
     public async Task<SetAsphericResult> ExecuteAsync(
         [Description("Surface number to modify")] int surfaceNumber,

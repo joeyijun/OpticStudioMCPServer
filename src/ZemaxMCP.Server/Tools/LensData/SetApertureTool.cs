@@ -1,12 +1,12 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetApertureTool
 {
     private readonly IZemaxSession _session;
@@ -20,11 +20,12 @@ public class SetApertureTool
         double ApertureValue
     );
 
-    [McpServerTool(Name = "zemax_set_aperture")]
+    [ZemaxTool(Name = "zemax_set_aperture")]
     [Description("Set the system aperture")]
     public async Task<SetApertureResult> ExecuteAsync(
         [Description("Aperture value (diameter, F/#, NA, etc.)")] double value,
-        [Description("Aperture type: EPD, FNumber, ObjectNA, FloatByStop")] string apertureType = "EPD")
+        [Description("Aperture type: EPD, FNumber, ObjectNA, FloatByStop")] string apertureType = "EPD",
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -50,7 +51,6 @@ public class SetApertureTool
             var result = await _session.ExecuteAsync("SetAperture", parameters, system =>
             {
                 var aperture = system.SystemData.Aperture;
-
                 aperture.ApertureType = apType;
                 aperture.ApertureValue = value;
 
@@ -60,7 +60,7 @@ public class SetApertureTool
                     ApertureType: aperture.ApertureType.ToString(),
                     ApertureValue: aperture.ApertureValue.Sanitize()
                 );
-            });
+            }, cancellationToken);
 
             return result;
         }

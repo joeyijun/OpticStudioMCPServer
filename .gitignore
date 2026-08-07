@@ -33,10 +33,6 @@ artifacts/
 # Rider
 .idea/
 
-# User-specific files
-*.user
-*.suo
-
 # OS files
 Thumbs.db
 ehthumbs.db

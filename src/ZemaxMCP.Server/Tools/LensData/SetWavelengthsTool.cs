@@ -1,12 +1,12 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetWavelengthsTool
 {
     private readonly IZemaxSession _session;
@@ -22,11 +22,12 @@ public class SetWavelengthsTool
         List<Wavelength> Wavelengths
     );
 
-    [McpServerTool(Name = "zemax_set_wavelengths")]
-    [Description("Set wavelength values. Automatically adds wavelengths if needed.")]
+    [ZemaxTool(Name = "zemax_set_wavelengths")]
+    [Description("Set wavelength values in micrometers. Automatically adds or removes wavelengths to match the supplied list.")]
     public async Task<SetWavelengthsResult> ExecuteAsync(
         [Description("Array of wavelength definitions [{wavelength (um), weight}]")] List<WavelengthDefinition> wavelengths,
-        [Description("Primary wavelength number (1-indexed)")] int primaryWavelength = 1)
+        [Description("Primary wavelength number (1-indexed)")] int primaryWavelength = 1,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -53,20 +54,12 @@ public class SetWavelengthsTool
             {
                 var sysWaves = system.SystemData.Wavelengths;
 
-                // Add wavelengths if needed
                 while (sysWaves.NumberOfWavelengths < wavelengths.Count)
-                {
                     sysWaves.AddWavelength(0.55, 1.0);
-                }
-
-                // Remove excess wavelengths if needed
                 while (sysWaves.NumberOfWavelengths > wavelengths.Count)
-                {
                     sysWaves.RemoveWavelength(sysWaves.NumberOfWavelengths);
-                }
 
-                // Configure all wavelengths
-                for (int i = 0; i < wavelengths.Count; i++)
+                for (var i = 0; i < wavelengths.Count; i++)
                 {
                     var wl = sysWaves.GetWavelength(i + 1);
                     wl.Wavelength = wavelengths[i].Wavelength;
@@ -76,7 +69,7 @@ public class SetWavelengthsTool
                 sysWaves.GetWavelength(primaryWavelength).MakePrimary();
 
                 var resultWaves = new List<Wavelength>();
-                for (int i = 0; i < wavelengths.Count; i++)
+                for (var i = 0; i < wavelengths.Count; i++)
                 {
                     var wl = sysWaves.GetWavelength(i + 1);
                     resultWaves.Add(new Wavelength
@@ -88,13 +81,8 @@ public class SetWavelengthsTool
                     });
                 }
 
-                return new SetWavelengthsResult(
-                    Success: true,
-                    Error: null,
-                    NumberOfWavelengths: sysWaves.NumberOfWavelengths,
-                    Wavelengths: resultWaves
-                );
-            });
+                return new SetWavelengthsResult(true, null, sysWaves.NumberOfWavelengths, resultWaves);
+            }, cancellationToken);
 
             return result;
         }

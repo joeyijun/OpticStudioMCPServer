@@ -1,19 +1,19 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GetSurfaceTool
 {
     private readonly IZemaxSession _session;
 
     public GetSurfaceTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_get_surface")]
+    [ZemaxTool(Name = "zemax_get_surface")]
     [Description("Get detailed data for a specific surface")]
     public async Task<Surface> ExecuteAsync(
         [Description("Surface number (0 for object, -1 for image)")] int surfaceNumber)

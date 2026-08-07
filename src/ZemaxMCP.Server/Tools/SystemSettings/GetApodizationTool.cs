@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.SystemSettings;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GetApodizationTool
 {
     private readonly IZemaxSession _session;
@@ -18,7 +18,7 @@ public class GetApodizationTool
         double ApodizationFactor
     );
 
-    [McpServerTool(Name = "zemax_get_apodization")]
+    [ZemaxTool(Name = "zemax_get_apodization")]
     [Description("Get the apodization type and factor settings")]
     public async Task<GetApodizationResult> ExecuteAsync()
     {

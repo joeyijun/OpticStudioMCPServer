@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Services.ConstrainedOptimization;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class MultistartStopTool
 {
     private readonly MultistartState _state;
@@ -19,7 +19,7 @@ public class MultistartStopTool
         string Message
     );
 
-    [McpServerTool(Name = "zemax_multistart_stop")]
+    [ZemaxTool(Name = "zemax_multistart_stop")]
     [Description("Stop a running multistart optimization. The optimizer will finish its current trial, restore the best state found so far, and stop. Use zemax_multistart_status to confirm it has stopped.")]
     public MultistartStopResult Execute()
     {

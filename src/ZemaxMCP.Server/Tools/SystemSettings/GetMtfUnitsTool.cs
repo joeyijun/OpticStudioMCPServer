@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.SystemSettings;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GetMtfUnitsTool
 {
     private readonly IZemaxSession _session;
@@ -17,7 +17,7 @@ public class GetMtfUnitsTool
         string MtfUnits
     );
 
-    [McpServerTool(Name = "zemax_get_mtf_units")]
+    [ZemaxTool(Name = "zemax_get_mtf_units")]
     [Description("Get the current MTF units setting")]
     public async Task<GetMtfUnitsResult> ExecuteAsync()
     {

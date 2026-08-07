@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Services.ConstrainedOptimization;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.System;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SaveFileTool
 {
     private readonly IZemaxSession _session;
@@ -20,28 +20,45 @@ public class SaveFileTool
     public record SaveFileResult(
         bool Success,
         string? Error,
-        string? FilePath
+        string? FilePath,
+        List<string>? Warnings = null
     );
 
-    [McpServerTool(Name = "zemax_save_file")]
-    [Description("Save the current lens system to file")]
+    [ZemaxTool(Name = "zemax_save_file")]
+    [Description("Save the current lens system to file. The Zemax file result is authoritative; a constraint-sidecar failure is returned as a warning rather than falsely reporting that the lens save failed.")]
     public async Task<SaveFileResult> ExecuteAsync(
-        [Description("File path (optional, uses current file if not specified)")] string? filePath = null)
+        [Description("File path (optional, uses current file if not specified)")] string? filePath = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
-            await _session.SaveFileAsync(filePath);
+            if (filePath is not null)
+            {
+                if (string.IsNullOrWhiteSpace(filePath))
+                    return new SaveFileResult(false, "File path cannot be blank. Omit it to save to the current file.", null);
+                filePath = Path.GetFullPath(filePath);
+            }
 
-            var savedPath = filePath ?? _session.CurrentFilePath;
+            var saved = await _session.SaveFileAsync(filePath, cancellationToken);
+            var savedPath = _session.CurrentFilePath;
+            if (!saved || string.IsNullOrWhiteSpace(savedPath) || !File.Exists(savedPath))
+                return new SaveFileResult(false, "OpticStudio did not create the requested lens file.", savedPath);
 
-            // Save constraints sidecar alongside the Zemax file
-            if (!string.IsNullOrEmpty(savedPath))
-                _constraintStore.SaveToFile(savedPath!);
+            var warnings = new List<string>();
+            try
+            {
+                _constraintStore.SaveToFile(savedPath);
+            }
+            catch (Exception ex)
+            {
+                warnings.Add("The Zemax lens file was saved successfully, but the optimization-constraint sidecar could not be saved: " + ex.Message);
+            }
 
             return new SaveFileResult(
                 Success: true,
                 Error: null,
-                FilePath: savedPath
+                FilePath: savedPath,
+                Warnings: warnings.Count > 0 ? warnings : null
             );
         }
         catch (Exception ex)
@@ -49,7 +66,7 @@ public class SaveFileTool
             return new SaveFileResult(
                 Success: false,
                 Error: ex.Message,
-                FilePath: null
+                FilePath: _session.CurrentFilePath
             );
         }
     }

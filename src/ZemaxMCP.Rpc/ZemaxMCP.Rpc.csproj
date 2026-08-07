@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- The private contract must be loadable by both the .NET 10 Host and
+         the .NET Framework Worker. It intentionally contains no MCP types. -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <AssemblyName>ZemaxMCP.Rpc</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" />
+  </ItemGroup>
+</Project>

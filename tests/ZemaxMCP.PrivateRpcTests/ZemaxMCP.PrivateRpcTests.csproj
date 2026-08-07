@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <AssemblyName>ZemaxMCP.PrivateRpcTests</AssemblyName>
+    <UseAppHost>true</UseAppHost>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\..\src\ZemaxMCP.HttpBridge\ZemaxMCP.HttpBridge.csproj" />
+    <ProjectReference Include="..\..\src\ZemaxMCP.Rpc\ZemaxMCP.Rpc.csproj" />
+    <ProjectReference Include="..\..\src\ZemaxMCP.ToolManifest\ZemaxMCP.ToolManifest.csproj" />
+  </ItemGroup>
+</Project>

@@ -26,6 +26,13 @@ public class ZemaxSession : IZemaxSession
     public int? CurrentInstanceId { get; private set; }
     public string? CurrentFilePath { get; private set; }
     public string? ZemaxDataDir { get; private set; }
+    public string? CurrentLicenseStatus { get; private set; }
+    public string? LastLicenseStatus { get; private set; }
+    public bool? LicenseValidForApi { get; private set; }
+    public string? LastConnectionError { get; private set; }
+    public string SnapshotDirectory => _safety.SnapshotDirectory;
+    public string? LastSnapshotPath => _safety.LastSnapshotPath;
+    public event Action<string>? SnapshotCreated;
 
     public async Task WaitForBackgroundConnectAsync(CancellationToken cancellationToken = default)
     {
@@ -95,23 +102,14 @@ public class ZemaxSession : IZemaxSession
             _logger.LogInformation("ZEMAX_ROOT configured: {Configured}", !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ZEMAX_ROOT")));
             _logger.LogInformation("Ansys license environment configured: {Configured}", !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ANSYSLMD_LICENSE_FILE")));
 
-            // Initialize ZOSAPI
-            var zemaxRoot = Environment.GetEnvironmentVariable("ZEMAX_ROOT");
-            bool isInitialized = string.IsNullOrWhiteSpace(zemaxRoot)
-                ? ZOSAPI_NetHelper.ZOSAPI_Initializer.Initialize()
-                : ZOSAPI_NetHelper.ZOSAPI_Initializer.Initialize(zemaxRoot);
-            if (!isInitialized)
-            {
-                throw new ZemaxConnectionException(
-                    $"Failed to initialize ZOSAPI. Ensure OpticStudio is installed. " +
-                    $"ZEMAX_ROOT='{zemaxRoot ?? "<auto-detect>"}'");
-            }
-
+            // ZOSAPI_NetHelper initialization is owned by the Worker startup
+            // sequence after the authenticated Host/Worker contract handshake.
+            // Re-initializing it on every connect/reconnect obscures lifecycle
+            // ownership and provides no additional protection.
             var connection = new ZOSAPI_Connection();
 
             if (mode == ConnectionMode.Standalone)
             {
-                // Create standalone instance
                 _application = connection.CreateNewApplication();
                 if (_application == null)
                 {
@@ -120,7 +118,6 @@ public class ZemaxSession : IZemaxSession
             }
             else if (mode == ConnectionMode.Extension)
             {
-                // Connect to running instance via Interactive Extension
                 _application = connection.ConnectAsExtension(instanceId);
                 if (_application == null)
                 {
@@ -131,18 +128,15 @@ public class ZemaxSession : IZemaxSession
                 }
             }
 
-            // Both connection modes must yield an application before using it.  Keep a
-            // non-null local reference so a future connection mode cannot accidentally
-            // bypass the checks above and cause a less useful NullReferenceException.
             var application = _application ?? throw new ZemaxConnectionException(
                 $"Failed to create an OpticStudio application for connection mode {mode}.");
 
             _logger.LogInformation("ZOSAPI Application created. LicenseStatus={Status}, IsValidLicenseForAPI={Valid}",
                 application.LicenseStatus, application.IsValidLicenseForAPI);
-
-            Console.Error.WriteLine((application.IsValidLicenseForAPI
-                ? "ZEMAX_MCP_STATUS:ZOS_LICENSE_VALID:"
-                : "ZEMAX_MCP_STATUS:ZOS_LICENSE_INVALID:") + application.LicenseStatus);
+            CurrentLicenseStatus = application.LicenseStatus.ToString();
+            LastLicenseStatus = CurrentLicenseStatus;
+            LicenseValidForApi = application.IsValidLicenseForAPI;
+            LastConnectionError = null;
 
             if (!application.IsValidLicenseForAPI)
             {
@@ -151,27 +145,24 @@ public class ZemaxSession : IZemaxSession
 
             _primarySystem = application.PrimarySystem;
             ZemaxDataDir = application.ZemaxDataDir;
-            Console.Error.WriteLine("ZEMAX_MCP_STATUS:ZEMAX_DATA_DIR:" + (ZemaxDataDir ?? string.Empty));
 
             if (_primarySystem == null)
             {
                 throw new ZemaxConnectionException("Failed to get primary optical system");
             }
 
-            // Keep status and save operations aligned with the system OpticStudio
-            // actually opened before this MCP process attached to it.
             var systemFile = _primarySystem.SystemFile;
             CurrentFilePath = string.IsNullOrWhiteSpace(systemFile) ? null : systemFile;
             CurrentMode = mode;
             CurrentInstanceId = instanceId;
 
             _logger.LogInformation("Successfully connected to OpticStudio in {Mode} mode", mode);
-            Console.Error.WriteLine("ZEMAX_MCP_STATUS:ZOS_API_CONNECTED");
             _commandLog.LogResult("Connect", true, $"Connected in {mode} mode", sw.ElapsedMilliseconds);
             return true;
         }
         catch (Exception ex) when (ex is not ZemaxConnectionException)
         {
+            LastConnectionError = ex.Message;
             _logger.LogError(ex, "Failed to connect to OpticStudio");
             _commandLog.LogError("Connect", ex);
             Cleanup();
@@ -179,6 +170,7 @@ public class ZemaxSession : IZemaxSession
         }
         catch (ZemaxConnectionException ex)
         {
+            LastConnectionError = ex.Message;
             _commandLog.LogError("Connect", ex);
             Cleanup();
             throw;
@@ -236,7 +228,6 @@ public class ZemaxSession : IZemaxSession
         Func<IOpticalSystem, T> operation,
         CancellationToken cancellationToken = default)
     {
-        // Wait for background connection if still in progress
         if (IsConnecting)
         {
             await WaitForBackgroundConnectAsync(cancellationToken);
@@ -249,7 +240,10 @@ public class ZemaxSession : IZemaxSession
             try
             {
                 EnsureConnected();
+                var previousSnapshot = _safety.LastSnapshotPath;
                 _safety.BeforeOperation(new ZosApiSystemSnapshot(_primarySystem!), commandName);
+                var createdSnapshot = _safety.LastSnapshotPath;
+                if (!string.Equals(previousSnapshot, createdSnapshot, StringComparison.Ordinal) && createdSnapshot is { Length: > 0 }) SnapshotCreated?.Invoke(createdSnapshot);
                 var result = operation(_primarySystem!);
                 _commandLog.LogResult(commandName, true, result, sw.ElapsedMilliseconds);
                 return result;
@@ -274,7 +268,6 @@ public class ZemaxSession : IZemaxSession
         Action<IOpticalSystem> operation,
         CancellationToken cancellationToken = default)
     {
-        // Wait for background connection if still in progress
         if (IsConnecting)
         {
             await WaitForBackgroundConnectAsync(cancellationToken);
@@ -287,7 +280,10 @@ public class ZemaxSession : IZemaxSession
             try
             {
                 EnsureConnected();
+                var previousSnapshot = _safety.LastSnapshotPath;
                 _safety.BeforeOperation(new ZosApiSystemSnapshot(_primarySystem!), commandName);
+                var createdSnapshot = _safety.LastSnapshotPath;
+                if (!string.Equals(previousSnapshot, createdSnapshot, StringComparison.Ordinal) && createdSnapshot is { Length: > 0 }) SnapshotCreated?.Invoke(createdSnapshot);
                 operation(_primarySystem!);
                 _commandLog.LogResult(commandName, true, null, sw.ElapsedMilliseconds);
             }
@@ -387,6 +383,7 @@ public class ZemaxSession : IZemaxSession
 
         CurrentFilePath = null;
         ZemaxDataDir = null;
+        CurrentLicenseStatus = null;
         CurrentMode = null;
         CurrentInstanceId = null;
     }

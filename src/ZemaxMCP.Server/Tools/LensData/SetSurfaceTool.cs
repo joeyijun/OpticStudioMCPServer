@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetSurfaceTool
 {
     private readonly IZemaxSession _session;
@@ -19,25 +19,29 @@ public class SetSurfaceTool
         List<string>? Warnings = null
     );
 
-    [McpServerTool(Name = "zemax_set_surface")]
-    [Description("Modify properties of a surface in the lens data editor")]
+    [ZemaxTool(Name = "zemax_set_surface")]
+    [Description("Modify properties of a surface in the lens data editor. Omitted nullable arguments are left unchanged; explicit false/empty-string values clear the corresponding stop/solve/text state.")]
     public async Task<SetSurfaceResult> ExecuteAsync(
         [Description("Surface number to modify")] int surfaceNumber,
         [Description("Radius of curvature")] double? radius = null,
         [Description("Thickness to next surface")] double? thickness = null,
-        [Description("Material/glass name")] string? material = null,
+        [Description("Material/glass name. Pass an empty string to clear the material back to AIR.")] string? material = null,
         [Description("Semi-diameter")] double? semiDiameter = null,
         [Description("Conic constant")] double? conic = null,
-        [Description("Surface comment")] string? comment = null,
-        [Description("Set as stop surface. Omit to leave unchanged.")] bool? isStop = null,
-        [Description("Make radius variable. Omit to leave unchanged.")] bool? radiusVariable = null,
-        [Description("Make thickness variable. Omit to leave unchanged.")] bool? thicknessVariable = null,
-        [Description("Make conic variable. Omit to leave unchanged.")] bool? conicVariable = null,
+        [Description("Surface comment. Pass an empty string to clear the comment.")] string? comment = null,
+        [Description("Set or clear stop status. true makes this the stop surface; false clears stop status; omit to leave unchanged.")] bool? isStop = null,
+        [Description("Radius solve state. true makes radius Variable; false makes it Fixed; omit to leave unchanged.")] bool? radiusVariable = null,
+        [Description("Thickness solve state. true makes thickness Variable; false makes it Fixed; omit to leave unchanged.")] bool? thicknessVariable = null,
+        [Description("Conic solve state. true makes conic Variable; false makes it Fixed; omit to leave unchanged.")] bool? conicVariable = null,
         [Description("Minimum bound for thickness variable. Hard constraint the optimizer cannot violate. Requires OpticStudio 2023+.")] double? thicknessMin = null,
-        [Description("Maximum bound for thickness variable. Hard constraint the optimizer cannot violate. Requires OpticStudio 2023+.")] double? thicknessMax = null)
+        [Description("Maximum bound for thickness variable. Hard constraint the optimizer cannot violate. Requires OpticStudio 2023+.")] double? thicknessMax = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
+            if (thicknessMin.HasValue && thicknessMax.HasValue && thicknessMin.Value > thicknessMax.Value)
+                throw new ArgumentException("thicknessMin cannot be greater than thicknessMax.");
+
             var parameters = new Dictionary<string, object?>
             {
                 ["surfaceNumber"] = surfaceNumber,
@@ -74,7 +78,9 @@ public class SetSurfaceTool
                 if (thickness.HasValue)
                     surface.Thickness = thickness.Value;
 
-                if (!string.IsNullOrEmpty(material))
+                // null means "leave unchanged"; an explicit empty string is a
+                // meaningful Zemax value that clears the material back to AIR.
+                if (material is not null)
                     surface.Material = material;
 
                 if (semiDiameter.HasValue)
@@ -83,32 +89,16 @@ public class SetSurfaceTool
                 if (conic.HasValue)
                     surface.Conic = conic.Value;
 
-                if (!string.IsNullOrEmpty(comment))
+                // Preserve the distinction between omitted and explicitly empty.
+                if (comment is not null)
                     surface.Comment = comment;
 
-                if (isStop.HasValue && isStop.Value)
-                    surface.IsStop = true;
+                if (isStop.HasValue)
+                    surface.IsStop = isStop.Value;
 
-                // Set solve status for variables
-                // If a cell has an active solve (e.g. Pickup, Position), it must be
-                // cleared to Fixed first before it can be made Variable.
-                if (radiusVariable.HasValue && radiusVariable.Value)
-                {
-                    ClearSolveIfNeeded(surface.RadiusCell);
-                    surface.RadiusCell.MakeSolveVariable();
-                }
-
-                if (thicknessVariable.HasValue && thicknessVariable.Value)
-                {
-                    ClearSolveIfNeeded(surface.ThicknessCell);
-                    surface.ThicknessCell.MakeSolveVariable();
-                }
-
-                if (conicVariable.HasValue && conicVariable.Value)
-                {
-                    ClearSolveIfNeeded(surface.ConicCell);
-                    surface.ConicCell.MakeSolveVariable();
-                }
+                ApplyVariableSolve(surface.RadiusCell, radiusVariable);
+                ApplyVariableSolve(surface.ThicknessCell, thicknessVariable);
+                ApplyVariableSolve(surface.ConicCell, conicVariable);
 
                 // Set variable bounds (requires OpticStudio 2023+ API)
                 var boundsWarnings = new List<string>();
@@ -148,7 +138,7 @@ public class SetSurfaceTool
                     },
                     Warnings: boundsWarnings.Count > 0 ? boundsWarnings : null
                 );
-            });
+            }, cancellationToken);
 
             return result;
         }
@@ -162,13 +152,21 @@ public class SetSurfaceTool
         }
     }
 
-    private static void ClearSolveIfNeeded(dynamic cell)
+    private static void ApplyVariableSolve(dynamic cell, bool? variable)
     {
+        if (!variable.HasValue) return;
+        if (!variable.Value)
+        {
+            cell.MakeSolveFixed();
+            return;
+        }
+
         var solveType = cell.Solve;
         if (solveType != ZOSAPI.Editors.SolveType.Fixed &&
             solveType != ZOSAPI.Editors.SolveType.Variable)
         {
             cell.MakeSolveFixed();
         }
+        cell.MakeSolveVariable();
     }
 }

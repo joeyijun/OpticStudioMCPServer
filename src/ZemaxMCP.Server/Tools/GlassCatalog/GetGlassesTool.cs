@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Services.GlassCatalog;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.GlassCatalog;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GetGlassesTool
 {
     private readonly IZemaxSession _session;
@@ -30,52 +30,39 @@ public class GetGlassesTool
 
     public record GetGlassesResult(bool Success, string? Error, int TotalCount, List<GlassInfo>? Glasses);
 
-    [McpServerTool(Name = "zemax_get_glasses")]
-    [Description("List glasses in a catalog with properties (Nd, Vd, dPgF, status, cost, TCE, etc.)")]
+    [ZemaxTool(Name = "zemax_get_glasses")]
+    [Description("List glasses in one or more installed AGF catalogs. Every requested catalog must exist; unknown names are not silently skipped.")]
     public Task<GetGlassesResult> ExecuteAsync(
-        [Description("Catalog name(s), comma-separated (e.g., 'SCHOTT' or 'SCHOTT,OHARA')")] string catalogs)
+        [Description("Catalog name(s), comma-separated (for example SCHOTT or SCHOTT,OHARA)")] string catalogs,
+        CancellationToken cancellationToken = default)
     {
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            var requestedNames = ParseRequestedCatalogs(catalogs);
             var glassCatDir = GetGlassCatDir();
             if (glassCatDir == null)
-                return Task.FromResult(new GetGlassesResult(false, "Not connected to OpticStudio or Zemax data directory not available", 0, null));
+                return Task.FromResult(new GetGlassesResult(false, "Not connected to OpticStudio or Zemax data directory not available.", 0, null));
 
             var availableCatalogs = AgfFileParser.DiscoverCatalogs(glassCatDir);
-            var requestedNames = catalogs.Split(',').Select(s => s.Trim()).Where(s => s.Length > 0).ToArray();
+            var missing = requestedNames.Where(name => !availableCatalogs.ContainsKey(name)).ToArray();
+            if (missing.Length > 0)
+                return Task.FromResult(new GetGlassesResult(false, $"Catalogs not found: {string.Join(", ", missing)}", 0, null));
 
             var allGlasses = new List<GlassInfo>();
-            var missingCatalogs = new List<string>();
-
             foreach (var name in requestedNames)
             {
-                if (availableCatalogs.TryGetValue(name, out var agfPath))
-                {
-                    var glasses = AgfFileParser.ParseCatalog(agfPath, name);
-                    allGlasses.AddRange(glasses.Select(g => new GlassInfo(
-                        g.Name, g.CatalogName, g.Nd, g.Vd,
-                        Math.Round(g.DPgF, 6), g.StatusText,
-                        g.TCE, g.RelativeCost,
-                        g.MinWavelength, g.MaxWavelength,
-                        g.Density, g.MeltFrequency, g.Comment
-                    )));
-                }
-                else
-                {
-                    missingCatalogs.Add(name);
-                }
+                cancellationToken.ThrowIfCancellationRequested();
+                var glasses = AgfFileParser.ParseCatalog(availableCatalogs[name], name);
+                allGlasses.AddRange(glasses.Select(g => new GlassInfo(
+                    g.Name, g.CatalogName, g.Nd, g.Vd,
+                    Math.Round(g.DPgF, 6), g.StatusText,
+                    g.TCE, g.RelativeCost,
+                    g.MinWavelength, g.MaxWavelength,
+                    g.Density, g.MeltFrequency, g.Comment)));
             }
 
-            string? error = missingCatalogs.Count > 0
-                ? $"Catalogs not found: {string.Join(", ", missingCatalogs)}"
-                : null;
-
-            return Task.FromResult(new GetGlassesResult(
-                missingCatalogs.Count == 0,
-                error,
-                allGlasses.Count,
-                allGlasses
-            ));
+            return Task.FromResult(new GetGlassesResult(true, null, allGlasses.Count, allGlasses));
         }
         catch (Exception ex)
         {
@@ -83,11 +70,23 @@ public class GetGlassesTool
         }
     }
 
+    private static string[] ParseRequestedCatalogs(string catalogs)
+    {
+        if (string.IsNullOrWhiteSpace(catalogs))
+            throw new ArgumentException("At least one catalog name is required.", nameof(catalogs));
+        var names = catalogs.Split(',')
+            .Select(name => name.Trim())
+            .Where(name => name.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (names.Length == 0)
+            throw new ArgumentException("At least one catalog name is required.", nameof(catalogs));
+        return names;
+    }
+
     private string? GetGlassCatDir()
     {
-        if (!_session.IsConnected || string.IsNullOrEmpty(_session.ZemaxDataDir))
-            return null;
-
+        if (!_session.IsConnected || string.IsNullOrEmpty(_session.ZemaxDataDir)) return null;
         var dir = Path.Combine(_session.ZemaxDataDir, "Glasscat");
         return Directory.Exists(dir) ? dir : null;
     }

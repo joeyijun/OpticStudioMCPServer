@@ -1,12 +1,12 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetFieldsTool
 {
     private readonly IZemaxSession _session;
@@ -22,11 +22,12 @@ public class SetFieldsTool
         List<Field> Fields
     );
 
-    [McpServerTool(Name = "zemax_set_fields")]
-    [Description("Set field point values. Automatically adds fields if needed.")]
+    [ZemaxTool(Name = "zemax_set_fields")]
+    [Description("Set field point values. Automatically adds or removes fields to match the supplied list.")]
     public async Task<SetFieldsResult> ExecuteAsync(
         [Description("Array of field definitions [{x, y, weight}]")] List<FieldDefinition> fields,
-        [Description("Field type: Angle, ObjectHeight, ParaxialImageHeight, RealImageHeight")] string fieldType = "Angle")
+        [Description("Field type: Angle, ObjectHeight, ParaxialImageHeight, RealImageHeight")] string fieldType = "Angle",
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -62,25 +63,15 @@ public class SetFieldsTool
             var result = await _session.ExecuteAsync("SetFields", parameters, system =>
             {
                 var sysFields = system.SystemData.Fields;
-
-                // Set field type
                 sysFields.SetFieldType(fType);
 
-                // Add fields if needed
                 while (sysFields.NumberOfFields < fields.Count)
-                {
                     sysFields.AddField(0, 0, 1.0);
-                }
-
-                // Remove excess fields if needed
                 while (sysFields.NumberOfFields > fields.Count)
-                {
                     sysFields.RemoveField(sysFields.NumberOfFields);
-                }
 
-                // Configure all fields
                 var resultFields = new List<Field>();
-                for (int i = 0; i < fields.Count; i++)
+                for (var i = 0; i < fields.Count; i++)
                 {
                     var field = sysFields.GetField(i + 1);
                     field.X = fields[i].X;
@@ -96,13 +87,8 @@ public class SetFieldsTool
                     });
                 }
 
-                return new SetFieldsResult(
-                    Success: true,
-                    Error: null,
-                    NumberOfFields: sysFields.NumberOfFields,
-                    Fields: resultFields
-                );
-            });
+                return new SetFieldsResult(true, null, sysFields.NumberOfFields, resultFields);
+            }, cancellationToken);
 
             return result;
         }

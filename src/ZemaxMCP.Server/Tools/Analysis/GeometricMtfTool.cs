@@ -1,27 +1,33 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GeometricMtfTool
 {
     private readonly IZemaxSession _session;
 
     public GeometricMtfTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_geometric_mtf")]
-    [Description("Calculate Geometric (ray-based) MTF for ALL fields at once. Returns the full MTF curve (tangential and sagittal) for every field in the system, up to the specified maximum spatial frequency. Only one call is needed — do NOT call this tool multiple times for different fields.")]
+    [ZemaxTool(Name = "zemax_geometric_mtf")]
+    [Description("Calculate Geometric (ray-based) MTF for all fields at once. Returns tangential and sagittal curves for every field up to the requested maximum spatial frequency.")]
     public async Task<MtfData> ExecuteAsync(
-        [Description("Maximum spatial frequency in cycles/mm")] double maxFrequency = 100,
+        [Description("Maximum spatial frequency in cycles/mm; must be finite and positive")] double maxFrequency = 100,
         [Description("Wavelength number (0 for polychromatic)")] int wavelength = 0,
-        [Description("Multiply by diffraction limit")] bool multiplyByDiffractionLimit = false)
+        [Description("Multiply by diffraction limit")] bool multiplyByDiffractionLimit = false,
+        CancellationToken cancellationToken = default)
     {
         try
         {
+            if (double.IsNaN(maxFrequency) || double.IsInfinity(maxFrequency) || maxFrequency <= 0)
+                throw new ArgumentOutOfRangeException(nameof(maxFrequency), "Maximum spatial frequency must be finite and positive.");
+            if (wavelength < 0)
+                throw new ArgumentOutOfRangeException(nameof(wavelength), "Wavelength must be 0 (polychromatic) or a positive wavelength number.");
+
             var parameters = new Dictionary<string, object?>
             {
                 ["maxFrequency"] = maxFrequency,
@@ -31,23 +37,30 @@ public class GeometricMtfTool
 
             return await _session.ExecuteAsync("GeometricMTF", parameters, system =>
             {
+                var wavelengthCount = system.SystemData.Wavelengths.NumberOfWavelengths;
+                if (wavelength > wavelengthCount)
+                    throw new ArgumentOutOfRangeException(nameof(wavelength), $"Wavelength must be 0 or between 1 and {wavelengthCount}.");
+
                 var geoMtf = system.Analyses.New_GeometricMtf();
+                if (geoMtf == null)
+                    throw new InvalidOperationException("OpticStudio did not create a Geometric MTF analysis.");
                 try
                 {
-                    var settings = geoMtf.GetSettings() as ZOSAPI.Analysis.Settings.Mtf.IAS_GeometricMtf;
-                    if (settings != null)
-                    {
-                        settings.MultiplyByDiffractionLimit = multiplyByDiffractionLimit;
-                        settings.MaximumFrequency = maxFrequency;
-                        settings.Wavelength.SetWavelengthNumber(wavelength);
-                    }
+                    if (geoMtf.GetSettings() is not ZOSAPI.Analysis.Settings.Mtf.IAS_GeometricMtf settings)
+                        throw new InvalidOperationException("OpticStudio did not expose Geometric MTF settings through IAS_GeometricMtf.");
+
+                    settings.MultiplyByDiffractionLimit = multiplyByDiffractionLimit;
+                    settings.MaximumFrequency = maxFrequency;
+                    settings.Wavelength.SetWavelengthNumber(wavelength);
 
                     geoMtf.ApplyAndWaitForCompletion();
-
+                    var results = geoMtf.GetResults() ?? throw new InvalidOperationException("Geometric MTF returned no results object.");
                     var tempFile = Path.Combine(Path.GetTempPath(), $"zemax_geomtf_{Guid.NewGuid():N}.txt");
                     try
                     {
-                        geoMtf.GetResults().GetTextFile(tempFile);
+                        results.GetTextFile(tempFile);
+                        if (!File.Exists(tempFile) || new FileInfo(tempFile).Length == 0)
+                            throw new IOException("Geometric MTF produced no text results.");
                         return ParseGeometricMtfTextFile(tempFile, maxFrequency, wavelength);
                     }
                     finally
@@ -59,7 +72,7 @@ public class GeometricMtfTool
                 {
                     geoMtf.Close();
                 }
-            });
+            }, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -76,7 +89,6 @@ public class GeometricMtfTool
     private static MtfData ParseGeometricMtfTextFile(string filePath, double maxFreq, int wavelength)
     {
         var lines = File.ReadAllLines(filePath);
-
         var sections = new List<(string label, List<double> freqs, List<double> tan, List<double> sag)>();
         string? currentLabel = null;
         List<double>? curFreqs = null;
@@ -87,13 +99,11 @@ public class GeometricMtfTool
         foreach (var line in lines)
         {
             var trimmed = line.Trim();
-
             if (trimmed.StartsWith("Field:", StringComparison.OrdinalIgnoreCase) &&
                 trimmed.IndexOf("Field type", StringComparison.OrdinalIgnoreCase) < 0)
             {
                 if (currentLabel != null && curFreqs is { Count: > 0 })
                     sections.Add((currentLabel, curFreqs, curTan!, curSag!));
-
                 currentLabel = trimmed.Substring(6).Trim();
                 curFreqs = new List<double>();
                 curTan = new List<double>();
@@ -103,48 +113,40 @@ public class GeometricMtfTool
             }
 
             var lower = trimmed.ToLowerInvariant();
-            if (!inData && currentLabel != null &&
-                lower.Contains("freq") &&
-                (lower.Contains("tan") || lower.Contains("sag")))
+            if (!inData && currentLabel != null && lower.Contains("freq") && (lower.Contains("tan") || lower.Contains("sag")))
             {
                 inData = true;
                 continue;
             }
-
-            if (!inData || curFreqs == null)
-                continue;
-
+            if (!inData || curFreqs == null) continue;
             if (string.IsNullOrWhiteSpace(trimmed))
             {
-                if (curFreqs.Count > 0)
-                    inData = false;
+                if (curFreqs.Count > 0) inData = false;
                 continue;
             }
 
             var values = trimmed.Split(['\t', ' '], StringSplitOptions.RemoveEmptyEntries);
-            if (values.Length >= 3 &&
-                double.TryParse(values[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double freq))
+            if (values.Length >= 3 && double.TryParse(values[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var freq))
             {
                 curFreqs.Add(freq);
                 AddParsedValue(values, 1, curTan!);
                 AddParsedValue(values, 2, curSag!);
             }
         }
-
         if (currentLabel != null && curFreqs is { Count: > 0 })
             sections.Add((currentLabel, curFreqs, curTan!, curSag!));
+        if (sections.Count == 0)
+            throw new InvalidDataException("Geometric MTF text results contained no parsable data sections. The installed OpticStudio text format may be unsupported.");
 
-        // Separate diffraction limit from field sections
         (string label, List<double> freqs, List<double> tan, List<double> sag)? dlSection = null;
         var fieldSections = new List<(string label, List<double> freqs, List<double> tan, List<double> sag)>();
-
         foreach (var section in sections)
         {
-            if (section.label.IndexOf("Diffraction", StringComparison.OrdinalIgnoreCase) >= 0)
-                dlSection = section;
-            else
-                fieldSections.Add(section);
+            if (section.label.IndexOf("Diffraction", StringComparison.OrdinalIgnoreCase) >= 0) dlSection = section;
+            else fieldSections.Add(section);
         }
+        if (fieldSections.Count == 0)
+            throw new InvalidDataException("Geometric MTF text results contained no field sections.");
 
         var fields = new MtfFieldData[fieldSections.Count];
         for (int i = 0; i < fieldSections.Count; i++)
@@ -171,16 +173,15 @@ public class GeometricMtfTool
             MaxFrequency = maxFreq,
             Wavelength = wavelength,
             TotalFields = fieldSections.Count,
-            DataPoints = fieldSections.Count > 0 ? fieldSections[0].freqs.Count : 0
+            DataPoints = fieldSections[0].freqs.Count
         };
     }
 
     private static void AddParsedValue(string[] values, int index, List<double> list)
     {
-        if (index < values.Length &&
-            double.TryParse(values[index], NumberStyles.Float, CultureInfo.InvariantCulture, out double val))
-            list.Add(val);
+        if (index < values.Length && double.TryParse(values[index], NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+            list.Add(value);
         else
-            list.Add(0);
+            list.Add(double.NaN);
     }
 }

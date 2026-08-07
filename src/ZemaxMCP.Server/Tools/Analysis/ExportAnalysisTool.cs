@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZOSAPI.Analysis;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class ExportAnalysisTool
 {
     private readonly IZemaxSession _session;
@@ -19,75 +19,125 @@ public class ExportAnalysisTool
         string? ImagePath = null,
         string? TextPath = null);
 
-    [McpServerTool(Name = "zemax_export_analysis")]
+    [ZemaxTool(Name = "zemax_export_analysis")]
     [Description(
-        "Run any Zemax analysis and export the result as an image (BMP) and/or text file. "
-        + "Supported types: 'StandardSpot', 'MatrixSpot', 'FftMtf', 'GeometricMtf', "
-        + "'FftPsf', 'HuygensPsf', 'GeometricImageAnalysis', 'RayFan', 'OpdFan', "
-        + "'WavefrontMap', 'SeidelDiagram', 'FieldCurvature', 'LongitudinalAberration', "
-        + "'LateralColor', 'FocalShiftDiagram', 'Draw2D', 'Draw3D'. "
-        + "Aliases accepted: 'spot', 'mtf', 'psf', 'ima', 'layout', etc.")]
+        "Run an explicitly supported OpticStudio analysis and export requested BMP and/or TXT results. " +
+        "Supported types: StandardSpot, MatrixSpot, FftMtf, GeometricMtf, FftPsf, HuygensPsf, " +
+        "GeometricImageAnalysis, RayFan, OpdFan, WavefrontMap, SeidelDiagram, FieldCurvature, " +
+        "LongitudinalAberration, LateralColor, FocalShiftDiagram, Draw2D, Draw3D, FftMtfVsField, " +
+        "FftThroughFocusMtf, RelativeIllumination, Interferogram. Aliases such as spot, mtf, psf, ima and layout are accepted. " +
+        "The tool does not silently fall back from BMP to TXT. Every requested output must be produced, and existing files are preserved unless overwrite=true.")]
     public async Task<ExportResult> ExecuteAsync(
-        [Description("Analysis type name (e.g., 'StandardSpot', 'FftMtf', 'Draw2D', 'ima')")] string analysisType,
-        [Description("File path for the exported image (.bmp)")] string imagePath,
-        [Description("Optional file path for text data (.txt)")] string? textPath = null)
+        [Description("Supported analysis type or documented alias")]
+        string analysisType,
+        [Description("Optional .BMP path. Omit for text-only export.")]
+        string? imagePath = null,
+        [Description("Optional .TXT path. Omit for image-only export.")]
+        string? textPath = null,
+        [Description("Allow replacement of existing requested output files")]
+        bool overwrite = false,
+        CancellationToken cancellationToken = default)
     {
         try
         {
+            if (!TryParseAnalysisType(analysisType, out var analysisId, out var canonicalName))
+                return new ExportResult(false, Error: $"Unknown or unsupported analysis type '{analysisType}'.");
+
+            var finalImagePath = NormalizeOutputPath(imagePath, ".BMP", overwrite);
+            var finalTextPath = NormalizeOutputPath(textPath, ".TXT", overwrite);
+            if (finalImagePath == null && finalTextPath == null)
+                return new ExportResult(false, Error: "At least one output must be requested through imagePath or textPath.");
+
+            cancellationToken.ThrowIfCancellationRequested();
             var parameters = new Dictionary<string, object?>
             {
-                ["analysisType"] = analysisType,
-                ["imagePath"] = imagePath,
-                ["textPath"] = textPath
+                ["analysisType"] = canonicalName,
+                ["imagePath"] = finalImagePath,
+                ["textPath"] = finalTextPath,
+                ["overwrite"] = overwrite
             };
 
             return await _session.ExecuteAsync("ExportAnalysis", parameters, system =>
             {
-                if (!TryParseAnalysisType(analysisType, out var analysisId))
+                cancellationToken.ThrowIfCancellationRequested();
+                var analysis = system.Analyses.New_Analysis(analysisId)
+                    ?? throw new InvalidOperationException($"OpticStudio could not create analysis '{canonicalName}'.");
+
+                try
                 {
-                    return new ExportResult(false,
-                        Error: $"Unknown analysis type: '{analysisType}'. "
-                            + "Use names like 'StandardSpot', 'FftMtf', 'Draw2D', etc.");
+                    ApplyAnalysisCancellable(analysis, cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var results = analysis.GetResults()
+                        ?? throw new InvalidOperationException($"Analysis '{canonicalName}' returned no results object.");
+
+                    string? actualImagePath = null;
+                    if (finalImagePath != null)
+                    {
+                        var tempImagePath = CreateSiblingTempPath(finalImagePath, ".BMP");
+                        try
+                        {
+                            if (!AnalysisBmpHelper.TryExportBmp(results, tempImagePath, cancellationToken) ||
+                                !File.Exists(tempImagePath) || new FileInfo(tempImagePath).Length == 0)
+                            {
+                                throw new NotSupportedException($"Analysis '{canonicalName}' did not expose image/grid data that can be exported as BMP by the standalone MCP exporter.");
+                            }
+
+                            cancellationToken.ThrowIfCancellationRequested();
+                            CommitTempFile(tempImagePath, finalImagePath, overwrite);
+                            actualImagePath = finalImagePath;
+                        }
+                        finally
+                        {
+                            if (File.Exists(tempImagePath)) File.Delete(tempImagePath);
+                        }
+                    }
+
+                    string? actualTextPath = null;
+                    if (finalTextPath != null)
+                    {
+                        var tempTextPath = CreateSiblingTempPath(finalTextPath, ".TXT");
+                        try
+                        {
+                            var created = results.GetTextFile(tempTextPath);
+                            if (!created || !File.Exists(tempTextPath))
+                                throw new NotSupportedException($"Analysis '{canonicalName}' does not support text export through IAR_.GetTextFile.");
+
+                            cancellationToken.ThrowIfCancellationRequested();
+                            CommitTempFile(tempTextPath, finalTextPath, overwrite);
+                            actualTextPath = finalTextPath;
+                        }
+                        finally
+                        {
+                            if (File.Exists(tempTextPath)) File.Delete(tempTextPath);
+                        }
+                    }
+
+                    return new ExportResult(
+                        Success: true,
+                        AnalysisType: canonicalName,
+                        ImagePath: actualImagePath,
+                        TextPath: actualTextPath);
                 }
-
-                var analysis = system.Analyses.New_Analysis(analysisId);
-                analysis.ApplyAndWaitForCompletion();
-
-                var results = analysis.GetResults();
-
-                // Export BMP from data grid (ZOSAPI has no built-in image export in standalone mode)
-                string? actualImagePath = null;
-                EnsureDirectory(imagePath);
-                if (AnalysisBmpHelper.TryExportBmp(results, imagePath))
+                finally
                 {
-                    actualImagePath = imagePath;
+                    try
+                    {
+                        if (analysis.IsRunning())
+                        {
+                            analysis.Terminate();
+                            analysis.WaitForCompletion();
+                        }
+                    }
+                    finally
+                    {
+                        analysis.Close();
+                    }
                 }
-
-                // Export text data
-                string? actualTextPath = null;
-                if (!string.IsNullOrEmpty(textPath))
-                {
-                    EnsureDirectory(textPath!);
-                    results.GetTextFile(textPath!);
-                    if (File.Exists(textPath!))
-                        actualTextPath = textPath;
-                }
-
-                // If no BMP was generated and no text was requested, export text to imagePath as fallback
-                if (actualImagePath == null && actualTextPath == null)
-                {
-                    var fallbackPath = Path.ChangeExtension(imagePath, ".txt");
-                    analysis.ToFile(fallbackPath, false, false);
-                }
-
-                analysis.Close();
-
-                return new ExportResult(
-                    Success: true,
-                    AnalysisType: analysisType,
-                    ImagePath: actualImagePath,
-                    TextPath: actualTextPath);
-            });
+            }, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -95,45 +145,95 @@ public class ExportAnalysisTool
         }
     }
 
-    private static void EnsureDirectory(string filePath)
+    private static void ApplyAnalysisCancellable(IA_ analysis, CancellationToken cancellationToken)
     {
-        var dir = Path.GetDirectoryName(filePath);
-        if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-            Directory.CreateDirectory(dir);
+        cancellationToken.ThrowIfCancellationRequested();
+        analysis.Apply();
+        while (analysis.IsRunning())
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                analysis.Terminate();
+                analysis.WaitForCompletion();
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            Thread.Sleep(50);
+        }
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
-    private static bool TryParseAnalysisType(string name, out AnalysisIDM result)
+    private static string? NormalizeOutputPath(string? filePath, string requiredExtension, bool overwrite)
     {
-        if (Enum.TryParse(name, ignoreCase: true, out result))
-            return true;
+        if (string.IsNullOrWhiteSpace(filePath)) return null;
 
-        var key = name.Replace(" ", "").Replace("_", "").ToLowerInvariant();
-        result = key switch
+        var fullPath = Path.GetFullPath(filePath.Trim());
+        if (!string.Equals(Path.GetExtension(fullPath), requiredExtension, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException($"Output path '{filePath}' must end in {requiredExtension}.", nameof(filePath));
+
+        var directory = Path.GetDirectoryName(fullPath);
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            throw new DirectoryNotFoundException($"Output directory does not exist: {directory}");
+        if (!overwrite && File.Exists(fullPath))
+            throw new IOException($"Output file already exists: {fullPath}. Set overwrite=true to replace it.");
+
+        return fullPath;
+    }
+
+    private static string CreateSiblingTempPath(string finalPath, string extension)
+    {
+        var directory = Path.GetDirectoryName(finalPath)!;
+        return Path.Combine(directory, $".{Path.GetFileNameWithoutExtension(finalPath)}.{Guid.NewGuid():N}.tmp{extension}");
+    }
+
+    private static void CommitTempFile(string tempPath, string finalPath, bool overwrite)
+    {
+        if (overwrite)
         {
-            "standardspot" or "spotdiagram" or "spot" => AnalysisIDM.StandardSpot,
-            "matrixspot" => AnalysisIDM.MatrixSpot,
-            "fftmtf" or "mtf" => AnalysisIDM.FftMtf,
-            "geometricmtf" or "geomtf" => AnalysisIDM.GeometricMtf,
-            "fftpsf" or "psf" => AnalysisIDM.FftPsf,
-            "huygenspsf" => AnalysisIDM.HuygensPsf,
-            "geometricimageanalysis" or "ima" or "gia" => AnalysisIDM.GeometricImageAnalysis,
-            "rayfan" or "transverseray" => AnalysisIDM.RayFan,
-            "opdfan" or "opd" => AnalysisIDM.OpticalPathFan,
-            "wavefrontmap" or "wavefront" => AnalysisIDM.WavefrontMap,
-            "seidel" or "seideldiagram" => AnalysisIDM.SeidelDiagram,
-            "fieldcurvature" or "distortion" => AnalysisIDM.FieldCurvatureAndDistortion,
-            "longitudinalaberration" => AnalysisIDM.LongitudinalAberration,
-            "lateralcolor" => AnalysisIDM.LateralColor,
-            "focalshift" or "chromaticfocalshift" or "focalshiftdiagram" => AnalysisIDM.FocalShiftDiagram,
-            "draw2d" or "layout2d" or "layout" => AnalysisIDM.Draw2D,
-            "draw3d" or "layout3d" => AnalysisIDM.Draw3D,
-            "fftmtfvsfield" or "mtfvsfield" => AnalysisIDM.FftMtfvsField,
-            "fftthroughfocusmtf" or "throughfocusmtf" => AnalysisIDM.FftThroughFocusMtf,
-            "relativeillumination" => AnalysisIDM.RelativeIllumination,
-            "interferogram" => AnalysisIDM.Interferogram,
-            _ => (AnalysisIDM)(-1),
+            if (File.Exists(finalPath)) File.Replace(tempPath, finalPath, null);
+            else File.Move(tempPath, finalPath);
+        }
+        else
+        {
+            File.Move(tempPath, finalPath);
+        }
+    }
+
+    private static bool TryParseAnalysisType(string name, out AnalysisIDM result, out string canonicalName)
+    {
+        canonicalName = string.Empty;
+        result = default;
+        if (string.IsNullOrWhiteSpace(name)) return false;
+
+        var key = name.Trim().Replace(" ", "").Replace("_", "").Replace("-", "").ToLowerInvariant();
+        (AnalysisIDM Id, string Name)? mapped = key switch
+        {
+            "standardspot" or "spotdiagram" or "spot" => (AnalysisIDM.StandardSpot, "StandardSpot"),
+            "matrixspot" => (AnalysisIDM.MatrixSpot, "MatrixSpot"),
+            "fftmtf" or "mtf" => (AnalysisIDM.FftMtf, "FftMtf"),
+            "geometricmtf" or "geomtf" => (AnalysisIDM.GeometricMtf, "GeometricMtf"),
+            "fftpsf" or "psf" => (AnalysisIDM.FftPsf, "FftPsf"),
+            "huygenspsf" => (AnalysisIDM.HuygensPsf, "HuygensPsf"),
+            "geometricimageanalysis" or "ima" or "gia" => (AnalysisIDM.GeometricImageAnalysis, "GeometricImageAnalysis"),
+            "rayfan" or "transverseray" => (AnalysisIDM.RayFan, "RayFan"),
+            "opdfan" or "opd" => (AnalysisIDM.OpticalPathFan, "OpdFan"),
+            "wavefrontmap" or "wavefront" => (AnalysisIDM.WavefrontMap, "WavefrontMap"),
+            "seidel" or "seideldiagram" => (AnalysisIDM.SeidelDiagram, "SeidelDiagram"),
+            "fieldcurvature" or "distortion" => (AnalysisIDM.FieldCurvatureAndDistortion, "FieldCurvature"),
+            "longitudinalaberration" => (AnalysisIDM.LongitudinalAberration, "LongitudinalAberration"),
+            "lateralcolor" => (AnalysisIDM.LateralColor, "LateralColor"),
+            "focalshift" or "chromaticfocalshift" or "focalshiftdiagram" => (AnalysisIDM.FocalShiftDiagram, "FocalShiftDiagram"),
+            "draw2d" or "layout2d" or "layout" => (AnalysisIDM.Draw2D, "Draw2D"),
+            "draw3d" or "layout3d" => (AnalysisIDM.Draw3D, "Draw3D"),
+            "fftmtfvsfield" or "mtfvsfield" => (AnalysisIDM.FftMtfvsField, "FftMtfVsField"),
+            "fftthroughfocusmtf" or "throughfocusmtf" => (AnalysisIDM.FftThroughFocusMtf, "FftThroughFocusMtf"),
+            "relativeillumination" => (AnalysisIDM.RelativeIllumination, "RelativeIllumination"),
+            "interferogram" => (AnalysisIDM.Interferogram, "Interferogram"),
+            _ => null
         };
 
-        return (int)result != -1;
+        if (!mapped.HasValue) return false;
+        result = mapped.Value.Id;
+        canonicalName = mapped.Value.Name;
+        return true;
     }
 }

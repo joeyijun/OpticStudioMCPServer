@@ -1,5 +1,5 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZOSAPI.Editors;
 using ZOSAPI.Editors.LDE;
 using ZemaxMCP.Core.Models;
@@ -7,7 +7,7 @@ using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetSurfaceSolveTool
 {
     private readonly IZemaxSession _session;
@@ -20,7 +20,7 @@ public class SetSurfaceSolveTool
         SolveData? NewSolveData
     );
 
-    [McpServerTool(Name = "zemax_set_surface_solve")]
+    [ZemaxTool(Name = "zemax_set_surface_solve")]
     [Description("Set the solve type for a surface property (radius, thickness, conic, semiDiameter, material, or parameter)")]
     public async Task<SetSurfaceSolveResult> ExecuteAsync(
         [Description("Surface number")] int surfaceNumber,
@@ -35,14 +35,35 @@ public class SetSurfaceSolveTool
         [Description("For EdgeThickness: thickness value")] double? thickness = null,
         [Description("For EdgeThickness: radial height")] double? radialHeight = null,
         [Description("For Position: distance from surface")] double? position = null,
-        [Description("For FNumber: F/# value")] double? fNumber = null,
-        [Description("For CenterOfCurvature: reference surface")] int? referenceSurface = null,
+        [Description("For FNumber: F/# value; when supplied it must be positive")] double? fNumber = null,
+        [Description("For CenterOfCurvature/Position: reference surface")] int? referenceSurface = null,
         [Description("For MaterialSubstitute: catalog name")] string? catalog = null,
         [Description("For MaterialSubstitute: material name")] string? materialName = null,
-        [Description("For MaterialOffset: index offset")] double? indexOffset = null)
+        [Description("For MaterialOffset: index offset")] double? indexOffset = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
+            if (string.IsNullOrWhiteSpace(property))
+                throw new ArgumentException("Property is required.", nameof(property));
+            if (string.IsNullOrWhiteSpace(solveType))
+                throw new ArgumentException("Solve type is required.", nameof(solveType));
+            ValidateFinite(scaleFactor, nameof(scaleFactor));
+            ValidateFinite(offset, nameof(offset));
+            ValidateFinite(height, nameof(height));
+            ValidateFinite(pupilZone, nameof(pupilZone));
+            ValidateFinite(thickness, nameof(thickness));
+            ValidateFinite(radialHeight, nameof(radialHeight));
+            ValidateFinite(position, nameof(position));
+            ValidateFinite(fNumber, nameof(fNumber));
+            ValidateFinite(indexOffset, nameof(indexOffset));
+            if (pupilZone.HasValue && (pupilZone.Value < 0 || pupilZone.Value > 1))
+                throw new ArgumentOutOfRangeException(nameof(pupilZone), "Pupil zone must be between 0 and 1.");
+            if (pickupColumn.HasValue && pickupColumn.Value < 0)
+                throw new ArgumentOutOfRangeException(nameof(pickupColumn), "Pickup column cannot be negative.");
+            if (fNumber.HasValue && fNumber.Value <= 0)
+                throw new ArgumentOutOfRangeException(nameof(fNumber), "F-number must be positive when supplied.");
+
             var parameters = new Dictionary<string, object?>
             {
                 ["surfaceNumber"] = surfaceNumber,
@@ -53,41 +74,30 @@ public class SetSurfaceSolveTool
             var result = await _session.ExecuteAsync("SetSurfaceSolve", parameters, system =>
             {
                 var lde = system.LDE;
-                var surfNum = surfaceNumber;
-
-                if (surfaceNumber == -1)
-                {
-                    surfNum = lde.NumberOfSurfaces - 1;
-                }
+                var surfNum = surfaceNumber == -1 ? lde.NumberOfSurfaces - 1 : surfaceNumber;
 
                 if (surfNum < 0 || surfNum >= lde.NumberOfSurfaces)
-                {
-                    throw new ArgumentException(
-                        $"Invalid surface number: {surfaceNumber}. Valid range: 0-{lde.NumberOfSurfaces - 1}");
-                }
+                    throw new ArgumentException($"Invalid surface number: {surfaceNumber}. Valid range: 0-{lde.NumberOfSurfaces - 1}");
+                if (pickupSurface.HasValue && (pickupSurface.Value < 0 || pickupSurface.Value >= lde.NumberOfSurfaces))
+                    throw new ArgumentOutOfRangeException(nameof(pickupSurface), $"Pickup surface must be between 0 and {lde.NumberOfSurfaces - 1}.");
+                if (referenceSurface.HasValue && (referenceSurface.Value < 0 || referenceSurface.Value >= lde.NumberOfSurfaces))
+                    throw new ArgumentOutOfRangeException(nameof(referenceSurface), $"Reference surface must be between 0 and {lde.NumberOfSurfaces - 1}.");
 
                 var row = lde.GetSurfaceAt(surfNum);
-                dynamic? cell = GetCellForProperty(row, property);
-
+                dynamic? cell = GetCellForProperty(row, property.Trim());
                 if (cell == null)
-                {
                     throw new ArgumentException($"Invalid property: {property}");
-                }
 
-                // Apply the solve based on type
-                ApplySolve(cell, solveType, pickupSurface, pickupColumn, scaleFactor, offset,
+                ApplySolve(cell, solveType.Trim(), pickupSurface, pickupColumn, scaleFactor, offset,
                     height, pupilZone, thickness, radialHeight, position, fNumber,
                     referenceSurface, catalog, materialName, indexOffset);
-
-                // Return the new solve data
-                var newSolveData = GetSolveDataFromCell(cell);
 
                 return new SetSurfaceSolveResult(
                     Success: true,
                     Error: null,
-                    NewSolveData: newSolveData
+                    NewSolveData: GetSolveDataFromCell(cell)
                 );
-            });
+            }, cancellationToken);
 
             return result;
         }
@@ -95,6 +105,12 @@ public class SetSurfaceSolveTool
         {
             return new SetSurfaceSolveResult(false, ex.Message, null);
         }
+    }
+
+    private static void ValidateFinite(double? value, string name)
+    {
+        if (value.HasValue && (double.IsNaN(value.Value) || double.IsInfinity(value.Value)))
+            throw new ArgumentException(name + " must be finite.", name);
     }
 
     private static dynamic? GetCellForProperty(ILDERow row, string property)
@@ -129,79 +145,53 @@ public class SetSurfaceSolveTool
             case "fixed":
                 cell.MakeSolveFixed();
                 break;
-
             case "variable":
                 cell.MakeSolveVariable();
                 break;
-
             case "pickup":
                 if (!pickupSurface.HasValue)
                     throw new ArgumentException("Pickup solve requires pickupSurface parameter");
-                cell.MakeSolvePickup(
-                    pickupSurface.Value,
-                    pickupColumn ?? 0,
-                    scaleFactor ?? 1.0,
-                    offset ?? 0.0);
+                cell.MakeSolvePickup(pickupSurface.Value, pickupColumn ?? 0, scaleFactor ?? 1.0, offset ?? 0.0);
                 break;
-
             case "marginalrayheight":
-                cell.MakeSolveMarginalRayHeight(
-                    height ?? 0.0,
-                    pupilZone ?? 1.0);
+                cell.MakeSolveMarginalRayHeight(height ?? 0.0, pupilZone ?? 1.0);
                 break;
-
             case "marginalrayangle":
-                cell.MakeSolveMarginalRayAngle(
-                    height ?? 0.0,
-                    pupilZone ?? 1.0);
+                cell.MakeSolveMarginalRayAngle(height ?? 0.0, pupilZone ?? 1.0);
                 break;
-
             case "chiefrayheight":
                 cell.MakeSolveChiefRayHeight(height ?? 0.0);
                 break;
-
             case "chiefrayangle":
                 cell.MakeSolveChiefRayAngle(height ?? 0.0);
                 break;
-
             case "edgethickness":
-                cell.MakeSolveEdgeThickness(
-                    thickness ?? 0.0,
-                    radialHeight ?? 0.0);
+                cell.MakeSolveEdgeThickness(thickness ?? 0.0, radialHeight ?? 0.0);
                 break;
-
             case "position":
                 if (!referenceSurface.HasValue)
                     throw new ArgumentException("Position solve requires referenceSurface parameter");
-                cell.MakeSolvePosition(
-                    referenceSurface.Value,
-                    position ?? 0.0);
+                cell.MakeSolvePosition(referenceSurface.Value, position ?? 0.0);
                 break;
-
             case "fnumber":
                 cell.MakeSolveFNumber(fNumber ?? 0.0);
                 break;
-
             case "centerofcurvature":
                 if (!referenceSurface.HasValue)
                     throw new ArgumentException("CenterOfCurvature solve requires referenceSurface parameter");
                 cell.MakeSolveCenterOfCurvature(referenceSurface.Value);
                 break;
-
             case "pupilposition":
                 cell.MakeSolvePupilPosition();
                 break;
-
             case "materialsubstitute":
-                if (string.IsNullOrEmpty(catalog) || string.IsNullOrEmpty(materialName))
+                if (string.IsNullOrWhiteSpace(catalog) || string.IsNullOrWhiteSpace(materialName))
                     throw new ArgumentException("MaterialSubstitute solve requires catalog and materialName parameters");
-                cell.MakeSolveMaterialSubstitute(catalog, materialName);
+                cell.MakeSolveMaterialSubstitute(catalog.Trim(), materialName.Trim());
                 break;
-
             case "materialoffset":
                 cell.MakeSolveMaterialOffset(indexOffset ?? 0.0);
                 break;
-
             default:
                 throw new ArgumentException($"Unknown solve type: {solveType}");
         }
@@ -211,96 +201,42 @@ public class SetSurfaceSolveTool
     {
         var solveData = cell.GetSolveData();
         var solveType = solveData.Type.ToString();
-
-        var result = new SolveData
-        {
-            SolveType = solveType
-        };
+        var result = new SolveData { SolveType = solveType };
 
         switch ((SolveType)solveData.Type)
         {
             case SolveType.SurfacePickup:
-                result = result with
-                {
-                    PickupSurface = solveData.Pickup_Surface,
-                    PickupColumn = solveData.Pickup_Column,
-                    ScaleFactor = solveData.Pickup_ScaleFactor,
-                    Offset = solveData.Pickup_Offset
-                };
+                result = result with { PickupSurface = solveData.Pickup_Surface, PickupColumn = solveData.Pickup_Column, ScaleFactor = solveData.Pickup_ScaleFactor, Offset = solveData.Pickup_Offset };
                 break;
-
             case SolveType.MarginalRayHeight:
-                result = result with
-                {
-                    Height = solveData.MarginalRayHeight_Height,
-                    PupilZone = solveData.MarginalRayHeight_PupilZone
-                };
+                result = result with { Height = solveData.MarginalRayHeight_Height, PupilZone = solveData.MarginalRayHeight_PupilZone };
                 break;
-
             case SolveType.MarginalRayAngle:
-                result = result with
-                {
-                    Height = solveData.MarginalRayAngle_Angle,
-                    PupilZone = solveData.MarginalRayAngle_PupilZone
-                };
+                result = result with { Height = solveData.MarginalRayAngle_Angle, PupilZone = solveData.MarginalRayAngle_PupilZone };
                 break;
-
             case SolveType.ChiefRayHeight:
-                result = result with
-                {
-                    Height = solveData.ChiefRayHeight_Height
-                };
+                result = result with { Height = solveData.ChiefRayHeight_Height };
                 break;
-
             case SolveType.ChiefRayAngle:
-                result = result with
-                {
-                    Height = solveData.ChiefRayAngle_Angle
-                };
+                result = result with { Height = solveData.ChiefRayAngle_Angle };
                 break;
-
             case SolveType.EdgeThickness:
-                result = result with
-                {
-                    Thickness = solveData.EdgeThickness_Thickness,
-                    RadialHeight = solveData.EdgeThickness_RadialHeight
-                };
+                result = result with { Thickness = solveData.EdgeThickness_Thickness, RadialHeight = solveData.EdgeThickness_RadialHeight };
                 break;
-
             case SolveType.Position:
-                result = result with
-                {
-                    Position = solveData.Position_FromSurface
-                };
+                result = result with { Position = solveData.Position_FromSurface };
                 break;
-
             case SolveType.FNumber:
-                result = result with
-                {
-                    FNumber = solveData.FNumber_FNumber
-                };
+                result = result with { FNumber = solveData.FNumber_FNumber };
                 break;
-
             case SolveType.CenterOfCurvature:
-                result = result with
-                {
-                    ReferenceSurface = solveData.CenterOfCurvature_Surface
-                };
+                result = result with { ReferenceSurface = solveData.CenterOfCurvature_Surface };
                 break;
-
             case SolveType.MaterialSubstitute:
-                result = result with
-                {
-                    Catalog = solveData.MaterialSubstitute_Catalog,
-                    MaterialName = solveData.MaterialSubstitute_Material
-                };
+                result = result with { Catalog = solveData.MaterialSubstitute_Catalog, MaterialName = solveData.MaterialSubstitute_Material };
                 break;
-
             case SolveType.MaterialOffset:
-                result = result with
-                {
-                    IndexOffset = solveData.MaterialOffset_Offset
-                };
+                result = result with { IndexOffset = solveData.MaterialOffset_Offset };
                 break;
         }
 
