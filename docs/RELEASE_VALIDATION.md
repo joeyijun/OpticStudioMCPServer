@@ -16,7 +16,8 @@ The hosted checks cover:
 - Host-only `tools/list` and Worker lazy start;
 - client-instance identity and control-lease isolation;
 - updater rollback and signed-update tamper rejection;
-- syntax and protocol-shape validation of the live release verifier.
+- syntax and protocol-shape validation of the live release verifier;
+- functional safety guards that keep global ZOS-API initialization in Worker startup and prohibit structural Merit Function Editor writes from read-only analysis tools.
 
 Hosted CI deliberately does not claim that a ZOS-API call works against a real OpticStudio build because proprietary ZOS-API assemblies and a valid license are not available on the runner.
 
@@ -118,11 +119,12 @@ For each public tool, review the following contract:
 ### Stage C — Read-only analysis (in progress)
 
 - `zemax_ray_trace` and `zemax_ray_trace_extended` validate normalized Hx/Hy/Px/Py in `[-1,1]`, wavelength and surface ranges, propagate cancellation, and report success only when the ray-trace API succeeds with error code zero.
-- `zemax_spot_diagram` no longer inserts temporary RSCE/RSRE rows into the user's Merit Function Editor. It evaluates the operands with `IMeritFunctionEditor.GetOperandValue`, keeping the ReadOnly tool side-effect free even when analysis fails. Field normalization now follows rectangular versus radial field normalization semantics.
-- `zemax_rms_spot` likewise uses `GetOperandValue` for RSCE/RSRE/RSCH/RSRH instead of temporary MFE rows, validates normalized field coordinates/reference/wavelength, and propagates cancellation.
-- `zemax_fft_mtf` rejects invalid frequency/wavelength/sampling values instead of silently falling back to default sampling. Empty/unparsable analysis text is an explicit failure rather than a successful empty result.
+- `zemax_spot_diagram`, `zemax_rms_spot`, and `zemax_cardinal_points` no longer insert temporary operands into the user's Merit Function Editor. They evaluate operands with `IMeritFunctionEditor.GetOperandValue`, so these ReadOnly tools remain side-effect free even when analysis fails. CI now rejects structural MFE writes anywhere under `Tools/Analysis`.
+- Spot-diagram field normalization follows rectangular versus radial field-normalization semantics instead of applying one radial-style denominator to both modes.
+- `zemax_fft_mtf`, `zemax_geometric_mtf`, and `zemax_fft_mtf_vs_field` reject invalid frequency/wavelength/sampling values instead of silently falling back to defaults. Missing settings/results, empty output files, and empty/unparsable field/frequency sections are explicit failures instead of successful empty payloads.
 - `zemax_fft_psf` rejects invalid named sampling/output/type settings rather than silently retaining defaults, validates field/wavelength/surface/image-delta values, checks result/grid validity, propagates cancellation, and reports version-sensitive optional-setting/text-export failures as warnings.
 - `zemax_huygens_psf` applies the same strict enum/range/result contract and warning behavior to Huygens PSF while preserving the typed `IAS_HuygensPsf` settings path.
+- `zemax_seidel_coefficients` validates the requested wavelength, requires a real analysis/results/text payload, propagates cancellation, and fails if no coefficient table can be parsed instead of returning a zero-filled successful result. Unparsable optional numeric header/table values are represented as `NaN` rather than fabricated zeroes.
 
 Stage C is not complete. Text-output parsers and PSF grid semantics are especially dependent on the installed OpticStudio/ZOS-API version and must be exercised on a licensed test machine before release.
 
