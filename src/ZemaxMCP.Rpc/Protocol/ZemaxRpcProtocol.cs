@@ -26,7 +26,6 @@ public sealed class ZemaxRpcEnvelope
     public string Kind { get; set; } = string.Empty;
     public string RequestId { get; set; } = string.Empty;
     public string OperationId { get; set; } = string.Empty;
-    public string ClientId { get; set; } = string.Empty;
     public JsonElement Payload { get; set; }
 }
 
