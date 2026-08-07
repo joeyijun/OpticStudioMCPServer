@@ -21,6 +21,8 @@ internal sealed class WorkerRpcServer
     private readonly WorkerToolRegistry _tools;
     private readonly SemaphoreSlim _executionGate = new(1, 1);
     private readonly SemaphoreSlim _writeGate = new(1, 1);
+    private readonly SemaphoreSlim _eventSignal = new(0);
+    private readonly ConcurrentQueue<ZemaxRpcEnvelope> _events = new();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _operations = new(StringComparer.Ordinal);
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -34,10 +36,12 @@ internal sealed class WorkerRpcServer
     {
         using var reader = new StreamReader(input, Encoding.UTF8, false, 4096, leaveOpen: true);
         using var writer = new StreamWriter(output, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
+        using var eventShutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var eventPump = PumpEventsAsync(writer, eventShutdown.Token);
         var jobs = _services.GetRequiredService<McpJobManager>();
         var session = _services.GetRequiredService<IZemaxSession>();
-        Action<McpJobSnapshot> jobChanged = job => _ = WriteProgressAsync(writer, ToWorkerJobStatus(job));
-        Action<string> snapshotCreated = path => _ = WriteSnapshotCreatedAsync(writer, path);
+        Action<McpJobSnapshot> jobChanged = job => EnqueueProgress(ToWorkerJobStatus(job));
+        Action<string> snapshotCreated = path => EnqueueSnapshot(path);
         jobs.JobChanged += jobChanged;
         session.SnapshotCreated += snapshotCreated;
         try
@@ -76,6 +80,9 @@ internal sealed class WorkerRpcServer
         {
             jobs.JobChanged -= jobChanged;
             session.SnapshotCreated -= snapshotCreated;
+            eventShutdown.Cancel();
+            try { _eventSignal.Release(); } catch { }
+            try { await eventPump.ConfigureAwait(false); } catch (OperationCanceledException) { }
         }
     }
 
@@ -85,19 +92,6 @@ internal sealed class WorkerRpcServer
         {
             switch (message.Kind)
             {
-                case ZemaxRpcProtocol.GetToolCatalog:
-                    // Compatibility-only RPC v2 shim. The public Host serves
-                    // tools/list from StaticToolManifest and never calls this.
-                    var catalogueRequest = message.Payload.Deserialize<ToolCatalogRequest>(_jsonOptions) ?? new ToolCatalogRequest();
-                    await WriteResultAsync(writer, message.RequestId, message.OperationId,
-                        new
-                        {
-                            tools = StaticToolManifest.All
-                                .Where(tool => StaticToolManifest.IsAllowed(catalogueRequest.Toolset, tool.Name, catalogueRequest.ReadOnly))
-                                .Select(tool => new { name = tool.Name, description = tool.Description, inputSchema = tool.InputSchema })
-                                .ToList()
-                        }).ConfigureAwait(false);
-                    return;
                 case ZemaxRpcProtocol.GetStatus:
                     await WriteResultAsync(writer, message.RequestId, message.OperationId, CreateStatus()).ConfigureAwait(false);
                     return;
@@ -155,6 +149,8 @@ internal sealed class WorkerRpcServer
         var jobs = _services.GetRequiredService<McpJobManager>();
         return new WorkerStatus
         {
+            RpcVersion = ZemaxRpcProtocol.Version,
+            ManifestFingerprint = StaticToolManifest.ContractFingerprint,
             ZosApiLoaded = true,
             Connected = session.IsConnected,
             ConnectionMode = session.CurrentMode?.ToString() ?? "not-connected",
@@ -180,8 +176,9 @@ internal sealed class WorkerRpcServer
         Message = job.Message
     };
 
-    private Task WriteProgressAsync(StreamWriter writer, WorkerJobStatus job) =>
-        WriteAsync(writer, new ZemaxRpcEnvelope
+    private void EnqueueProgress(WorkerJobStatus job)
+    {
+        _events.Enqueue(new ZemaxRpcEnvelope
         {
             Kind = ZemaxRpcProtocol.Progress,
             OperationId = job.JobId,
@@ -195,13 +192,28 @@ internal sealed class WorkerRpcServer
                 Message = job.Message
             }, _jsonOptions)
         });
+        _eventSignal.Release();
+    }
 
-    private Task WriteSnapshotCreatedAsync(StreamWriter writer, string path) =>
-        WriteAsync(writer, new ZemaxRpcEnvelope
+    private void EnqueueSnapshot(string path)
+    {
+        _events.Enqueue(new ZemaxRpcEnvelope
         {
             Kind = ZemaxRpcProtocol.SnapshotCreated,
             Payload = JsonSerializer.SerializeToElement(new SnapshotCreatedEvent { Path = path }, _jsonOptions)
         });
+        _eventSignal.Release();
+    }
+
+    private async Task PumpEventsAsync(StreamWriter writer, CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await _eventSignal.WaitAsync(cancellationToken).ConfigureAwait(false);
+            while (_events.TryDequeue(out var message))
+                await WriteAsync(writer, message).ConfigureAwait(false);
+        }
+    }
 
     private Task WriteResultAsync(StreamWriter writer, string requestId, string operationId, object result) =>
         WriteAsync(writer, new ZemaxRpcEnvelope
