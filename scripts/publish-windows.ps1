@@ -42,9 +42,11 @@ if (-not $netHelperPath) {
 function Get-VersionMetadata([string]$Path) {
   $file = [Diagnostics.FileVersionInfo]::GetVersionInfo($Path)
   $assembly = [Reflection.AssemblyName]::GetAssemblyName($Path)
+  $fileVersion = if ($null -eq $file.FileVersion) { "" } else { $file.FileVersion }
+  $productVersion = if ($null -eq $file.ProductVersion) { "" } else { $file.ProductVersion }
   return [PSCustomObject]@{
-    FileVersion = ($file.FileVersion ?? "").Replace("`r", " ").Replace("`n", " ").Trim()
-    ProductVersion = ($file.ProductVersion ?? "").Replace("`r", " ").Replace("`n", " ").Trim()
+    FileVersion = $fileVersion.Replace("`r", " ").Replace("`n", " ").Trim()
+    ProductVersion = $productVersion.Replace("`r", " ").Replace("`n", " ").Trim()
     AssemblyVersion = $assembly.Version.ToString()
   }
 }
