@@ -11,11 +11,14 @@ namespace ZemaxMCP.Rpc;
 /// </summary>
 public static class ZemaxRpcProtocol
 {
-    // v2 removes tool discovery from the private RPC boundary. Tool schemas are
-    // generated at build time and served directly by the public Host.
+    // v2 makes tool discovery Host-owned through the static manifest. The old
+    // catalog command remains temporarily accepted as a compatibility shim for
+    // mixed development binaries, but the public Host never calls it.
     public const int Version = 2;
     public const string Hello = "hello";
     public const string HelloAccepted = "hello-accepted";
+    [Obsolete("Tool discovery is Host-owned in RPC v2.")]
+    public const string GetToolCatalog = "get-tool-catalog";
     public const string InvokeTool = "invoke-tool";
     public const string CancelOperation = "cancel-operation";
     public const string GetStatus = "get-status";
@@ -47,6 +50,13 @@ public sealed class WorkerHello
     public int HostProcessId { get; set; }
     public int WorkerProcessId { get; set; }
     public string Secret { get; set; } = string.Empty;
+}
+
+[Obsolete("Tool discovery is Host-owned in RPC v2.")]
+public sealed class ToolCatalogRequest
+{
+    public string Toolset { get; set; } = "full-expert";
+    public bool ReadOnly { get; set; }
 }
 
 public sealed class ToolInvocationRequest
