@@ -23,19 +23,15 @@ public sealed class QuickFocusTool
     {
         try
         {
-            var parsed = criterion.Trim().ToLowerInvariant() switch
-            {
-                "spotsizeradial" => ZOSAPI.Tools.General.QuickFocusCriterion.SpotSizeRadial,
-                "spotsizexonly" => ZOSAPI.Tools.General.QuickFocusCriterion.SpotSizeXOnly,
-                "spotsizeyonly" => ZOSAPI.Tools.General.QuickFocusCriterion.SpotSizeYOnly,
-                "rmswavefront" => ZOSAPI.Tools.General.QuickFocusCriterion.RMSWavefront,
-                _ => throw new ArgumentException("Criterion must be SpotSizeRadial, SpotSizeXOnly, SpotSizeYOnly, or RMSWavefront.")
-            };
+            var allowedCriteria = new[] { "SpotSizeRadial", "SpotSizeXOnly", "SpotSizeYOnly", "RMSWavefront" };
+            var criterionName = allowedCriteria.FirstOrDefault(value => string.Equals(value, criterion?.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (criterionName == null || !Enum.TryParse<ZOSAPI.Tools.General.QuickFocusCriterion>(criterionName, true, out var parsed))
+                throw new ArgumentException("Criterion must be SpotSizeRadial, SpotSizeXOnly, SpotSizeYOnly, or RMSWavefront.");
             if (double.IsNaN(timeoutSeconds) || double.IsInfinity(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 300)
                 throw new ArgumentOutOfRangeException(nameof(timeoutSeconds), "Timeout must be between 1 and 300 seconds.");
             return await _session.ExecuteAsync("QuickFocus", new Dictionary<string, object?>
             {
-                ["criterion"] = criterion, ["useCentroid"] = useCentroid, ["timeoutSeconds"] = timeoutSeconds
+                ["criterion"] = criterionName, ["useCentroid"] = useCentroid, ["timeoutSeconds"] = timeoutSeconds
             }, system =>
             {
                 if (system.LDE.NumberOfSurfaces < 3)
