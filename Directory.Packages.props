@@ -4,33 +4,20 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- MCP SDK -->
-    <!-- v2 adds the stateless 2026-07-28 protocol while retaining legacy
-         initialize/session compatibility for 2025-era clients. -->
     <PackageVersion Include="ModelContextProtocol" Version="2.1.0" />
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.1.0" />
 
     <!-- Build-time source analysis -->
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />
 
-    <!-- .NET Extensions -->
-    <!-- Keep direct references aligned with the ModelContextProtocol net48 runtime. -->
+    <!-- .NET Extensions used directly by source projects -->
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.7" />
-    <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.7" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.7" />
     <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.7" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="10.0.7" />
-    <PackageVersion Include="System.Management" Version="8.0.0" />
-    <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="10.0.7" />
-    <PackageVersion Include="System.Buffers" Version="4.6.1" />
-    <PackageVersion Include="System.Memory" Version="4.6.3" />
-    <PackageVersion Include="System.Numerics.Vectors" Version="4.6.1" />
-    <PackageVersion Include="System.Runtime.CompilerServices.Unsafe" Version="6.1.2" />
 
     <!-- Logging -->
-    <PackageVersion Include="Serilog" Version="3.1.1" />
     <PackageVersion Include="Serilog.Extensions.Hosting" Version="8.0.0" />
-    <PackageVersion Include="Serilog.Sinks.Console" Version="5.0.1" />
     <PackageVersion Include="Serilog.Sinks.File" Version="6.0.0" />
     <PackageVersion Include="Serilog.AspNetCore" Version="9.0.0" />
 
