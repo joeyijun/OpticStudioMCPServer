@@ -30,7 +30,7 @@ public class MultistartOptimizeTool
         string? JobId = null);
 
     [ZemaxTool(Name = "zemax_multistart_optimize")]
-    [Description("Start non-blocking custom multistart optimization. Cancellation propagates through each LM/Jacobian evaluation and restores the best accepted design. Checkpoint saves use CopySystem so the active lens file identity is not changed.")]
+    [Description("Start non-blocking custom multistart optimization. Cancellation propagates through variable/material discovery and every LM/Jacobian evaluation; cancellation restores the best accepted design. Checkpoint saves use CopySystem so the active lens file identity is not changed.")]
     public MultistartOptimizeResult Execute(
         [Description("Number of random restart trials; must be > 0.")] int maxTrials = 100,
         [Description("LM iterations per trial; must be > 0.")] int lmIterationsPerTrial = 50,
@@ -92,6 +92,7 @@ public class MultistartOptimizeTool
                 {
                     var cancellationToken = _multistartState.CreateCancellationToken(context.CancellationToken);
                     context.ReportProgress(0, "Waiting for the ZOS-API job slot.");
+                    cancellationToken.ThrowIfCancellationRequested();
                     await _session.ExecuteAsync("MultistartOptimize",
                         new Dictionary<string, object?>
                         {
@@ -109,16 +110,19 @@ public class MultistartOptimizeTool
                         },
                         system =>
                         {
+                            cancellationToken.ThrowIfCancellationRequested();
                             var scanner = new VariableScanner();
                             var meritReader = new MeritFunctionReader();
                             var multistartOptimizer = new MultistartOptimizer(meritReader);
-                            var variables = scanner.ScanVariables(system);
+                            var variables = scanner.ScanVariables(system, cancellationToken);
                             _constraintStore.ApplyConstraints(variables);
-                            var substituteMaterials = scanner.ScanMaterials(system)
+                            cancellationToken.ThrowIfCancellationRequested();
+                            var substituteMaterials = scanner.ScanMaterials(system, cancellationToken)
                                 .Where(material => material.SolveType == ZOSAPI.Editors.SolveType.MaterialSubstitute &&
                                                    material.SubstituteGlasses != null &&
                                                    material.SubstituteGlasses.Length > 1)
                                 .ToList();
+                            cancellationToken.ThrowIfCancellationRequested();
 
                             Action<int, double> onImprovement = (trial, merit) =>
                             {
