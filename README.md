@@ -51,9 +51,11 @@ The Worker reports its installed assembly version through MCP `serverInfo.versio
 
 The Host starts the Worker through a current-user-only named pipe. The Host is the pipe server, so a Worker cannot reserve the random pipe name first. During startup it verifies the connecting Worker PID and a per-launch random secret before accepting MCP messages. `--worker-startup-timeout-seconds` controls the connection-and-handshake deadline (default **90**, range **10–600**); the Host detects an early Worker exit immediately instead of always waiting for the deadline.
 
+The Host also keeps the established recovery boundary: a command that exceeds the **300-second** soft timeout receives a Worker cancellation request, then has a bounded grace period until the **360-second** hard-recovery timeout. A non-responsive Worker is terminated and its pipe generation is invalidated, so the following MCP request starts a clean Worker instead of leaving the service permanently blocked.
+
 ### MCP protocol compatibility
 
-The .NET 10 Host uses `ModelContextProtocol.AspNetCore` 2.1.0, so the upstream SDK owns Streamable HTTP negotiation, protocol compatibility, headers, request IDs, SSE, and future protocol upgrades. The Worker is intentionally not an MCP server: it receives a versioned `command + arguments` RPC envelope and returns typed results, progress, cancellation acknowledgements, and errors.
+The .NET 10 Host uses `ModelContextProtocol.AspNetCore` 2.1.0, so the upstream SDK owns Streamable HTTP negotiation, protocol compatibility, headers, request IDs, SSE, and future protocol upgrades. The Worker exposes no MCP transport and receives only versioned `command + arguments` RPC envelopes. The current release retains the existing annotated-tool binder inside the Worker as a migration adapter; moving the static tool schemas and native command descriptors fully into the Host is the next architectural step.
 
 The separate OpticStudio control lease expires after fifteen minutes without activity (unless an operation is active). This keeps a live optical system single-owner even when a modern client uses independent stateless requests.
 

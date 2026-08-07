@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Security.Claims;
 using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Protocol;
@@ -43,11 +45,6 @@ internal static class Program
             builder.Services.AddSingleton(controlLease);
             var activity = new McpActivityMonitor();
             builder.Services.AddSingleton(activity);
-            builder.Services.AddCors(cors => cors.AddDefaultPolicy(policy => policy
-                .AllowAnyOrigin()
-                .AllowAnyMethod()
-                .WithHeaders("Authorization", "Content-Type", "Accept", "MCP-Protocol-Version", "Mcp-Method", "Mcp-Name", "Mcp-Session-Id")));
-
             builder.Services
                 .AddMcpServer(server => server.ServerInfo = new()
                 {
@@ -64,9 +61,7 @@ internal static class Program
                     await workerClient.ListToolsAsync(cancellationToken).ConfigureAwait(false))
                 .WithCallToolHandler(async (request, cancellationToken) =>
                 {
-                    var clientId = request.User?.FindFirst("zemax-mcp-client")?.Value
-                        ?? request.Server?.ClientInfo?.Name
-                        ?? "anonymous";
+                    var clientId = ResolveControlIdentity(request);
                     using var call = activity.Begin(clientId, request.Params.Name);
                     using var lease = await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false);
                     return await workerClient.CallToolAsync(request.Params, cancellationToken).ConfigureAwait(false);
@@ -76,18 +71,30 @@ internal static class Program
             var worker = app.Services.GetRequiredService<WorkerRpcClient>();
             await worker.StartAsync(app.Lifetime.ApplicationStopping).ConfigureAwait(false);
 
-            app.UseCors();
             app.Use(async (context, next) =>
             {
+                if (!OriginPolicy.TryApply(context)) return;
+                if (HttpMethods.IsOptions(context.Request.Method))
+                {
+                    context.Response.StatusCode = StatusCodes.Status204NoContent;
+                    return;
+                }
                 if (context.Request.Path.StartsWithSegments(options.McpPath) && !HasValidToken(context, options.AccessToken))
                 {
                     context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                     context.Response.Headers.WWWAuthenticate = "Bearer";
                     return;
                 }
-                var claimedClient = context.Request.Headers["Mcp-Name"].FirstOrDefault();
-                if (string.IsNullOrWhiteSpace(claimedClient)) claimedClient = context.Connection.RemoteIpAddress?.ToString() ?? "local";
-                context.User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("zemax-mcp-client", claimedClient) }, "zemax-mcp-token"));
+                // A single shared launcher token is authentication, not a
+                // client identity. Keep the token profile distinct so leases
+                // can fall back to client-info + remote endpoint. Per-client
+                // tokens can later supply a non-shared profile here.
+                var claims = new[]
+                {
+                    new Claim("zemax-mcp-auth-profile", string.IsNullOrWhiteSpace(options.AccessToken) ? "local" : "shared-token"),
+                    new Claim("zemax-mcp-remote-endpoint", context.Connection.RemoteIpAddress?.ToString() ?? "local")
+                };
+                context.User = new ClaimsPrincipal(new ClaimsIdentity(claims, "zemax-mcp-token"));
                 await next().ConfigureAwait(false);
             });
             app.MapGet(options.McpPath + "/health", async (CancellationToken cancellationToken) =>
@@ -106,10 +113,11 @@ internal static class Program
                     zemaxDataDirectory = status?.OpticStudioDataDirectory ?? "Not reported",
                     loadedZosApiFiles = new { zosApi = status?.ZosApiAssembly },
                     authenticationRequired = !string.IsNullOrWhiteSpace(options.AccessToken),
-                    originValidationEnabled = false,
+                    originValidationEnabled = true,
                     readOnly = options.ReadOnly,
                     snapshotDirectory = options.SnapshotDirectory,
                     requestTimeoutSeconds = options.RequestTimeoutSeconds,
+                    hardRecoveryTimeoutSeconds = options.HardRecoveryTimeoutSeconds,
                     lastClient = activityHealth.LastClient,
                     lastRequestAt = activityHealth.LastRequestAt,
                     activeRequests = activityHealth.ActiveRequests,
@@ -138,7 +146,24 @@ internal static class Program
     {
         if (string.IsNullOrWhiteSpace(token)) return true;
         var header = context.Request.Headers.Authorization.ToString();
-        return header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(header.Substring("Bearer ".Length), token, StringComparison.Ordinal);
+        if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) return false;
+        var presented = Encoding.UTF8.GetBytes(header.Substring("Bearer ".Length));
+        var expected = Encoding.UTF8.GetBytes(token);
+        return presented.Length == expected.Length && CryptographicOperations.FixedTimeEquals(presented, expected);
+    }
+
+    private static string ResolveControlIdentity(ModelContextProtocol.Server.RequestContext<CallToolRequestParams> request)
+    {
+        var profile = request.User?.FindFirst("zemax-mcp-auth-profile")?.Value;
+        if (!string.IsNullOrWhiteSpace(profile) && !string.Equals(profile, "shared-token", StringComparison.Ordinal) && !string.Equals(profile, "local", StringComparison.Ordinal))
+            return "token:" + profile;
+
+        var clientInfo = request.Server?.ClientInfo;
+        var name = clientInfo?.Name;
+        var version = clientInfo?.Version;
+        var endpoint = request.User?.FindFirst("zemax-mcp-remote-endpoint")?.Value ?? "unknown";
+        return "client:" + (string.IsNullOrWhiteSpace(name) ? "unknown" : name.Trim()) +
+            "@" + (string.IsNullOrWhiteSpace(version) ? "unknown" : version.Trim()) +
+            "|remote:" + endpoint;
     }
 }

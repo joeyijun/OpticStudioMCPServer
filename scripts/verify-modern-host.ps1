@@ -31,9 +31,17 @@ if ($rpcClient -notmatch 'PipeSecurity' -or $rpcClient -notmatch 'ZEMAX_MCP_PIPE
     $rpcClient -notmatch 'CancelOperation') {
   throw "The Host-to-Worker channel must be ACL-protected, handshake-authenticated, and cancellation-aware."
 }
-if ($hostSource -notmatch 'OpticStudioControlLease' -or $hostSource -notmatch 'Mcp-Name') {
-  throw "OpticStudio control ownership must be independent of MCP sessions and tied to a client identity."
+if ($hostSource -notmatch 'OpticStudioControlLease' -or $hostSource -notmatch 'ResolveControlIdentity' -or
+    $hostSource -match 'AllowAnyOrigin\(' -or $hostSource -notmatch 'zemax-mcp-remote-endpoint') {
+  throw "Control ownership must use an authenticated profile or client-info plus remote endpoint, and Origins must not be wildcarded."
+}
+if ($rpcClient -notmatch 'HardRecoveryTimeoutSeconds' -or $rpcClient -notmatch 'FaultWorkerConnection' -or
+    $rpcClient -notmatch 'CancelOperation') {
+  throw "Worker RPC must retain soft cancellation, hard recovery, and one fault-recovery path."
 }
 
 dotnet build (Join-Path $root "src\ZemaxMCP.HttpBridge\ZemaxMCP.HttpBridge.csproj") -c $Configuration --nologo
+if ($LASTEXITCODE -ne 0) { throw "Modern Host build failed." }
+dotnet run --project (Join-Path $root "tests\ZemaxMCP.PrivateRpcTests\ZemaxMCP.PrivateRpcTests.csproj") -c $Configuration
+if ($LASTEXITCODE -ne 0) { throw "Private Host-to-Worker RPC integration verification failed." }
 Write-Host "Modern .NET 10 Host / private RPC boundary verification passed."

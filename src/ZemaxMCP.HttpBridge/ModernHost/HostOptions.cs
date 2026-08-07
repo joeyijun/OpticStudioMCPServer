@@ -13,6 +13,7 @@ internal sealed class HostOptions
     public string AccessToken { get; private set; } = Environment.GetEnvironmentVariable("ZEMAX_MCP_TOKEN") ?? string.Empty;
     public int WorkerStartupTimeoutSeconds { get; private set; } = 90;
     public int RequestTimeoutSeconds { get; private set; } = 300;
+    public int HardRecoveryTimeoutSeconds { get; private set; } = 360;
     public bool ReadOnly { get; private set; }
     public string Toolset { get; private set; } = "full-expert";
     public string SnapshotDirectory { get; private set; } = Environment.GetEnvironmentVariable("ZEMAX_MCP_SNAPSHOT_DIR") ??
@@ -39,6 +40,7 @@ internal sealed class HostOptions
                 case "--log-dir": options.LogDirectory = value; break;
                 case "--worker-startup-timeout-seconds": options.WorkerStartupTimeoutSeconds = ParseRange(value, option, 10, 600); break;
                 case "--request-timeout-seconds": options.RequestTimeoutSeconds = ParseRange(value, option, 10, 3600); break;
+                case "--hard-recovery-timeout-seconds": options.HardRecoveryTimeoutSeconds = ParseRange(value, option, 20, 7200); break;
                 case "--read-only": options.ReadOnly = ParseBoolean(value, option); break;
                 case "--toolset": options.Toolset = value; break;
                 case "--snapshot-dir": options.SnapshotDirectory = value; break;
@@ -50,6 +52,8 @@ internal sealed class HostOptions
 
         if (string.IsNullOrWhiteSpace(options.WorkerPath)) throw new ArgumentException("--worker cannot be empty.");
         if (string.IsNullOrWhiteSpace(options.Host)) throw new ArgumentException("--host cannot be empty.");
+        if (options.HardRecoveryTimeoutSeconds <= options.RequestTimeoutSeconds)
+            throw new ArgumentException("--hard-recovery-timeout-seconds must be greater than --request-timeout-seconds.");
         if (options.Host == "0.0.0.0" && string.IsNullOrWhiteSpace(options.AccessToken))
             throw new ArgumentException("LAN sharing requires ZEMAX_MCP_TOKEN to be configured.");
         return options;
