@@ -10,6 +10,9 @@ $workerProgramPath = Join-Path $root "src\ZemaxMCP.Server\Program.cs"
 $analysisRoot = Join-Path $root "src\ZemaxMCP.Server\Tools\Analysis"
 $configRoot = Join-Path $root "src\ZemaxMCP.Server\Tools\Configuration"
 $glassRoot = Join-Path $root "src\ZemaxMCP.Server\Tools\GlassCatalog"
+$optimizationRoot = Join-Path $root "src\ZemaxMCP.Server\Tools\Optimization"
+$nscRoot = Join-Path $root "src\ZemaxMCP.Server\Tools\NonSequential"
+$toleranceRoot = Join-Path $root "src\ZemaxMCP.Server\Tools\Tolerancing"
 
 $coreSource = Get-ChildItem -LiteralPath $coreRoot -Recurse -Filter "*.cs" -File |
     ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw } | Out-String
@@ -26,9 +29,9 @@ if ($workerProgram -notmatch 'ZOSAPI_Initializer\.Initialize\s*\(') {
     throw "Worker startup must initialize ZOS-API after the Host/Worker contract handshake."
 }
 
-# Analysis tools are public ReadOnly operations. They may evaluate merit
-# operands, but they must never mutate the user's Merit Function Editor simply
-# to obtain a value. GetOperandValue is the side-effect-free ZOS-API path.
+# Analysis tools may evaluate merit operands, but must never mutate the user's
+# Merit Function Editor simply to obtain a value. GetOperandValue is the
+# side-effect-free ZOS-API path for the reviewed read-only calculations.
 $forbiddenMfePatterns = @(
     '\.AddOperand\s*\(',
     '\.InsertNewOperandAt\s*\(',
@@ -40,7 +43,7 @@ foreach ($pattern in $forbiddenMfePatterns) {
     $hits = @($analysisFiles | Select-String -Pattern $pattern)
     if ($hits.Count -gt 0) {
         $paths = @($hits | ForEach-Object { $_.Path } | Sort-Object -Unique)
-        throw "Read-only analysis tools must not structurally mutate the Merit Function Editor. Pattern '$pattern' found in: $($paths -join ', ')"
+        throw "Analysis tools must not structurally mutate the Merit Function Editor. Pattern '$pattern' found in: $($paths -join ', ')"
     }
 }
 
@@ -69,10 +72,6 @@ foreach ($rayFile in @("RayTraceTool.cs", "RayTraceExtendedTool.cs")) {
     }
 }
 
-# Geometric Image Analysis is classified ReadOnly. Persistent IMA.CFG writes
-# and arbitrary filesystem exports therefore belong in zemax_export_analysis,
-# not in this structured result tool. Strong typing also prevents silent
-# reflection/property-name fallbacks from turning explicit requests into defaults.
 $gia = Get-Content -LiteralPath (Join-Path $analysisRoot "GeometricImageAnalysisTool.cs") -Raw
 if ($gia -notmatch 'IAS_GeometricImageAnalysis' -or
     $gia -notmatch 'if \(saveSettings\)' -or
@@ -81,9 +80,6 @@ if ($gia -notmatch 'IAS_GeometricImageAnalysis' -or
     throw "zemax_geometric_image_analysis must remain strongly typed and side-effect-free; persistent settings/files belong to zemax_export_analysis."
 }
 
-# The verified 2026 R1 IAS_GeometricEncircledEnergy contract has no
-# ScaleByDiffractionLimit property. Keep the old public parameter only as a
-# fail-explicit compatibility placeholder rather than pretending it was applied.
 $gee = Get-Content -LiteralPath (Join-Path $analysisRoot "GeometricEncircledEnergyTool.cs") -Raw
 if ($gee -notmatch 'if \(scaleByDiffractionLimit\)' -or
     $gee -notmatch 'NotSupportedException' -or
@@ -91,8 +87,6 @@ if ($gee -notmatch 'if \(scaleByDiffractionLimit\)' -or
     throw "zemax_geometric_encircled_energy must reject the unsupported scaleByDiffractionLimit=true request explicitly."
 }
 
-# Fan parsers must not fabricate zeroes or claim success when a version-specific
-# text layout is not understood. They also need cancellation at the session edge.
 foreach ($fanFile in @("RayFanTool.cs", "OpticalPathFanTool.cs", "PupilAberrationFanTool.cs")) {
     $source = Get-Content -LiteralPath (Join-Path $analysisRoot $fanFile) -Raw
     if ($source -notmatch 'CancellationToken cancellationToken' -or
@@ -102,9 +96,6 @@ foreach ($fanFile in @("RayFanTool.cs", "OpticalPathFanTool.cs", "PupilAberratio
     }
 }
 
-# Aperture throughput distinguishes a failed trace from an aperture/vignette
-# loss. Cancellation is checked inside the potentially 10k-ray loop, and the
-# clear fraction uses only successfully traced rays as its denominator.
 $throughput = Get-Content -LiteralPath (Join-Path $analysisRoot "ApertureThroughputTool.cs") -Raw
 if ($throughput -notmatch 'SuccessfulRays' -or
     $throughput -notmatch 'ClearFraction:\s*\(double\)clear / successful' -or
@@ -113,10 +104,8 @@ if ($throughput -notmatch 'SuccessfulRays' -or
     throw "zemax_aperture_throughput must keep trace errors separate from aperture loss and remain cancellable."
 }
 
-# Stage D MCE mutations must be atomic where validation can make them so, and
-# otherwise expose/check the underlying OpticStudio mutation result. Invalid
-# operand types are validated before inserting a row; typed cell values preserve
-# Double/Integer/String semantics and ConfigPickup source metadata.
+# Stage D MCE mutations must validate before mutation and check OpticStudio's
+# mutation results. Typed cell values preserve Double/Integer/String and pickup metadata.
 $addConfigOperand = Get-Content -LiteralPath (Join-Path $configRoot "AddConfigurationOperandTool.cs") -Raw
 if ($addConfigOperand.IndexOf('Enum.GetNames(typeof(MultiConfigOperandType))', [StringComparison]::Ordinal) -lt 0 -or
     $addConfigOperand.IndexOf('row = insertAt == 0 ? mce.AddOperand()', [StringComparison]::Ordinal) -lt 0 -or
@@ -164,8 +153,7 @@ if ($setCurrentConfiguration -notmatch '!mce\.SetCurrentConfiguration\(' -or
 }
 
 # Glass-catalog filtering/export must not silently use incomplete source sets,
-# accept non-finite criteria, fabricate malformed AGF numeric values, escape the
-# Zemax Glasscat directory, or violate overwrite=false after an earlier TOCTOU check.
+# fabricate malformed AGF numeric values, escape Glasscat, or violate overwrite=false.
 $filterService = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Core\Services\GlassCatalog\GlassFilterService.cs") -Raw
 $agfParser = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Core\Services\GlassCatalog\AgfFileParser.cs") -Raw
 $catalogExport = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Core\Services\GlassCatalog\CatalogExportService.cs") -Raw
@@ -201,4 +189,133 @@ foreach ($sourceTool in @($filterTool, $exportTool)) {
     }
 }
 
-Write-Host "Functional safety guards passed: Worker owns ZOS initialization; read-only analyses avoid MFE/config/filesystem side effects; reviewed Stage A-D contracts are intact."
+# Stage E: constrained state and MFE files must be transactional; native and
+# custom optimization must propagate cancellation and drain ZOS-API tools.
+$constraintStore = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Core\Services\ConstrainedOptimization\ConstraintStore.cs") -Raw
+$setVariableConstraints = Get-Content -LiteralPath (Join-Path $optimizationRoot "SetVariableConstraintsTool.cs") -Raw
+$saveMf = Get-Content -LiteralPath (Join-Path $optimizationRoot "SaveMeritFunctionFileTool.cs") -Raw
+$loadMf = Get-Content -LiteralPath (Join-Path $optimizationRoot "LoadMeritFunctionFileTool.cs") -Raw
+$localOptimize = Get-Content -LiteralPath (Join-Path $optimizationRoot "OptimizeTool.cs") -Raw
+$globalOptimize = Get-Content -LiteralPath (Join-Path $optimizationRoot "GlobalSearchTool.cs") -Raw
+$hammer = Get-Content -LiteralPath (Join-Path $optimizationRoot "HammerOptimizationTool.cs") -Raw
+$multistart = Get-Content -LiteralPath (Join-Path $optimizationRoot "MultistartOptimizeTool.cs") -Raw
+
+if ($constraintStore -notmatch 'ReplaceAll\(' -or
+    $constraintStore -notmatch 'ExtractRequiredDoubleValue' -or
+    $constraintStore -notmatch 'invalid finite numeric value' -or
+    $constraintStore -notmatch 'File\.Replace\(tempPath, sidecarPath, null\)' -or
+    $constraintStore -notmatch 'File\.Move\(tempPath, sidecarPath\)') {
+    throw "ConstraintStore must strictly parse bounds, replace state only after validation, and atomically write sidecars."
+}
+if ($setVariableConstraints -notmatch 'var staged = _constraintStore\.GetAll\(\)' -or
+    $setVariableConstraints -notmatch '_constraintStore\.ReplaceAll\(staged\)' -or
+    $setVariableConstraints -notmatch '_constraintStore\.ReplaceAll\(previous\)' -or
+    $setVariableConstraints -notmatch 'catch \(OperationCanceledException\)') {
+    throw "zemax_set_variable_constraints must validate/stage the entire batch, rollback store state on persistence failure, and preserve cancellation."
+}
+if ($saveMf -notmatch 'SaveMeritFunction\(tempPath\)' -or
+    $saveMf -notmatch 'overwrite' -or
+    $saveMf -notmatch 'File\.Replace\(tempPath, fullPath, null\)' -or
+    $saveMf -notmatch 'File\.Move\(tempPath, fullPath\)') {
+    throw "zemax_save_merit_function_file must save through a temporary MF and enforce atomic overwrite/no-clobber semantics."
+}
+if ($loadMf -notmatch 'SaveMeritFunction\(backupPath\)' -or
+    $loadMf -notmatch 'LoadMeritFunction\(backupPath\)' -or
+    $loadMf -notmatch 'cancellationToken\.ThrowIfCancellationRequested\(\)' -or
+    $loadMf -notmatch 'pre-operation safety snapshot') {
+    throw "zemax_load_merit_function_file must preserve a full-MFE rollback path across load/calculate/cancellation failures."
+}
+if ($localOptimize -notmatch 'ParseCycles' -or
+    $localOptimize -notmatch 'CancelAndDrain\(' -or
+    $localOptimize -notmatch 'WaitWithTimeout\(0\.25\)' -or
+    $localOptimize -match 'OptimizationCycles\.Infinite') {
+    throw "zemax_optimize must keep strict finite cycle mapping and cancellable polling; Infinite must not leak back into the synchronous tool."
+}
+if ($globalOptimize -notmatch 'RunUntilCompletionTimeoutOrCancellation' -or
+    $globalOptimize -notmatch 'CancelAndDrain\(tool, "Global Optimization"\)' -or
+    $globalOptimize -notmatch 'return "TimedOut"' -or
+    $globalOptimize -notmatch 'catch \(OperationCanceledException\)') {
+    throw "zemax_global_search must cancel/drain on wall-clock timeout or caller cancellation before reading stable results."
+}
+if ($hammer -notmatch 'hammer\.AutomaticOptimization = automatic' -or
+    $hammer -notmatch 'hammer\.TargetRunTimeM = targetRuntimeMinutes' -or
+    $hammer -notmatch 'CancelAndDrain\(hammer\)' -or
+    $hammer -notmatch 'return "TimedOut"') {
+    throw "zemax_hammer must preserve official AutomaticOptimization/TargetRunTimeM settings and explicit timeout cancellation."
+}
+if ($multistart -notmatch 'SaveSystemCopy\(' -or
+    $multistart -notmatch 'system\.CopySystem\(\)' -or
+    $multistart -notmatch 'catch \(OperationCanceledException\)' -or
+    $multistart -match 'system\.SaveAs\(savePath\)') {
+    throw "zemax_multistart_optimize must preserve cancellation semantics and checkpoint through CopySystem instead of changing the active lens identity."
+}
+
+# Stage F POP is deliberately HighImpact because it can emit files and performs
+# temporary LDE resampling. It must restore temporary state and use cancellable,
+# strongly typed result retrieval. NSC/TDE reads must not swap or fabricate data.
+$operationMetadata = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Core\Session\ZemaxOperationMetadata.cs") -Raw
+$pop = Get-Content -LiteralPath (Join-Path $analysisRoot "PopTool.cs") -Raw
+$nscDetector = Get-Content -LiteralPath (Join-Path $nscRoot "GetNscDetectorTool.cs") -Raw
+$nscObjects = Get-Content -LiteralPath (Join-Path $nscRoot "GetNscObjectsTool.cs") -Raw
+$nscParameters = Get-Content -LiteralPath (Join-Path $nscRoot "GetNscObjectParametersTool.cs") -Raw
+$tolerances = Get-Content -LiteralPath (Join-Path $toleranceRoot "GetTolerancesTool.cs") -Raw
+$analysisExport = Get-Content -LiteralPath (Join-Path $analysisRoot "ExportAnalysisTool.cs") -Raw
+
+if ([regex]::Matches($operationMetadata, '"Pop"').Count -ne 1 -or
+    [regex]::Matches($operationMetadata, '"zemax_pop"').Count -ne 1 -or
+    $operationMetadata -notmatch '"OptimizationWizard", "Optimize", "Pop", "QuickFocus"' -or
+    $operationMetadata -notmatch '"zemax_optimize",\s*"zemax_pop",\s*"zemax_quick_focus"') {
+    throw "POP must remain explicitly classified HighImpact exactly once at both command and MCP tool levels."
+}
+if ($pop -match '\bdynamic\b' -or
+    $pop -match 'ApplyAndWaitForCompletion\(' -or
+    $pop -notmatch 'analysis\.Terminate\(\)' -or
+    $pop -notmatch 'RestoreTemporaryResampling' -or
+    $pop -notmatch 'WriteGridBinAtomic' -or
+    $pop -notmatch 'overwriteOutputFiles' -or
+    $pop -notmatch 'results\.GetDataGrid\(0\)' -or
+    $pop -notmatch 'var matrix = grid\.Values' -or
+    $pop -notmatch '_ => throw new ArgumentOutOfRangeException') {
+    throw "zemax_pop must remain cancellable/typed, restore temporary LDE state, reject invalid sampling, and atomically handle outputs."
+}
+if ($nscDetector -notmatch 'out var rows, out var columns' -or
+    $nscDetector -notmatch 'expectedPixels = checked\(\(ulong\)rows \* columns\)' -or
+    $nscDetector -notmatch 'CancellationToken cancellationToken') {
+    throw "zemax_get_nsc_detector must preserve the ZOS-API Rows/Cols output order, size cross-check, and cancellation."
+}
+if ($nscObjects -notmatch 'startObject > numberOfObjects' -or
+    $nscObjects -notmatch 'CancellationToken cancellationToken' -or
+    $nscObjects -notmatch 'ValidateFinite\(') {
+    throw "zemax_get_nsc_objects must reject out-of-range pagination, remain cancellable, and reject non-finite object coordinates."
+}
+if ($nscParameters -notmatch 'startParameter > names\.Length' -or
+    $nscParameters -notmatch 'CellDataType\.Integer' -or
+    $nscParameters -notmatch 'CellDataType\.Double' -or
+    $nscParameters -notmatch 'CellDataType\.String' -or
+    $nscParameters -notmatch 'Enum\.TryParse<ObjectColumn>' -or
+    $nscParameters -notmatch 'CancellationToken cancellationToken') {
+    throw "zemax_get_nsc_object_parameters must fail explicit pagination/column mismatches and preserve typed cell values with cancellation."
+}
+if ($tolerances -notmatch 'startRow > numberOfOperands' -or
+    $tolerances -notmatch 'ReadUsedFinite' -or
+    $tolerances -notmatch 'row\.IsParam1Used' -or
+    $tolerances -notmatch 'row\.IsParam2Used' -or
+    $tolerances -notmatch 'row\.IsParam3Used' -or
+    $tolerances -notmatch 'CancellationToken cancellationToken') {
+    throw "zemax_get_tolerances must preserve TDE used flags, reject non-finite used bounds, reject bad pagination, and remain cancellable."
+}
+
+# Generic analysis export is an explicit HighImpact filesystem boundary. It must
+# use a fixed allowlist and requested-format truthfulness rather than silently
+# accepting arbitrary enum/numeric IDs or falling back to a different extension.
+if ($analysisExport -match 'Enum\.TryParse\(name' -or
+    $analysisExport -match 'fallbackPath|analysis\.ToFile\(' -or
+    $analysisExport -notmatch 'results\.GetTextFile\(tempTextPath\)' -or
+    $analysisExport -notmatch 'if \(!created' -or
+    $analysisExport -notmatch 'CommitTempFile' -or
+    $analysisExport -notmatch 'analysis\.Terminate\(\)' -or
+    $analysisExport -notmatch 'CancellationToken cancellationToken') {
+    throw "zemax_export_analysis must retain an explicit allowlist, requested-format truthfulness, atomic outputs, and cancellable analysis cleanup."
+}
+
+Write-Host "Functional safety guards passed: Worker lifecycle and reviewed Stage A-F safety/data-integrity contracts are intact."
