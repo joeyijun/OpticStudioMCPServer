@@ -1,9 +1,8 @@
-using System.Collections;
-using System.ComponentModel;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
+using ZemaxMCP.ToolManifest;
 
 namespace ZemaxMCP.Server.Tooling;
 
@@ -12,8 +11,8 @@ namespace ZemaxMCP.Server.Tooling;
 public sealed class ZemaxToolTypeAttribute : Attribute { }
 
 /// <summary>
-/// Worker-owned command metadata. This intentionally has no dependency on the
-/// MCP SDK: MCP schemas and transport terminate at the .NET Host.
+/// Worker-owned execution metadata. Public MCP schemas are generated at build
+/// time into ZemaxMCP.ToolManifest; the Worker only binds and executes commands.
 /// </summary>
 [AttributeUsage(AttributeTargets.Method, Inherited = false)]
 public sealed class ZemaxToolAttribute : Attribute
@@ -33,8 +32,8 @@ public sealed class WorkerToolDefinition
 }
 
 /// <summary>
-/// Private Worker command catalogue and binder. It is deliberately protocol
-/// neutral: JSON arguments enter from RPC, ordinary .NET results leave via RPC.
+/// Private Worker command binder. Tool schemas come from the shared build-time
+/// manifest so the public Host and runtime binder cannot drift independently.
 /// </summary>
 public sealed class WorkerToolRegistry
 {
@@ -46,6 +45,9 @@ public sealed class WorkerToolRegistry
     {
         _services = services;
         _tools = Discover().ToDictionary(tool => tool.Name, StringComparer.Ordinal);
+        var missingRuntime = StaticToolManifest.All.Where(entry => !_tools.ContainsKey(entry.Name)).Select(entry => entry.Name).ToArray();
+        if (missingRuntime.Length > 0)
+            throw new InvalidOperationException("Static tool manifest contains commands without Worker implementations: " + string.Join(", ", missingRuntime));
     }
 
     public IReadOnlyDictionary<string, WorkerToolDefinition> Tools => _tools;
@@ -89,145 +91,18 @@ public sealed class WorkerToolRegistry
             .SelectMany(type => type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
                 .Select(method => new { Type = type, Method = method, Attribute = method.GetCustomAttribute<ZemaxToolAttribute>() }))
             .Where(item => item.Attribute != null && !string.IsNullOrWhiteSpace(item.Attribute.Name))
-            .Select(item => new WorkerToolDefinition
+            .Select(item =>
             {
-                Name = item.Attribute!.Name,
-                Description = item.Method.GetCustomAttribute<DescriptionAttribute>()?.Description ?? "No additional description is available.",
-                InputSchema = BuildSchema(item.Method),
-                DeclaringType = item.Type,
-                Method = item.Method
+                var manifest = StaticToolManifest.GetRequired(item.Attribute!.Name);
+                return new WorkerToolDefinition
+                {
+                    Name = manifest.Name,
+                    Description = manifest.Description,
+                    InputSchema = manifest.InputSchema,
+                    DeclaringType = item.Type,
+                    Method = item.Method
+                };
             });
-    }
-
-    private static JsonElement BuildSchema(MethodInfo method)
-    {
-        var properties = new Dictionary<string, object?>();
-        var required = new List<string>();
-        foreach (var parameter in method.GetParameters())
-        {
-            // Cancellation is supplied by the Worker runtime and is never part
-            // of the public tool contract.
-            if (parameter.ParameterType == typeof(CancellationToken)) continue;
-
-            var schema = BuildTypeSchema(parameter.ParameterType, new HashSet<Type>());
-            var description = parameter.GetCustomAttribute<DescriptionAttribute>()?.Description;
-            if (!string.IsNullOrWhiteSpace(description)) schema["description"] = description;
-            if (parameter.HasDefaultValue) schema["default"] = NormalizeDefaultValue(parameter.ParameterType, parameter.DefaultValue);
-            else required.Add(parameter.Name!);
-            properties[parameter.Name!] = schema;
-        }
-        return JsonSerializer.SerializeToElement(new Dictionary<string, object?>
-        {
-            ["type"] = "object",
-            ["properties"] = properties,
-            ["required"] = required.Count == 0 ? null : required,
-            ["additionalProperties"] = false
-        }.Where(pair => pair.Value != null).ToDictionary(pair => pair.Key, pair => pair.Value), JsonOptions);
-    }
-
-    private static Dictionary<string, object?> BuildTypeSchema(Type type, HashSet<Type> stack)
-    {
-        var nullable = Nullable.GetUnderlyingType(type);
-        if (nullable != null) type = nullable;
-
-        if (type == typeof(string) || type == typeof(char))
-            return new Dictionary<string, object?> { ["type"] = "string" };
-        if (type == typeof(bool))
-            return new Dictionary<string, object?> { ["type"] = "boolean" };
-        if (type == typeof(byte) || type == typeof(sbyte) || type == typeof(short) || type == typeof(ushort) ||
-            type == typeof(int) || type == typeof(uint) || type == typeof(long) || type == typeof(ulong))
-            return new Dictionary<string, object?> { ["type"] = "integer" };
-        if (type == typeof(float) || type == typeof(double) || type == typeof(decimal))
-            return new Dictionary<string, object?> { ["type"] = "number" };
-        if (type.IsEnum)
-            return new Dictionary<string, object?> { ["type"] = "string", ["enum"] = Enum.GetNames(type) };
-
-        // Dictionaries also implement IEnumerable<KeyValuePair<,>>, so detect
-        // them before the generic enumerable path.
-        if (IsDictionary(type, out var valueType))
-            return new Dictionary<string, object?>
-            {
-                ["type"] = "object",
-                ["additionalProperties"] = BuildTypeSchema(valueType!, stack)
-            };
-
-        var elementType = GetEnumerableElementType(type);
-        if (elementType != null)
-            return new Dictionary<string, object?>
-            {
-                ["type"] = "array",
-                ["items"] = BuildTypeSchema(elementType, stack)
-            };
-
-        // Avoid infinite recursion for self-referential model types. The binder
-        // can still deserialize them, while the schema keeps a safe object boundary.
-        if (!stack.Add(type)) return new Dictionary<string, object?> { ["type"] = "object" };
-        try
-        {
-            var objectProperties = new Dictionary<string, object?>();
-            var required = new List<string>();
-            var constructor = type.GetConstructors(BindingFlags.Instance | BindingFlags.Public)
-                .OrderByDescending(candidate => candidate.GetParameters().Length)
-                .FirstOrDefault();
-
-            if (constructor != null && constructor.GetParameters().Length > 0)
-            {
-                foreach (var parameter in constructor.GetParameters())
-                {
-                    var rawName = parameter.Name ?? throw new InvalidOperationException("A model constructor parameter has no name.");
-                    var name = JsonNamingPolicy.CamelCase.ConvertName(rawName);
-                    var schema = BuildTypeSchema(parameter.ParameterType, stack);
-                    var description = parameter.GetCustomAttribute<DescriptionAttribute>()?.Description;
-                    if (!string.IsNullOrWhiteSpace(description)) schema["description"] = description;
-                    if (parameter.HasDefaultValue) schema["default"] = NormalizeDefaultValue(parameter.ParameterType, parameter.DefaultValue);
-                    else required.Add(name);
-                    objectProperties[name] = schema;
-                }
-            }
-            else
-            {
-                foreach (var property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public).Where(property => property.CanRead))
-                {
-                    var name = JsonNamingPolicy.CamelCase.ConvertName(property.Name);
-                    objectProperties[name] = BuildTypeSchema(property.PropertyType, stack);
-                }
-            }
-
-            var result = new Dictionary<string, object?>
-            {
-                ["type"] = "object",
-                ["properties"] = objectProperties,
-                ["additionalProperties"] = false
-            };
-            if (required.Count > 0) result["required"] = required;
-            return result;
-        }
-        finally { stack.Remove(type); }
-    }
-
-    private static object? NormalizeDefaultValue(Type type, object? value)
-    {
-        if (value == null) return null;
-        var actualType = Nullable.GetUnderlyingType(type) ?? type;
-        return actualType.IsEnum ? value.ToString() : value;
-    }
-
-    private static Type? GetEnumerableElementType(Type type)
-    {
-        if (type == typeof(string)) return null;
-        if (type.IsArray) return type.GetElementType();
-        var enumerable = type.GetInterfaces().Concat(new[] { type })
-            .FirstOrDefault(candidate => candidate.IsGenericType && candidate.GetGenericTypeDefinition() == typeof(IEnumerable<>));
-        return enumerable?.GetGenericArguments()[0];
-    }
-
-    private static bool IsDictionary(Type type, out Type? valueType)
-    {
-        var dictionary = type.GetInterfaces().Concat(new[] { type })
-            .FirstOrDefault(candidate => candidate.IsGenericType && candidate.GetGenericTypeDefinition() == typeof(IDictionary<,>) &&
-                candidate.GetGenericArguments()[0] == typeof(string));
-        valueType = dictionary?.GetGenericArguments()[1];
-        return dictionary != null;
     }
 
     private static object?[] BindArguments(MethodInfo method, JsonElement arguments, CancellationToken cancellationToken)
