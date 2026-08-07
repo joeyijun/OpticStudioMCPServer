@@ -9,10 +9,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Json" />
-    <PackageReference Include="System.Management" />
     <PackageReference Include="Serilog.Extensions.Hosting" />
-    <PackageReference Include="Serilog.Sinks.Console" />
     <PackageReference Include="Serilog.Sinks.File" />
   </ItemGroup>
 
@@ -21,12 +18,6 @@
     <ProjectReference Include="..\ZemaxMCP.Documentation\ZemaxMCP.Documentation.csproj" />
     <ProjectReference Include="..\ZemaxMCP.Rpc\ZemaxMCP.Rpc.csproj" />
     <ProjectReference Include="..\ZemaxMCP.ToolManifest\ZemaxMCP.ToolManifest.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- MCP prompts/resources belong to the public Host. They are excluded
-         from the protocol-neutral ZOS-API Worker during this migration. -->
-    <Compile Remove="Prompts\**\*.cs;Resources\**\*.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -43,11 +34,5 @@
       <HintPath>$(ZOSAPI_NETHELPER_PATH)</HintPath>
       <Private>false</Private>
     </Reference>
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Update="appsettings.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
   </ItemGroup>
 </Project>
