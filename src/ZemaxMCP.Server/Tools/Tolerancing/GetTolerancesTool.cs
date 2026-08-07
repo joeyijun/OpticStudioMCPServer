@@ -27,15 +27,19 @@ public sealed class GetTolerancesTool
         bool UsesMaximum,
         double? Maximum,
         bool IgnoreDuringTolerancing,
-        bool DoNotAdjustDuringInverseTolerancing);
+        bool DoNotAdjustDuringInverseTolerancing,
+        bool UsesParameter1 = false,
+        bool UsesParameter2 = false,
+        bool UsesParameter3 = false);
 
     public record Result(bool Success, string? Error, int NumberOfOperands, IReadOnlyList<ToleranceOperand> Operands);
 
     [ZemaxTool(Name = "zemax_get_tolerances")]
-    [Description("Read the Tolerance Data Editor (TDE) operands for the current system. This tool is read-only and works with sequential and non-sequential systems.")]
+    [Description("Read the Tolerance Data Editor (TDE) operands for the current system. Unused parameter/bound fields are identified explicitly; any bound marked as used must contain a finite value.")]
     public async Task<Result> ExecuteAsync(
         [Description("First TDE operand row (1-indexed)")] int startRow = 1,
-        [Description("Maximum number of operands to return (1-250)")] int maxOperands = 100)
+        [Description("Maximum number of operands to return (1-250)")] int maxOperands = 100,
+        CancellationToken cancellationToken = default)
     {
         if (startRow < 1)
             return new Result(false, "startRow must be at least 1.", 0, Array.Empty<ToleranceOperand>());
@@ -50,14 +54,30 @@ public sealed class GetTolerancesTool
                 ["maxOperands"] = maxOperands
             }, system =>
             {
-                var tde = system.TDE;
+                cancellationToken.ThrowIfCancellationRequested();
+                var tde = system.TDE ?? throw new InvalidOperationException("Tolerance Data Editor is not available.");
                 var numberOfOperands = tde.NumberOfOperands;
-                var lastRow = Math.Min(numberOfOperands, startRow + maxOperands - 1);
-                var operands = new List<ToleranceOperand>(Math.Max(0, lastRow - startRow + 1));
+                if (numberOfOperands <= 0)
+                    return new Result(true, null, 0, Array.Empty<ToleranceOperand>());
+                if (startRow > numberOfOperands)
+                    return new Result(false, $"startRow {startRow} exceeds the {numberOfOperands} TDE operands in the current system.", numberOfOperands, Array.Empty<ToleranceOperand>());
+
+                var lastRowLong = Math.Min((long)numberOfOperands, (long)startRow + maxOperands - 1L);
+                var lastRow = checked((int)lastRowLong);
+                var operands = new List<ToleranceOperand>(lastRow - startRow + 1);
 
                 for (var rowNumber = startRow; rowNumber <= lastRow; rowNumber++)
                 {
-                    var row = tde.GetOperandAt(rowNumber);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var row = tde.GetOperandAt(rowNumber)
+                        ?? throw new InvalidOperationException($"OpticStudio returned no TDE row for operand {rowNumber}.");
+
+                    var nominal = ReadUsedFinite(row.IsNominalUsed, row.Nominal, rowNumber, "Nominal");
+                    var minimum = ReadUsedFinite(row.IsMinUsed, row.Min, rowNumber, "Min");
+                    var maximum = ReadUsedFinite(row.IsMaxUsed, row.Max, rowNumber, "Max");
+                    if (row.IsMinUsed && row.IsMaxUsed && minimum!.Value > maximum!.Value)
+                        throw new InvalidDataException($"TDE operand {rowNumber} reports Min {minimum.Value} greater than Max {maximum.Value}.");
+
                     operands.Add(new ToleranceOperand(
                         row.OperandNumber,
                         row.TypeName,
@@ -67,17 +87,24 @@ public sealed class GetTolerancesTool
                         row.Param2,
                         row.Param3,
                         row.IsNominalUsed,
-                        ToFiniteOrNull(row.Nominal),
+                        nominal,
                         row.IsMinUsed,
-                        ToFiniteOrNull(row.Min),
+                        minimum,
                         row.IsMaxUsed,
-                        ToFiniteOrNull(row.Max),
+                        maximum,
                         row.IgnoreThisOperandDuringTolerancing,
-                        row.DoNotAdjustDuringInverseTolerancing));
+                        row.DoNotAdjustDuringInverseTolerancing,
+                        row.IsParam1Used,
+                        row.IsParam2Used,
+                        row.IsParam3Used));
                 }
 
                 return new Result(true, null, numberOfOperands, operands);
-            });
+            }, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -85,10 +112,12 @@ public sealed class GetTolerancesTool
         }
     }
 
-    // OpticStudio represents an unused tolerance bound as ±Infinity in some
-    // versions. JSON has no portable numeric representation for that value;
-    // null preserves the distinction while the corresponding Uses* flag tells
-    // an MCP client whether the field participates in tolerancing.
-    private static double? ToFiniteOrNull(double value) =>
-        double.IsNaN(value) || double.IsInfinity(value) ? null : value;
+    private static double? ReadUsedFinite(bool used, double value, int rowNumber, string fieldName)
+    {
+        if (!used)
+            return null;
+        if (double.IsNaN(value) || double.IsInfinity(value))
+            throw new InvalidDataException($"TDE operand {rowNumber} marks {fieldName} as used but returned non-finite value {value}.");
+        return value;
+    }
 }
