@@ -104,7 +104,7 @@ public sealed class WorkerToolRegistry
             var schema = BuildTypeSchema(parameter.ParameterType, new HashSet<Type>());
             var description = parameter.GetCustomAttribute<DescriptionAttribute>()?.Description;
             if (!string.IsNullOrWhiteSpace(description)) schema["description"] = description;
-            if (parameter.HasDefaultValue) schema["default"] = parameter.DefaultValue;
+            if (parameter.HasDefaultValue) schema["default"] = NormalizeDefaultValue(parameter.ParameterType, parameter.DefaultValue);
             else required.Add(parameter.Name!);
             properties[parameter.Name!] = schema;
         }
@@ -170,7 +170,7 @@ public sealed class WorkerToolRegistry
                     var schema = BuildTypeSchema(parameter.ParameterType, stack);
                     var description = parameter.GetCustomAttribute<DescriptionAttribute>()?.Description;
                     if (!string.IsNullOrWhiteSpace(description)) schema["description"] = description;
-                    if (parameter.HasDefaultValue) schema["default"] = parameter.DefaultValue;
+                    if (parameter.HasDefaultValue) schema["default"] = NormalizeDefaultValue(parameter.ParameterType, parameter.DefaultValue);
                     else required.Add(name);
                     objectProperties[name] = schema;
                 }
@@ -194,6 +194,13 @@ public sealed class WorkerToolRegistry
             return result;
         }
         finally { stack.Remove(type); }
+    }
+
+    private static object? NormalizeDefaultValue(Type type, object? value)
+    {
+        if (value == null) return null;
+        var actualType = Nullable.GetUnderlyingType(type) ?? type;
+        return actualType.IsEnum ? value.ToString() : value;
     }
 
     private static Type? GetEnumerableElementType(Type type)
