@@ -119,8 +119,6 @@ public class VariableScanner
                 for (int configuration = 1; configuration <= numConfigs; configuration++)
                 {
                     if ((configuration & 31) == 0) cancellationToken.ThrowIfCancellationRequested();
-                    // Configuration numbers are not raw editor column indexes. The
-                    // official MCE API exposes GetOperandCell(configuration) for this purpose.
                     var cell = operand.GetOperandCell(configuration)
                         ?? throw new InvalidOperationException($"MCE row {row}, configuration {configuration} returned no operand cell.");
                     if (!cell.IsActive) continue;
@@ -144,22 +142,25 @@ public class VariableScanner
         return variables;
     }
 
-    public List<MaterialInfo> ScanMaterials(IOpticalSystem system)
+    public List<MaterialInfo> ScanMaterials(IOpticalSystem system, CancellationToken cancellationToken = default)
     {
+        if (system == null) throw new ArgumentNullException(nameof(system));
         var materials = new List<MaterialInfo>();
-        var lde = system.LDE;
+        var lde = system.LDE ?? throw new InvalidOperationException("Lens Data Editor is not available.");
         int numSurfaces = lde.NumberOfSurfaces;
-
-        var substituteCatalogs = new Dictionary<string, string[]>();
+        var substituteCatalogs = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
 
         for (int i = 0; i < numSurfaces; i++)
         {
-            ILDERow surface = lde.GetSurfaceAt(i);
+            cancellationToken.ThrowIfCancellationRequested();
+            ILDERow surface = lde.GetSurfaceAt(i)
+                ?? throw new InvalidOperationException($"OpticStudio returned no LDE row for surface {i}.");
             string material = surface.Material;
             if (string.IsNullOrEmpty(material))
                 continue;
 
-            var solveData = surface.MaterialCell.GetSolveData();
+            var solveData = surface.MaterialCell.GetSolveData()
+                ?? throw new InvalidOperationException($"Surface {surface.SurfaceNumber} did not return material solve data.");
             var info = new MaterialInfo
             {
                 SurfaceIndex = i,
@@ -171,9 +172,9 @@ public class VariableScanner
 
             if (solveData.Type == SolveType.MaterialSubstitute)
             {
-                var sub = solveData._S_MaterialSubstitute;
-                if (sub != null)
-                    info.SubstituteCatalog = sub.Catalog;
+                var sub = solveData._S_MaterialSubstitute
+                    ?? throw new InvalidOperationException($"Surface {surface.SurfaceNumber} uses MaterialSubstitute but typed solve data is unavailable.");
+                info.SubstituteCatalog = sub.Catalog;
             }
 
             materials.Add(info);
@@ -181,21 +182,29 @@ public class VariableScanner
 
         foreach (var mat in materials)
         {
-            if (mat.SolveType != SolveType.MaterialSubstitute || string.IsNullOrEmpty(mat.SubstituteCatalog))
+            cancellationToken.ThrowIfCancellationRequested();
+            if (mat.SolveType != SolveType.MaterialSubstitute || string.IsNullOrWhiteSpace(mat.SubstituteCatalog))
                 continue;
 
-            if (substituteCatalogs.ContainsKey(mat.SubstituteCatalog))
+            if (substituteCatalogs.TryGetValue(mat.SubstituteCatalog, out var cached))
             {
-                mat.SubstituteGlasses = substituteCatalogs[mat.SubstituteCatalog];
+                mat.SubstituteGlasses = cached;
                 continue;
             }
 
-            var catTool = system.Tools.OpenMaterialsCatalog();
+            var catTool = system.Tools.OpenMaterialsCatalog()
+                ?? throw new InvalidOperationException("OpticStudio could not open the Materials Catalog tool.");
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 catTool.SelectedCatalog = mat.SubstituteCatalog;
-                mat.SubstituteGlasses = catTool.GetAllMaterials();
-                substituteCatalogs[mat.SubstituteCatalog] = mat.SubstituteGlasses;
+                var glasses = catTool.GetAllMaterials()
+                    ?? throw new InvalidDataException($"Materials Catalog '{mat.SubstituteCatalog}' returned a null material list.");
+                cancellationToken.ThrowIfCancellationRequested();
+                if (glasses.Length == 0)
+                    throw new InvalidDataException($"Materials Catalog '{mat.SubstituteCatalog}' returned no materials for an active MaterialSubstitute solve.");
+                mat.SubstituteGlasses = glasses;
+                substituteCatalogs[mat.SubstituteCatalog] = glasses;
             }
             finally
             {
