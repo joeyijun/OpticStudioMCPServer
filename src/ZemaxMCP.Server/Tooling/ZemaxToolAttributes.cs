@@ -2,6 +2,7 @@ using System.Collections;
 using System.ComponentModel;
 using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace ZemaxMCP.Server.Tooling;
@@ -37,7 +38,7 @@ public sealed class WorkerToolDefinition
 /// </summary>
 public sealed class WorkerToolRegistry
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
     private readonly IServiceProvider _services;
     private readonly IReadOnlyDictionary<string, WorkerToolDefinition> _tools;
 
@@ -72,6 +73,13 @@ public sealed class WorkerToolRegistry
                 : null;
         }
         return invocation;
+    }
+
+    private static JsonSerializerOptions CreateJsonOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
     }
 
     private static IEnumerable<WorkerToolDefinition> Discover()
