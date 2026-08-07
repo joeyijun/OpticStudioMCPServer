@@ -15,7 +15,8 @@ public sealed class PolarizationTool
 
     [ZemaxTool(Name = "zemax_get_polarization")]
     [Description("Read the System Explorer polarization state, Jones amplitudes/phases, method, and thin-film phase option.")]
-    public Task<PolarizationResult> GetAsync() => ChangeAsync(null, null, null, null, null, null, null, "GetPolarization");
+    public Task<PolarizationResult> GetAsync(CancellationToken cancellationToken = default) =>
+        ChangeAsync(null, null, null, null, null, null, null, "GetPolarization", cancellationToken);
 
     [ZemaxTool(Name = "zemax_set_polarization")]
     [Description("Set one or more System Explorer polarization values. Omitted values are preserved.")]
@@ -26,19 +27,30 @@ public sealed class PolarizationTool
         [Description("Jones X phase in degrees")] double? xPhaseDegrees = null,
         [Description("Jones Y phase in degrees")] double? yPhaseDegrees = null,
         [Description("Polarization method: XAxisMethod, YAxisMethod, or ZAxisMethod")] string? method = null,
-        [Description("Convert thin-film phase to ray-equivalent phase")] bool? convertThinFilmPhaseToRayEquivalent = null) =>
-        ChangeAsync(unpolarized, jx, jy, xPhaseDegrees, yPhaseDegrees, method, convertThinFilmPhaseToRayEquivalent, "SetPolarization");
+        [Description("Convert thin-film phase to ray-equivalent phase")] bool? convertThinFilmPhaseToRayEquivalent = null,
+        CancellationToken cancellationToken = default) =>
+        ChangeAsync(unpolarized, jx, jy, xPhaseDegrees, yPhaseDegrees, method, convertThinFilmPhaseToRayEquivalent, "SetPolarization", cancellationToken);
 
-    private async Task<PolarizationResult> ChangeAsync(bool? unpolarized, double? jx, double? jy, double? xPhase, double? yPhase, string? method, bool? convert, string command)
+    private async Task<PolarizationResult> ChangeAsync(bool? unpolarized, double? jx, double? jy, double? xPhase, double? yPhase, string? method, bool? convert, string command, CancellationToken cancellationToken)
     {
         try
         {
             foreach (var value in new[] { jx, jy, xPhase, yPhase }.Where(x => x.HasValue))
                 if (double.IsNaN(value!.Value) || double.IsInfinity(value.Value)) throw new ArgumentException("Polarization numeric values must be finite.");
             if (jx < 0 || jy < 0) throw new ArgumentException("Jones amplitudes must be non-negative.");
+
             ZOSAPI.SystemData.PolarizationMethod parsedMethod = default;
-            if (method != null && !Enum.TryParse(method, true, out parsedMethod))
-                throw new ArgumentException("Method must be XAxisMethod, YAxisMethod, or ZAxisMethod.");
+            if (method != null)
+            {
+                parsedMethod = method.Trim().ToLowerInvariant() switch
+                {
+                    "xaxismethod" => ZOSAPI.SystemData.PolarizationMethod.XAxisMethod,
+                    "yaxismethod" => ZOSAPI.SystemData.PolarizationMethod.YAxisMethod,
+                    "zaxismethod" => ZOSAPI.SystemData.PolarizationMethod.ZAxisMethod,
+                    _ => throw new ArgumentException("Method must be XAxisMethod, YAxisMethod, or ZAxisMethod.")
+                };
+            }
+
             return await _session.ExecuteAsync(command, new Dictionary<string, object?>
             {
                 ["unpolarized"] = unpolarized, ["jx"] = jx, ["jy"] = jy, ["xPhaseDegrees"] = xPhase,
@@ -55,7 +67,7 @@ public sealed class PolarizationTool
                 if (convert.HasValue) data.ConvertThinFilmPhaseToRayEquivalent = convert.Value;
                 return new PolarizationResult(true, null, data.Unpolarized, data.Jx.Sanitize(), data.Jy.Sanitize(), data.XPhase.Sanitize(), data.YPhase.Sanitize(),
                     data.Method.ToString(), data.ConvertThinFilmPhaseToRayEquivalent, system.NeedsSave);
-            });
+            }, cancellationToken);
         }
         catch (Exception ex) { return new PolarizationResult(false, ex.Message, false, 0, 0, 0, 0, "", false, false); }
     }
