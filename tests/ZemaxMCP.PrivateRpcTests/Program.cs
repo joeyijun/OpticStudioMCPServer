@@ -183,8 +183,10 @@ internal static class Program
             using (list)
             {
                 var listBody = await ReadFirstMcpPayloadAsync(list).ConfigureAwait(false);
-                if (!listBody.Contains("zemax_open_file", StringComparison.Ordinal) || !listBody.Contains("filePath", StringComparison.Ordinal))
-                    throw new InvalidOperationException("Static Host tools/list did not expose the generated Zemax tool manifest.");
+                if (!listBody.Contains("zemax_status", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Read-only Host tools/list did not expose an allowed static tool.");
+                if (listBody.Contains("zemax_open_file", StringComparison.Ordinal) || listBody.Contains("zemax_set_surface", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Read-only Host tools/list exposed mutating tools that execution policy would reject.");
                 if (File.Exists(workerLog))
                     throw new InvalidOperationException("tools/list started the Worker; static Host discovery is not independent of ZOS-API.");
             }
