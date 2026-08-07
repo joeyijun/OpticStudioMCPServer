@@ -9,16 +9,12 @@
   <ItemGroup>
     <PackageReference Include="System.Text.Json" />
     <Compile Include="..\ZemaxMCP.Toolsets\ToolsetCatalog.cs" Link="Toolsets\ToolsetCatalog.cs" />
-    <ToolManifestSource Include="$(ToolSourceRoot)\**\*.cs" />
-    <ToolManifestSource Include="..\ZemaxMCP.Toolsets\ToolsetCatalog.cs" />
-    <ToolManifestGeneratorSource Include="$(MSBuildThisFileDirectory)..\..\tools\ZemaxMCP.ToolManifestGenerator\**\*.cs" />
-    <ToolManifestGeneratorSource Include="$(ManifestGeneratorProject)" />
     <Compile Include="$(GeneratedManifestFile)" Visible="false" />
   </ItemGroup>
-  <Target Name="GenerateStaticToolManifest"
-          BeforeTargets="CoreCompile"
-          Inputs="@(ToolManifestSource);@(ToolManifestGeneratorSource)"
-          Outputs="$(GeneratedManifestFile)">
+  <!-- Always regenerate before compilation. Timestamp-only incremental inputs
+       cannot detect a deleted tool source file and could otherwise preserve a
+       stale command in the public manifest until a clean build. -->
+  <Target Name="GenerateStaticToolManifest" BeforeTargets="CoreCompile">
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(GeneratedManifestFile)'))" />
     <Exec Command="dotnet run --project &quot;$(ManifestGeneratorProject)&quot; --configuration $(Configuration) --no-launch-profile -- &quot;$(ToolSourceRoot)&quot; &quot;$(GeneratedManifestFile)&quot;" />
   </Target>
