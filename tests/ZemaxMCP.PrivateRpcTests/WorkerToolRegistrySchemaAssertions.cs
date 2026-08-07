@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using ZemaxMCP.ToolManifest;
 
 namespace ZemaxMCP.PrivateRpcTests;
@@ -49,5 +50,28 @@ internal static class StaticToolManifestAssertions
 
         if (StaticToolManifest.All.Select(tool => tool.Name).Distinct(StringComparer.Ordinal).Count() != StaticToolManifest.All.Count)
             throw new InvalidOperationException("Static Host tool manifest contains duplicate tool names.");
+
+        var opaque = new List<string>();
+        foreach (var tool in StaticToolManifest.All)
+            FindOpaqueObjects(tool.InputSchema, tool.Name + ".input", opaque);
+        if (opaque.Count > 0)
+            throw new InvalidOperationException("Generated tool schemas contain unresolved opaque object contracts: " + string.Join(", ", opaque.Take(20)));
+    }
+
+    private static void FindOpaqueObjects(JsonElement schema, string path, List<string> opaque)
+    {
+        if (schema.ValueKind != JsonValueKind.Object) return;
+        if (schema.TryGetProperty("type", out var type) && type.GetString() == "object")
+        {
+            var hasProperties = schema.TryGetProperty("properties", out var properties);
+            var hasAdditional = schema.TryGetProperty("additionalProperties", out _);
+            if (!hasProperties && !hasAdditional) opaque.Add(path);
+            if (hasProperties)
+                foreach (var property in properties.EnumerateObject())
+                    FindOpaqueObjects(property.Value, path + "." + property.Name, opaque);
+            if (schema.TryGetProperty("additionalProperties", out var additional) && additional.ValueKind == JsonValueKind.Object)
+                FindOpaqueObjects(additional, path + ".additionalProperties", opaque);
+        }
+        if (schema.TryGetProperty("items", out var items)) FindOpaqueObjects(items, path + "[]", opaque);
     }
 }
