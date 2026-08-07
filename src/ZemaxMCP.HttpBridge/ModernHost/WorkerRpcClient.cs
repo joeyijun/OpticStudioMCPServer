@@ -92,12 +92,16 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
 
     public async Task<CallToolResult> CallToolAsync(CallToolRequestParams request, CancellationToken cancellationToken)
     {
-        await WaitForCancelledOperationRecoveryAsync(cancellationToken).ConfigureAwait(false);
-        await StartAsync(cancellationToken).ConfigureAwait(false);
         var operationId = Guid.NewGuid().ToString("N");
         await _executionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            // The execution gate must be acquired before checking recovery. A
+            // request that queued behind a soon-to-be-cancelled operation will
+            // therefore observe that operation's recovery barrier after it
+            // acquires the gate instead of entering the draining generation.
+            await WaitForCancelledOperationRecoveryAsync(cancellationToken).ConfigureAwait(false);
+            await StartAsync(cancellationToken).ConfigureAwait(false);
             var invocation = new ToolInvocationRequest
             {
                 Command = request.Name,
