@@ -9,6 +9,9 @@
     <PackageVersion Include="ModelContextProtocol" Version="2.1.0" />
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.1.0" />
 
+    <!-- Build-time source analysis -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />
+
     <!-- .NET Extensions -->
     <!-- Keep direct references aligned with the ModelContextProtocol net48 runtime. -->
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
