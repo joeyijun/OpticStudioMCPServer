@@ -5,8 +5,10 @@ $root = Split-Path $PSScriptRoot -Parent
 $hostProject = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ZemaxMCP.HttpBridge.csproj")
 $hostSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\Program.cs")
 $hostOptions = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\HostOptions.cs")
+$originPolicy = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\OriginPolicy.cs")
 $rpcClient = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\WorkerRpcClient.cs")
-$rpcContracts = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Rpc\Contracts.cs")
+$rpcProtocol = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Rpc\Protocol\ZemaxRpcProtocol.cs")
+$rpcContracts = Get-ChildItem (Join-Path $root "src\ZemaxMCP.Rpc\Contracts") -Filter *.cs | ForEach-Object { Get-Content -Raw $_.FullName } | Out-String
 $workerSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Program.cs")
 $workerRpc = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Rpc\WorkerRpcServer.cs")
 $workerProject = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\ZemaxMCP.Server.csproj")
@@ -16,7 +18,7 @@ $manifestProject = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.ToolManifest\
 $manifestSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.ToolManifest\ToolManifestEntry.cs")
 $generatorSource = Get-Content -Raw (Join-Path $root "tools\ZemaxMCP.ToolManifestGenerator\Program.cs")
 $privateRpcTest = Get-Content -Raw (Join-Path $root "tests\ZemaxMCP.PrivateRpcTests\Program.cs")
-$schemaTest = Get-Content -Raw (Join-Path $root "tests\ZemaxMCP.PrivateRpcTests\WorkerToolRegistrySchemaAssertions.cs")
+$schemaTest = Get-Content -Raw (Join-Path $root "tests\ZemaxMCP.PrivateRpcTests\StaticToolManifestAssertions.cs")
 $packages = Get-Content -Raw (Join-Path $root "Directory.Packages.props")
 
 if ($hostProject -notmatch '<TargetFramework>net10\.0-windows</TargetFramework>' -or
@@ -42,33 +44,46 @@ if ($workerRpc -notmatch 'ZemaxRpcProtocol\.InvokeTool' -or $workerRpc -notmatch
     $workerRpc -notmatch 'StaticToolManifest\.IsAllowed') {
   throw "The Worker RPC server must provide protocol-neutral invocation, cancellation, serialization, and manifest-backed execution admission."
 }
-if ($rpcContracts -notmatch 'public const int Version = 2;' -or $rpcContracts -notmatch 'Tool discovery is Host-owned') {
-  throw "Private RPC v2 must explicitly separate Host-owned discovery from Worker execution."
+if ($rpcProtocol -notmatch 'public const int Version = 3;' -or
+    $rpcProtocol -notmatch 'WorkerHandshake' -or $rpcProtocol -notmatch 'ManifestFingerprint' -or
+    $rpcProtocol -match 'GetToolCatalog' -or $rpcContracts -match 'ToolCatalogRequest|ToolInvocationResult') {
+  throw "Private RPC v3 must remove Worker-owned discovery/obsolete contracts and negotiate the manifest fingerprint."
 }
 if ($manifestProject -notmatch 'GenerateStaticToolManifest' -or $manifestProject -notmatch 'ZemaxMCP\.ToolManifestGenerator' -or
-    $manifestProject -notmatch 'ZemaxMCP\.Toolsets\\ToolsetCatalog\.cs' -or
-    $manifestSource -notmatch 'StaticToolManifest' -or $manifestSource -notmatch 'DomainId' -or $manifestSource -notmatch 'Impact' -or
+    $manifestSource -notmatch 'StaticToolManifest' -or $manifestSource -notmatch 'ContractFingerprint' -or
+    $manifestSource -notmatch 'SHA256' -or $manifestSource -notmatch 'DomainId' -or $manifestSource -notmatch 'Impact' -or
     $generatorSource -notmatch 'ZemaxToolType' -or $generatorSource -notmatch 'ZemaxTool') {
-  throw "Schemas, domain metadata, and impact metadata must converge in the shared static Host/Worker manifest assembly."
+  throw "Schemas, fingerprint, domain metadata, and impact metadata must converge in the shared static Host/Worker manifest assembly."
 }
 if ($hostProject -notmatch 'ZemaxMCP\.ToolManifest' -or $workerProject -notmatch 'ZemaxMCP\.ToolManifest') {
   throw "Both Host and Worker must consume the same generated tool manifest."
 }
 if ($hostSource -notmatch 'StaticToolManifest\.All' -or $hostSource -notmatch 'StaticToolManifest\.IsAllowed' -or
-    $hostSource -match 'workerClient\.ListToolsAsync') {
-  throw "MCP tools/list and tools/call admission must use the Host static manifest without starting the Worker for discovery."
+    $rpcClient -match 'ListToolsAsync|GetToolCatalog' -or $workerRpc -match 'GetToolCatalog') {
+  throw "MCP discovery must be Host-owned; no private catalog RPC or compatibility shim may remain."
 }
 if ($workerRegistry -notmatch 'StaticToolManifest\.GetRequired' -or $workerRegistry -match 'BuildSchema\(|BuildTypeSchema\(') {
   throw "Worker execution must consume the shared manifest rather than maintain a second schema generator."
 }
 if ($rpcClient -notmatch 'PipeSecurity' -or $rpcClient -notmatch 'ZEMAX_MCP_PIPE_SECRET' -or
-    $rpcClient -notmatch 'CancelOperation') {
-  throw "The Host-to-Worker channel must be ACL-protected, handshake-authenticated, and cancellation-aware."
+    $rpcClient -notmatch 'WorkerHandshake' -or $rpcClient -notmatch 'StaticToolManifest\.ContractFingerprint' -or
+    $workerSource -notmatch 'WorkerHandshake' -or $workerSource -notmatch 'StaticToolManifest\.ContractFingerprint') {
+  throw "The Host/Worker startup handshake must authenticate PID/secret and reject RPC or manifest contract mismatches before ZOS-API execution."
+}
+if ($workerRpc -notmatch 'ConcurrentQueue<ZemaxRpcEnvelope>' -or $workerRpc -notmatch 'PumpEventsAsync' -or
+    $workerRpc -match '_ = WriteProgressAsync|_ = WriteSnapshotCreatedAsync' -or
+    $rpcClient -notmatch 'Channel<ZemaxRpcEnvelope>' -or $rpcClient -notmatch 'DispatchEventsAsync' -or
+    $rpcClient -notmatch '_progressHandlers' -or $hostSource -notmatch 'NotifyProgressAsync') {
+  throw "Worker progress/snapshot events must use a serialized outbound queue and an independent Host dispatcher with MCP progress forwarding."
+}
+if ($hostSource -notmatch 'io\.zemaxmcp/clientInstanceId' -or $hostSource -notmatch 'X-Zemax-MCP-Client-Instance' -or
+    $hostSource -notmatch 'IsSafeClientInstanceId' -or $originPolicy -notmatch 'X-Zemax-MCP-Client-Instance') {
+  throw "Control identity must support a validated per-client instance identifier in addition to clientInfo and remote endpoint fallback."
 }
 if ($hostSource -notmatch 'OpticStudioControlLease' -or $hostSource -notmatch 'ResolveControlIdentity' -or
     $hostSource -match 'AllowAnyOrigin\(' -or $hostSource -notmatch 'zemax-mcp-remote-endpoint' -or
     $hostSource -match 'zemax-mcp-client-name|Mcp-Version' -or $hostSource -notmatch 'UseSetting\("AllowedHosts"' -or $hostOptions -notmatch 'allowed-origin') {
-  throw "Control ownership must use an authenticated profile or client-info plus remote endpoint; Host and Origin allow-lists must not be wildcarded."
+  throw "Control ownership and Host/Origin boundaries must remain explicit and non-wildcarded."
 }
 if ($rpcClient -notmatch 'HardRecoveryTimeoutSeconds' -or $rpcClient -notmatch 'FaultWorkerConnection' -or
     $rpcClient -notmatch 'CancelOperation' -or $rpcClient -notmatch 'CancellationWriteTimeoutSeconds' -or
@@ -82,13 +97,13 @@ if ([string]::IsNullOrWhiteSpace($callToolBody) -or
     $callToolBody.IndexOf('_executionGate.WaitAsync', [StringComparison]::Ordinal) -lt 0 -or
     $callToolBody.IndexOf('WaitForCancelledOperationRecoveryAsync', [StringComparison]::Ordinal) -lt 0 -or
     $callToolBody.IndexOf('_executionGate.WaitAsync', [StringComparison]::Ordinal) -gt $callToolBody.IndexOf('WaitForCancelledOperationRecoveryAsync', [StringComparison]::Ordinal)) {
-  throw "Tool execution must acquire the Host execution gate before checking cancelled-operation recovery so queued calls cannot enter a draining Worker generation."
+  throw "Tool execution must acquire the Host execution gate before checking cancelled-operation recovery."
 }
 if ($privateRpcTest -notmatch '2026-07-28' -or $privateRpcTest -notmatch 'io\.modelcontextprotocol/clientInfo' -or
-    $privateRpcTest -notmatch 'Send2026ListToolsAsync' -or $privateRpcTest -notmatch 'tools/list started the Worker' -or
-    $privateRpcTest -notmatch 'direct tools/call bypassed' -or $privateRpcTest -notmatch 'policy-rejected tools/call started the Worker' -or
-    $privateRpcTest -match '"initialize"') {
-  throw "The E2E test must prove stateless 2026 discovery is Host-only and direct calls cannot bypass manifest policy before Worker startup."
+    $privateRpcTest -notmatch 'io\.zemaxmcp/clientInstanceId' -or $privateRpcTest -notmatch 'bad-manifest' -or
+    $privateRpcTest -notmatch 'VerifyProgressEventDispatchAsync' -or $privateRpcTest -notmatch 'same-name same-IP' -or
+    $privateRpcTest -notmatch 'Send2026ListToolsAsync' -or $privateRpcTest -match '"initialize"') {
+  throw "The E2E suite must cover stateless discovery, manifest mismatch, event dispatch, and distinct same-info client instances."
 }
 if ($schemaTest -notmatch 'StaticToolManifest\.All\.Count != 126' -or $schemaTest -notmatch 'zemax_open_file' -or
     $schemaTest -notmatch 'zemax_set_fields' -or $schemaTest -notmatch 'zemax_optimize' -or
@@ -100,4 +115,4 @@ dotnet build (Join-Path $root "src\ZemaxMCP.HttpBridge\ZemaxMCP.HttpBridge.cspro
 if ($LASTEXITCODE -ne 0) { throw "Modern Host build failed." }
 dotnet run --project (Join-Path $root "tests\ZemaxMCP.PrivateRpcTests\ZemaxMCP.PrivateRpcTests.csproj") -c $Configuration
 if ($LASTEXITCODE -ne 0) { throw "Private Host-to-Worker RPC integration verification failed." }
-Write-Host "Modern .NET 10 Host / static manifest / private RPC boundary verification passed."
+Write-Host "Modern .NET 10 Host / static manifest / private RPC v3 boundary verification passed."
