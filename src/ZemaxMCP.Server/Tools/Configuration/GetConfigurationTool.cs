@@ -19,22 +19,16 @@ public class GetConfigurationTool
     );
 
     [ZemaxTool(Name = "zemax_get_configuration")]
-    [Description("Get the number of configurations and current configuration")]
-    public async Task<GetConfigurationResult> ExecuteAsync()
+    [Description("Get the number of MCE configurations and the current active configuration.")]
+    public async Task<GetConfigurationResult> ExecuteAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            var result = await _session.ExecuteAsync("GetConfiguration", null, system =>
+            return await _session.ExecuteAsync("GetConfiguration", null, system =>
             {
                 var mce = system.MCE;
-                return new GetConfigurationResult(
-                    Success: true,
-                    Error: null,
-                    NumberOfConfigurations: mce.NumberOfConfigurations,
-                    CurrentConfiguration: mce.CurrentConfiguration
-                );
-            });
-            return result;
+                return new GetConfigurationResult(true, null, mce.NumberOfConfigurations, mce.CurrentConfiguration);
+            }, cancellationToken);
         }
         catch (Exception ex)
         {
