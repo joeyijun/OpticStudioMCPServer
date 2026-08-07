@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using ZemaxMCP.Server.Tooling;
-using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 using ZOSAPI.Editors;
 
@@ -13,19 +12,33 @@ public class SetConfigurationOperandValueTool
 
     public SetConfigurationOperandValueTool(IZemaxSession session) => _session = session;
 
+    public record ConfigurationCellValue(
+        int ConfigurationNumber,
+        string DataType,
+        double? DoubleValue,
+        int? IntegerValue,
+        string? StringValue,
+        string SolveType,
+        int? PickupConfig = null,
+        int? PickupOperand = null,
+        double? ScaleFactor = null,
+        double? Offset = null);
+
     public record SetConfigurationOperandValueResult(
         bool Success,
         string? Error,
-        ConfigurationValue? NewValue
-    );
+        ConfigurationCellValue? NewValue);
 
     [ZemaxTool(Name = "zemax_set_configuration_operand_value")]
-    [Description("Set one MCE operand/configuration cell to either a fixed numeric value or a same-operand ConfigPickup solve. Fixed and pickup modes are mutually exclusive.")]
+    [Description("Set one MCE cell to a fixed double/integer/string value or to a ConfigPickup solve. Exactly one value mode or pickupConfig must be supplied. Readback preserves the actual MCE cell data type and pickup source.")]
     public async Task<SetConfigurationOperandValueResult> ExecuteAsync(
         [Description("Operand row number (1-indexed)")] int operandRow,
         [Description("Configuration number (1-indexed)")] int configurationNumber,
-        [Description("Fixed value to set. Supply this OR pickupConfig, not both.")] double? value = null,
-        [Description("Set a ConfigPickup solve from this configuration number on the same operand row.")] int? pickupConfig = null,
+        [Description("Fixed double value. Use only for a Double MCE cell.")] double? value = null,
+        [Description("Fixed integer value. Use only for an Integer MCE cell.")] int? integerValue = null,
+        [Description("Fixed string value, including an explicit empty string. Use only for a String MCE cell.")] string? stringValue = null,
+        [Description("Set a ConfigPickup solve from this configuration number instead of a fixed value.")] int? pickupConfig = null,
+        [Description("Source operand row for ConfigPickup. Defaults to operandRow when omitted.")] int? pickupOperand = null,
         [Description("Scale factor for ConfigPickup. Only valid with pickupConfig.")] double? scaleFactor = null,
         [Description("Offset for ConfigPickup. Only valid with pickupConfig.")] double? offset = null,
         CancellationToken cancellationToken = default)
@@ -34,22 +47,37 @@ public class SetConfigurationOperandValueTool
         {
             if (operandRow < 1) throw new ArgumentOutOfRangeException(nameof(operandRow), "operandRow must be >= 1.");
             if (configurationNumber < 1) throw new ArgumentOutOfRangeException(nameof(configurationNumber), "configurationNumber must be >= 1.");
-            if (value.HasValue == pickupConfig.HasValue)
-                throw new ArgumentException("Provide exactly one of 'value' or 'pickupConfig'.");
-            if (!pickupConfig.HasValue && (scaleFactor.HasValue || offset.HasValue))
-                throw new ArgumentException("scaleFactor and offset are valid only when pickupConfig is provided.");
             ValidateFinite(value, nameof(value));
             ValidateFinite(scaleFactor, nameof(scaleFactor));
             ValidateFinite(offset, nameof(offset));
-            if (pickupConfig.HasValue && pickupConfig.Value < 1)
-                throw new ArgumentOutOfRangeException(nameof(pickupConfig), "pickupConfig must be >= 1.");
+
+            int fixedModeCount = (value.HasValue ? 1 : 0) + (integerValue.HasValue ? 1 : 0) + (stringValue is not null ? 1 : 0);
+            if (pickupConfig.HasValue)
+            {
+                if (fixedModeCount != 0)
+                    throw new ArgumentException("Fixed value parameters and pickupConfig are mutually exclusive.");
+                if (pickupConfig.Value < 1)
+                    throw new ArgumentOutOfRangeException(nameof(pickupConfig), "pickupConfig must be >= 1.");
+                if (pickupOperand.HasValue && pickupOperand.Value < 1)
+                    throw new ArgumentOutOfRangeException(nameof(pickupOperand), "pickupOperand must be >= 1.");
+            }
+            else
+            {
+                if (fixedModeCount != 1)
+                    throw new ArgumentException("Provide exactly one of value, integerValue, stringValue, or pickupConfig.");
+                if (pickupOperand.HasValue || scaleFactor.HasValue || offset.HasValue)
+                    throw new ArgumentException("pickupOperand, scaleFactor, and offset are valid only when pickupConfig is provided.");
+            }
 
             var parameters = new Dictionary<string, object?>
             {
                 ["operandRow"] = operandRow,
                 ["configurationNumber"] = configurationNumber,
                 ["value"] = value,
+                ["integerValue"] = integerValue,
+                ["stringValue"] = stringValue,
                 ["pickupConfig"] = pickupConfig,
+                ["pickupOperand"] = pickupOperand,
                 ["scaleFactor"] = scaleFactor,
                 ["offset"] = offset
             };
@@ -61,8 +89,6 @@ public class SetConfigurationOperandValueTool
                     throw new ArgumentOutOfRangeException(nameof(operandRow), $"operandRow {operandRow} exceeds the MCE operand count ({mce.NumberOfOperands}).");
                 if (configurationNumber > mce.NumberOfConfigurations)
                     throw new ArgumentOutOfRangeException(nameof(configurationNumber), $"configurationNumber {configurationNumber} exceeds the configuration count ({mce.NumberOfConfigurations}).");
-                if (pickupConfig.HasValue && pickupConfig.Value > mce.NumberOfConfigurations)
-                    throw new ArgumentOutOfRangeException(nameof(pickupConfig), $"pickupConfig {pickupConfig.Value} exceeds the configuration count ({mce.NumberOfConfigurations}).");
 
                 var row = mce.GetOperandAt(operandRow);
                 var cell = row.GetOperandCell(configurationNumber);
@@ -73,6 +99,13 @@ public class SetConfigurationOperandValueTool
 
                 if (pickupConfig.HasValue)
                 {
+                    int sourceOperand = pickupOperand ?? operandRow;
+                    if (pickupConfig.Value > mce.NumberOfConfigurations)
+                        throw new ArgumentOutOfRangeException(nameof(pickupConfig), $"pickupConfig {pickupConfig.Value} exceeds the configuration count ({mce.NumberOfConfigurations}).");
+                    if (sourceOperand > mce.NumberOfOperands)
+                        throw new ArgumentOutOfRangeException(nameof(pickupOperand), $"pickupOperand {sourceOperand} exceeds the MCE operand count ({mce.NumberOfOperands}).");
+                    if (pickupConfig.Value == configurationNumber && sourceOperand == operandRow)
+                        throw new ArgumentException("A ConfigPickup cannot reference the same MCE cell as its own source.");
                     if (!cell.IsSolveTypeSupported(SolveType.ConfigPickup))
                         throw new InvalidOperationException("This MCE cell does not support ConfigPickup solves.");
 
@@ -81,7 +114,7 @@ public class SetConfigurationOperandValueTool
                     var pickup = solveData._S_ConfigPickup
                         ?? throw new InvalidOperationException("OpticStudio did not expose typed ConfigPickup solve data.");
                     pickup.Configuration = pickupConfig.Value;
-                    pickup.Operand = operandRow;
+                    pickup.Operand = sourceOperand;
 
                     double requestedScale = scaleFactor ?? 1.0;
                     double requestedOffset = offset ?? 0.0;
@@ -100,28 +133,23 @@ public class SetConfigurationOperandValueTool
                 {
                     if (!cell.MakeSolveFixed())
                         throw new InvalidOperationException("OpticStudio could not make the MCE cell fixed.");
-                    cell.DoubleValue = value!.Value;
-                }
-
-                var updatedSolve = cell.GetSolveData();
-                var newValue = new ConfigurationValue
-                {
-                    ConfigurationNumber = configurationNumber,
-                    Value = cell.DoubleValue,
-                    SolveType = updatedSolve.Type.ToString()
-                };
-                if (updatedSolve.Type == SolveType.ConfigPickup)
-                {
-                    var pickup = updatedSolve._S_ConfigPickup;
-                    newValue = newValue with
+                    switch (cell.DataType)
                     {
-                        PickupConfig = pickup.Configuration,
-                        ScaleFactor = pickup.SupportsScale ? pickup.ScaleFactor : null,
-                        Offset = pickup.SupportsOffset ? pickup.Offset : null
-                    };
+                        case CellDataType.Double when value.HasValue:
+                            cell.DoubleValue = value.Value;
+                            break;
+                        case CellDataType.Integer when integerValue.HasValue:
+                            cell.IntegerValue = integerValue.Value;
+                            break;
+                        case CellDataType.String when stringValue is not null:
+                            cell.Value = stringValue;
+                            break;
+                        default:
+                            throw new ArgumentException($"The supplied fixed-value parameter does not match the MCE cell data type {cell.DataType}.");
+                    }
                 }
 
-                return new SetConfigurationOperandValueResult(true, null, newValue);
+                return new SetConfigurationOperandValueResult(true, null, ReadCell(configurationNumber, cell));
             }, cancellationToken);
         }
         catch (Exception ex)
@@ -130,9 +158,50 @@ public class SetConfigurationOperandValueTool
         }
     }
 
-    private static void ValidateFinite(double? value, string name)
+    private static ConfigurationCellValue ReadCell(int configurationNumber, IEditorCell cell)
     {
-        if (value.HasValue && (double.IsNaN(value.Value) || double.IsInfinity(value.Value)))
+        double? doubleValue = null;
+        int? integerValue = null;
+        string? stringValue = null;
+        switch (cell.DataType)
+        {
+            case CellDataType.Double: doubleValue = cell.DoubleValue; break;
+            case CellDataType.Integer: integerValue = cell.IntegerValue; break;
+            case CellDataType.String: stringValue = cell.Value; break;
+            default: throw new InvalidOperationException($"Unsupported MCE cell data type: {cell.DataType}.");
+        }
+
+        var solveData = cell.GetSolveData();
+        int? pickupConfig = null;
+        int? pickupOperand = null;
+        double? scale = null;
+        double? offset = null;
+        if (solveData.Type == SolveType.ConfigPickup)
+        {
+            var pickup = solveData._S_ConfigPickup
+                ?? throw new InvalidOperationException("OpticStudio did not expose typed ConfigPickup solve data during readback.");
+            pickupConfig = pickup.Configuration;
+            pickupOperand = pickup.Operand;
+            if (pickup.SupportsScale) scale = pickup.ScaleFactor;
+            if (pickup.SupportsOffset) offset = pickup.Offset;
+        }
+
+        return new ConfigurationCellValue(
+            configurationNumber,
+            cell.DataType.ToString(),
+            doubleValue,
+            integerValue,
+            stringValue,
+            solveData.Type.ToString(),
+            pickupConfig,
+            pickupOperand,
+            scale,
+            offset);
+    }
+
+    private static void ValidateFinite(double? input, string name)
+    {
+        if (input.HasValue && (double.IsNaN(input.Value) || double.IsInfinity(input.Value)))
             throw new ArgumentOutOfRangeException(name, $"{name} must be finite.");
     }
 }
