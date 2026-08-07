@@ -41,7 +41,7 @@ foreach ($requestedRoot in $ZemaxRoots) {
     $interfaces = Join-Path $resolved "ZOSAPI_Interfaces.dll"
     $netHelper = Find-NetHelper $resolved
     if (-not (Test-Path -LiteralPath $zosApi) -or -not (Test-Path -LiteralPath $interfaces) -or [string]::IsNullOrWhiteSpace($netHelper)) {
-        $failed.Add("$resolved: required ZOSAPI.dll, ZOSAPI_Interfaces.dll, or ZOSAPI_NetHelper.dll is missing")
+        $failed.Add("${resolved}: required ZOSAPI.dll, ZOSAPI_Interfaces.dll, or ZOSAPI_NetHelper.dll is missing")
         continue
     }
 
@@ -49,12 +49,13 @@ foreach ($requestedRoot in $ZemaxRoots) {
     Write-Host "Compiling Worker against ZOS-API $version from $resolved" -ForegroundColor Cyan
     & dotnet build $workerProject -c $Configuration -t:Rebuild "-p:ZEMAX_ROOT=$resolved" "-p:ZOSAPI_NETHELPER_PATH=$netHelper"
     $exitCode = $LASTEXITCODE
+    $compileStatus = if ($exitCode -eq 0) { "PASS" } else { "FAIL" }
     $results.Add([PSCustomObject]@{
         Root = $resolved
         InterfacesVersion = $version
-        ZosApiVersion = Read-Version $zosApi
-        NetHelperVersion = Read-Version $netHelper
-        Compile = if ($exitCode -eq 0) { "PASS" } else { "FAIL" }
+        ZosApiVersion = (Read-Version $zosApi)
+        NetHelperVersion = (Read-Version $netHelper)
+        Compile = $compileStatus
     })
     if ($exitCode -ne 0) {
         $failed.Add("$resolved (ZOSAPI_Interfaces $version): Worker compile failed")
