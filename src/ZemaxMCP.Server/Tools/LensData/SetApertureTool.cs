@@ -24,7 +24,8 @@ public class SetApertureTool
     [Description("Set the system aperture")]
     public async Task<SetApertureResult> ExecuteAsync(
         [Description("Aperture value (diameter, F/#, NA, etc.)")] double value,
-        [Description("Aperture type: EPD, FNumber, ObjectNA, FloatByStop")] string apertureType = "EPD")
+        [Description("Aperture type: EPD, FNumber, ObjectNA, FloatByStop")] string apertureType = "EPD",
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -50,7 +51,6 @@ public class SetApertureTool
             var result = await _session.ExecuteAsync("SetAperture", parameters, system =>
             {
                 var aperture = system.SystemData.Aperture;
-
                 aperture.ApertureType = apType;
                 aperture.ApertureValue = value;
 
@@ -60,7 +60,7 @@ public class SetApertureTool
                     ApertureType: aperture.ApertureType.ToString(),
                     ApertureValue: aperture.ApertureValue.Sanitize()
                 );
-            });
+            }, cancellationToken);
 
             return result;
         }
