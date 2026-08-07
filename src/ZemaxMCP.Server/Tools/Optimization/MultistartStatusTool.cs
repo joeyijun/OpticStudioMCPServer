@@ -9,10 +9,7 @@ public class MultistartStatusTool
 {
     private readonly MultistartState _state;
 
-    public MultistartStatusTool(MultistartState state)
-    {
-        _state = state;
-    }
+    public MultistartStatusTool(MultistartState state) => _state = state;
 
     public record MultistartStatusResult(
         bool IsRunning,
@@ -26,18 +23,17 @@ public class MultistartStatusTool
         int SaveCount,
         string? SaveFolder,
         string? ErrorMessage,
+        string? LastWarning,
         int InitialLmIteration,
         int InitialLmMaxIterations,
         double InitialLmMerit,
-        string Summary
-    );
+        string Summary);
 
     [ZemaxTool(Name = "zemax_multistart_status")]
-    [Description("Check the progress of a running multistart optimization. Returns current trial, best merit, acceptance count, and running state. Does not block — safe to call while optimization is running.")]
+    [Description("Check multistart progress, best merit, acceptance count, completed checkpoint saves, and the most recent auxiliary save warning. Does not block.")]
     public MultistartStatusResult Execute()
     {
         string summary;
-
         if (_state.IsRunning)
         {
             if (_state.IsInInitialLm)
@@ -56,9 +52,8 @@ public class MultistartStatusTool
             {
                 double pct = _state.MaxTrials > 0 ? (double)_state.CurrentTrial / _state.MaxTrials * 100 : 0;
                 summary = $"Trial {_state.CurrentTrial}/{_state.MaxTrials} ({pct:F1}%) | " +
-                          $"Best merit: {_state.BestMerit:F6} | " +
-                          $"Accepted: {_state.TotalTrialsAccepted} | " +
-                          $"Saves: {_state.SaveCount}";
+                          $"Best merit: {_state.BestMerit:F6} | Accepted: {_state.TotalTrialsAccepted} | " +
+                          $"Completed saves: {_state.SaveCount}";
             }
         }
         else if (_state.HasState)
@@ -66,29 +61,32 @@ public class MultistartStatusTool
             var errorPart = _state.ErrorMessage != null ? $" ({_state.ErrorMessage})" : "";
             summary = $"Completed{errorPart}. Final merit: {_state.BestMerit:F6} | " +
                       $"Trials: {_state.TotalTrialsRun} | Accepted: {_state.TotalTrialsAccepted} | " +
-                      $"Saves: {_state.SaveCount}";
+                      $"Completed saves: {_state.SaveCount}";
         }
         else
         {
             summary = "No multistart optimization has been run yet.";
         }
 
+        if (!string.IsNullOrWhiteSpace(_state.LastWarning))
+            summary += $" | Warning: {_state.LastWarning}";
+
         return new MultistartStatusResult(
-            IsRunning: _state.IsRunning,
-            IsInInitialLm: _state.IsInInitialLm,
-            CurrentTrial: _state.CurrentTrial,
-            MaxTrials: _state.MaxTrials,
-            InitialMerit: _state.InitialMerit,
-            BestMerit: _state.BestMerit,
-            TotalTrialsRun: _state.TotalTrialsRun,
-            TotalTrialsAccepted: _state.TotalTrialsAccepted,
-            SaveCount: _state.SaveCount,
-            SaveFolder: _state.SaveFolder,
-            ErrorMessage: _state.ErrorMessage,
-            InitialLmIteration: _state.InitialLmIteration,
-            InitialLmMaxIterations: _state.InitialLmMaxIterations,
-            InitialLmMerit: _state.InitialLmMerit,
-            Summary: summary
-        );
+            _state.IsRunning,
+            _state.IsInInitialLm,
+            _state.CurrentTrial,
+            _state.MaxTrials,
+            _state.InitialMerit,
+            _state.BestMerit,
+            _state.TotalTrialsRun,
+            _state.TotalTrialsAccepted,
+            _state.SaveCount,
+            _state.SaveFolder,
+            _state.ErrorMessage,
+            _state.LastWarning,
+            _state.InitialLmIteration,
+            _state.InitialLmMaxIterations,
+            _state.InitialLmMerit,
+            summary);
     }
 }
