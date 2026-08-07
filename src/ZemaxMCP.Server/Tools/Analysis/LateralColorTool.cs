@@ -14,22 +14,26 @@ public class LateralColorTool
     public LateralColorTool(IZemaxSession session) => _session = session;
 
     [ZemaxTool(Name = "zemax_lateral_color")]
-    [Description("Calculate lateral color (chromatic aberration in the image plane) as a function of field. Returns lateral color in µm for each relative field position using real ray tracing between the short and long wavelengths.")]
-    public async Task<LateralColorData> ExecuteAsync()
+    [Description("Calculate lateral color versus relative field using OpticStudio's short/long wavelength comparison. Returns parsed field/color data and wavelength metadata when present.")]
+    public async Task<LateralColorData> ExecuteAsync(CancellationToken cancellationToken = default)
     {
         try
         {
             return await _session.ExecuteAsync("LateralColor", null, system =>
             {
                 var analysis = system.Analyses.New_LateralColor();
+                if (analysis == null)
+                    throw new InvalidOperationException("OpticStudio did not create a Lateral Color analysis.");
                 try
                 {
                     analysis.ApplyAndWaitForCompletion();
-
+                    var results = analysis.GetResults() ?? throw new InvalidOperationException("Lateral Color returned no results object.");
                     var tempFile = Path.Combine(Path.GetTempPath(), $"zemax_latcolor_{Guid.NewGuid():N}.txt");
                     try
                     {
-                        analysis.GetResults().GetTextFile(tempFile);
+                        results.GetTextFile(tempFile);
+                        if (!File.Exists(tempFile) || new FileInfo(tempFile).Length == 0)
+                            throw new IOException("Lateral Color produced no text results.");
                         return ParseLateralColorTextFile(tempFile);
                     }
                     finally
@@ -41,7 +45,7 @@ public class LateralColorTool
                 {
                     analysis.Close();
                 }
-            });
+            }, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -52,9 +56,8 @@ public class LateralColorTool
     private static LateralColorData ParseLateralColorTextFile(string filePath)
     {
         var lines = File.ReadAllLines(filePath);
-
         string units = "";
-        double maxField = 0, shortWave = 0, longWave = 0;
+        double maxField = double.NaN, shortWave = double.NaN, longWave = double.NaN;
         var relFields = new List<double>();
         var latColor = new List<double>();
         bool inData = false;
@@ -70,67 +73,51 @@ public class LateralColorTool
                 if (idx >= 0) units = trimmed.Substring(idx + 3).Trim().TrimEnd('.');
                 continue;
             }
+            if (trimmed.StartsWith("Maximum Field", StringComparison.OrdinalIgnoreCase)) { maxField = ParseColonValue(trimmed); continue; }
+            if (trimmed.StartsWith("Short Wavelength", StringComparison.OrdinalIgnoreCase)) { shortWave = ParseColonValue(trimmed); continue; }
+            if (trimmed.StartsWith("Long Wavelength", StringComparison.OrdinalIgnoreCase)) { longWave = ParseColonValue(trimmed); continue; }
 
-            if (trimmed.StartsWith("Maximum Field", StringComparison.OrdinalIgnoreCase))
-            {
-                maxField = ParseColonValue(trimmed);
-                continue;
-            }
-
-            // Parse wavelengths - first occurrence is short, second is long
-            if (trimmed.StartsWith("Short Wavelength", StringComparison.OrdinalIgnoreCase))
-            {
-                shortWave = ParseColonValue(trimmed);
-                continue;
-            }
-            if (trimmed.StartsWith("Long Wavelength", StringComparison.OrdinalIgnoreCase))
-            {
-                longWave = ParseColonValue(trimmed);
-                continue;
-            }
-
-            // Detect column header
             if (trimmed.StartsWith("Rel.", StringComparison.OrdinalIgnoreCase) &&
                 trimmed.IndexOf("Lateral Color", StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 inData = true;
                 continue;
             }
-
             if (!inData) continue;
 
             var values = trimmed.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
             if (values.Length >= 2 &&
-                double.TryParse(values[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double rf) &&
-                double.TryParse(values[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double lc))
+                double.TryParse(values[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var rf) &&
+                double.TryParse(values[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var lc))
             {
                 relFields.Add(rf);
                 latColor.Add(lc);
             }
         }
 
-        // Handle case where both wavelengths appear as "Short Wavelength" in text output
-        // The second one is actually the long wavelength
-        if (longWave == 0 && shortWave > 0)
+        // Some OpticStudio versions label both wavelength lines similarly. If
+        // the explicit long-wave header was not parsed, recover the first two
+        // positive wavelength values from generic wavelength metadata lines.
+        if (double.IsNaN(longWave))
         {
-            // Re-parse to get both wavelength values
-            bool foundFirst = false;
-            foreach (var line in lines)
+            var parsedWaves = new List<double>();
+            foreach (var raw in lines)
             {
-                var trimmed = line.Trim();
-                if (trimmed.IndexOf("Wavelength", StringComparison.OrdinalIgnoreCase) >= 0 &&
-                    trimmed.Contains(":") &&
-                    !trimmed.StartsWith("Maximum", StringComparison.OrdinalIgnoreCase))
-                {
-                    var val = ParseColonValue(trimmed);
-                    if (val > 0)
-                    {
-                        if (!foundFirst) { shortWave = val; foundFirst = true; }
-                        else { longWave = val; break; }
-                    }
-                }
+                var trimmed = raw.Trim();
+                if (trimmed.IndexOf("Wavelength", StringComparison.OrdinalIgnoreCase) < 0 ||
+                    !trimmed.Contains(':') || trimmed.StartsWith("Maximum", StringComparison.OrdinalIgnoreCase)) continue;
+                var value = ParseColonValue(trimmed);
+                if (!double.IsNaN(value) && value > 0) parsedWaves.Add(value);
+            }
+            if (parsedWaves.Count >= 2)
+            {
+                shortWave = parsedWaves[0];
+                longWave = parsedWaves[1];
             }
         }
+
+        if (relFields.Count == 0 || relFields.Count != latColor.Count)
+            throw new InvalidDataException("Lateral Color text results contained no complete parsable field/color curve. The installed OpticStudio text format may be unsupported.");
 
         return new LateralColorData
         {
@@ -148,10 +135,10 @@ public class LateralColorTool
     private static double ParseColonValue(string line)
     {
         int idx = line.LastIndexOf(':');
-        if (idx < 0) return 0;
+        if (idx < 0) return double.NaN;
         var part = line.Substring(idx + 1).Trim().Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
-        if (part.Length > 0 && double.TryParse(part[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double val))
-            return val;
-        return 0;
+        return part.Length > 0 && double.TryParse(part[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+            ? value
+            : double.NaN;
     }
 }
