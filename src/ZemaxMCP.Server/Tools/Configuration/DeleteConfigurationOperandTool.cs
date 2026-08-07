@@ -19,43 +19,31 @@ public class DeleteConfigurationOperandTool
     );
 
     [ZemaxTool(Name = "zemax_delete_configuration_operand")]
-    [Description("Delete a configuration operand from the multi-configuration editor")]
+    [Description("Delete one configuration operand from the Multi-Configuration Editor and verify the editor count changed.")]
     public async Task<DeleteConfigurationOperandResult> ExecuteAsync(
-        [Description("Row number to delete (1-indexed)")] int row)
+        [Description("Operand row number to delete (1-indexed)")] int row,
+        CancellationToken cancellationToken = default)
     {
         if (row < 1)
-        {
-            return new DeleteConfigurationOperandResult(false, "Row number must be at least 1", 0, 0);
-        }
+            return new DeleteConfigurationOperandResult(false, "Row number must be at least 1.", 0, 0);
 
         try
         {
-            var result = await _session.ExecuteAsync("DeleteConfigurationOperand",
+            return await _session.ExecuteAsync("DeleteConfigurationOperand",
                 new Dictionary<string, object?> { ["row"] = row },
                 system =>
-            {
-                var mce = system.MCE;
-
-                if (row > mce.NumberOfOperands)
                 {
-                    return new DeleteConfigurationOperandResult(
-                        Success: false,
-                        Error: $"Row {row} does not exist. MCE has {mce.NumberOfOperands} operands.",
-                        DeletedRow: 0,
-                        NumberOfOperands: mce.NumberOfOperands
-                    );
-                }
+                    var mce = system.MCE;
+                    int before = mce.NumberOfOperands;
+                    if (row > before)
+                        throw new ArgumentOutOfRangeException(nameof(row), $"Row {row} does not exist. MCE has {before} operands.");
+                    if (!mce.RemoveOperandAt(row))
+                        throw new InvalidOperationException($"OpticStudio rejected deletion of MCE operand {row}.");
+                    if (mce.NumberOfOperands != before - 1)
+                        throw new InvalidOperationException($"MCE operand count is {mce.NumberOfOperands} after deleting row {row}; expected {before - 1}.");
 
-                mce.RemoveOperandAt(row);
-
-                return new DeleteConfigurationOperandResult(
-                    Success: true,
-                    Error: null,
-                    DeletedRow: row,
-                    NumberOfOperands: mce.NumberOfOperands
-                );
-            });
-            return result;
+                    return new DeleteConfigurationOperandResult(true, null, row, mce.NumberOfOperands);
+                }, cancellationToken);
         }
         catch (Exception ex)
         {
