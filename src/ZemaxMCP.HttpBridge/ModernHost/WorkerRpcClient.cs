@@ -6,15 +6,17 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using Serilog;
 using ZemaxMCP.Rpc;
+using ZemaxMCP.ToolManifest;
 
 namespace ZemaxMCP.HttpBridge.ModernHost;
 
 /// <summary>
-/// Typed private RPC client.  The Host owns MCP and HTTP; the Worker receives
+/// Typed private RPC client. The Host owns MCP and HTTP; the Worker receives
 /// only versioned OpticStudio commands through its private named pipe.
 /// </summary>
 internal sealed class WorkerRpcClient : IAsyncDisposable
@@ -26,6 +28,16 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     private readonly object _connectionGate = new();
     private readonly object _recoveryGate = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<ZemaxRpcEnvelope>> _pending = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Func<OperationProgress, CancellationToken, Task>> _progressHandlers = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, WorkerJobStatus> _eventJobs = new(StringComparer.Ordinal);
+    private readonly Channel<ZemaxRpcEnvelope> _eventQueue = Channel.CreateUnbounded<ZemaxRpcEnvelope>(new UnboundedChannelOptions
+    {
+        SingleReader = true,
+        SingleWriter = true,
+        AllowSynchronousContinuations = false
+    });
+    private readonly CancellationTokenSource _eventDispatchCancellation = new();
+    private readonly Task _eventDispatchPump;
     private readonly JsonSerializerOptions _jsonOptions = McpJsonUtilities.DefaultOptions;
     private Process? _worker;
     private NamedPipeServerStream? _pipe;
@@ -38,7 +50,11 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     private OperationProgress? _lastProgress;
     private string? _lastSnapshotPath;
 
-    public WorkerRpcClient(HostOptions options) => _options = options;
+    public WorkerRpcClient(HostOptions options)
+    {
+        _options = options;
+        _eventDispatchPump = Task.Run(() => DispatchEventsAsync(_eventDispatchCancellation.Token));
+    }
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -83,23 +99,19 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         finally { _startupGate.Release(); }
     }
 
-    public async Task<ListToolsResult> ListToolsAsync(CancellationToken cancellationToken)
-    {
-        await StartAsync(cancellationToken).ConfigureAwait(false);
-        return await SendAsync<ListToolsResult>(ZemaxRpcProtocol.GetToolCatalog,
-            new ToolCatalogRequest { Toolset = _options.Toolset, ReadOnly = _options.ReadOnly }, Guid.NewGuid().ToString("N"), cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task<CallToolResult> CallToolAsync(CallToolRequestParams request, CancellationToken cancellationToken)
+    public async Task<CallToolResult> CallToolAsync(
+        CallToolRequestParams request,
+        CancellationToken cancellationToken,
+        Func<OperationProgress, CancellationToken, Task>? progressHandler = null)
     {
         var operationId = Guid.NewGuid().ToString("N");
         await _executionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (progressHandler != null) _progressHandlers[operationId] = progressHandler;
         try
         {
             // The execution gate must be acquired before checking recovery. A
-            // request that queued behind a soon-to-be-cancelled operation will
-            // therefore observe that operation's recovery barrier after it
-            // acquires the gate instead of entering the draining generation.
+            // request queued before cancellation therefore observes the old
+            // generation's recovery barrier before it can write a new command.
             await WaitForCancelledOperationRecoveryAsync(cancellationToken).ConfigureAwait(false);
             await StartAsync(cancellationToken).ConfigureAwait(false);
             var invocation = new ToolInvocationRequest
@@ -112,23 +124,34 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
             return await SendAsync<CallToolResult>(ZemaxRpcProtocol.InvokeTool, invocation, operationId, cancellationToken,
                 ownsGenerationRecovery: true).ConfigureAwait(false);
         }
-        finally { _executionGate.Release(); }
+        finally
+        {
+            _progressHandlers.TryRemove(operationId, out _);
+            _executionGate.Release();
+        }
     }
 
     public async Task<WorkerStatus> GetStatusAsync(CancellationToken cancellationToken)
     {
         await StartAsync(cancellationToken).ConfigureAwait(false);
-        return await SendAsync<WorkerStatus>(ZemaxRpcProtocol.GetStatus, new { }, Guid.NewGuid().ToString("N"), cancellationToken).ConfigureAwait(false);
+        var status = await SendAsync<WorkerStatus>(ZemaxRpcProtocol.GetStatus, new { }, Guid.NewGuid().ToString("N"), cancellationToken).ConfigureAwait(false);
+        if (status.RpcVersion != ZemaxRpcProtocol.Version ||
+            !string.Equals(status.ManifestFingerprint, StaticToolManifest.ContractFingerprint, StringComparison.Ordinal))
+            throw new InvalidDataException("Worker status reported a different RPC/tool contract than the authenticated Host generation.");
+        return status;
     }
 
     public object GetHealth() => new
     {
-        mcpServerRunning = _writer != null && _worker is { HasExited: false },
-        workerPid = _worker?.Id,
+        mcpServerRunning = IsRunning,
+        workerPid = TryGetWorkerPid(),
         workerStartedAt = _startedAt,
         transport = "versioned private named-pipe RPC",
+        rpcVersion = ZemaxRpcProtocol.Version,
+        manifestFingerprint = StaticToolManifest.ContractFingerprint,
         lastProgress = _lastProgress,
-        lastSnapshotPath = _lastSnapshotPath
+        lastSnapshotPath = _lastSnapshotPath,
+        eventJobs = _eventJobs.Values.OrderBy(job => job.JobId, StringComparer.Ordinal).TakeLast(128).ToArray()
     };
 
     public async ValueTask DisposeAsync()
@@ -137,6 +160,10 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         var pump = _pump;
         CloseStaleConnection("The Worker RPC client is shutting down.");
         if (pump != null) { try { await pump.ConfigureAwait(false); } catch { } }
+        _eventQueue.Writer.TryComplete();
+        _eventDispatchCancellation.Cancel();
+        try { await _eventDispatchPump.ConfigureAwait(false); } catch (OperationCanceledException) { }
+        _eventDispatchCancellation.Dispose();
         _executionGate.Dispose();
         _writeGate.Dispose();
         _startupGate.Dispose();
@@ -221,15 +248,14 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
                 if (line == null) throw new EndOfStreamException("The Worker private pipe closed its response stream.");
                 var message = JsonSerializer.Deserialize<ZemaxRpcEnvelope>(line, _jsonOptions)
                     ?? throw new InvalidDataException("The Worker returned an empty RPC envelope.");
+                if (message.Version != ZemaxRpcProtocol.Version)
+                    throw new InvalidDataException("The Worker returned an RPC envelope from an unsupported protocol version.");
                 switch (message.Kind)
                 {
                     case ZemaxRpcProtocol.Progress:
-                        _lastProgress = message.Payload.Deserialize<OperationProgress>(_jsonOptions)
-                            ?? throw new InvalidDataException("The Worker returned an invalid progress event.");
-                        break;
                     case ZemaxRpcProtocol.SnapshotCreated:
-                        _lastSnapshotPath = message.Payload.Deserialize<SnapshotCreatedEvent>(_jsonOptions)?.Path
-                            ?? throw new InvalidDataException("The Worker returned an invalid snapshot event.");
+                        if (!_eventQueue.Writer.TryWrite(message))
+                            Log.Warning("Dropping Worker event {Kind} because the Host event dispatcher is closed", message.Kind);
                         break;
                     case ZemaxRpcProtocol.Result:
                     case ZemaxRpcProtocol.Error:
@@ -246,6 +272,57 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         catch (Exception ex) { FaultWorkerConnection(ex, expectedReader: reader); }
     }
 
+    private async Task DispatchEventsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (var message in _eventQueue.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (string.Equals(message.Kind, ZemaxRpcProtocol.Progress, StringComparison.Ordinal))
+                {
+                    var progress = message.Payload.Deserialize<OperationProgress>(_jsonOptions)
+                        ?? throw new InvalidDataException("The Worker returned an invalid progress event.");
+                    _lastProgress = progress;
+                    _eventJobs[progress.OperationId] = new WorkerJobStatus
+                    {
+                        JobId = progress.OperationId,
+                        ToolName = progress.ToolName,
+                        State = progress.State,
+                        Fraction = progress.Fraction,
+                        QueuePosition = progress.QueuePosition,
+                        Message = progress.Message
+                    };
+                    TrimEventJobs();
+                    if (_progressHandlers.TryGetValue(progress.OperationId, out var handler))
+                    {
+                        try { await handler(progress, cancellationToken).ConfigureAwait(false); }
+                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                        catch (Exception ex) { Log.Warning(ex, "Could not forward Worker progress for operation {OperationId}", progress.OperationId); }
+                    }
+                    continue;
+                }
+
+                if (string.Equals(message.Kind, ZemaxRpcProtocol.SnapshotCreated, StringComparison.Ordinal))
+                {
+                    _lastSnapshotPath = message.Payload.Deserialize<SnapshotCreatedEvent>(_jsonOptions)?.Path
+                        ?? throw new InvalidDataException("The Worker returned an invalid snapshot event.");
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception ex) when (!_disposed)
+        {
+            Log.Error(ex, "Worker event dispatcher failed");
+        }
+    }
+
+    private void TrimEventJobs()
+    {
+        if (_eventJobs.Count <= 128) return;
+        foreach (var key in _eventJobs.Keys.Take(_eventJobs.Count - 128))
+            _eventJobs.TryRemove(key, out _);
+    }
+
     private bool IsRunning
     {
         get
@@ -256,6 +333,12 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
             }
             catch { return false; }
         }
+    }
+
+    private int? TryGetWorkerPid()
+    {
+        try { lock (_connectionGate) return _worker is { HasExited: false } ? _worker.Id : null; }
+        catch { return null; }
     }
 
     private StreamWriter? GetWriter()
@@ -327,10 +410,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         var softTimeout = Task.Delay(TimeSpan.FromSeconds(_options.RequestTimeoutSeconds));
         var first = await Task.WhenAny(responseTask, callerCancellation, softTimeout).ConfigureAwait(false);
         if (first == responseTask) return await responseTask.ConfigureAwait(false);
-        if (first == callerCancellation)
-        {
-            throw new OperationCanceledException(cancellationToken);
-        }
+        if (first == callerCancellation) throw new OperationCanceledException(cancellationToken);
 
         Log.Warning("Worker operation {OperationId} exceeded the {Timeout}s soft timeout; requesting cancellation.", operationId, _options.RequestTimeoutSeconds);
         var recoveryDelay = TimeSpan.FromSeconds(_options.HardRecoveryTimeoutSeconds - _options.RequestTimeoutSeconds);
@@ -353,9 +433,6 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     {
         try
         {
-            // The HTTP request has already ended, but the private Worker must
-            // still drain or be restarted so a cancelled COM call cannot leave
-            // the next client permanently blocked.
             var deadline = Task.Delay(TimeSpan.FromSeconds(_options.HardRecoveryTimeoutSeconds - _options.RequestTimeoutSeconds));
             var cancellation = SendCancellationAsync(operationId);
             var completed = await Task.WhenAny(responseTask, deadline, cancellation).ConfigureAwait(false);
@@ -399,10 +476,6 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
 
     private void CloseStaleConnection(string reason) => FaultWorkerConnection(new IOException(reason));
 
-    /// <summary>
-    /// One recovery path for EOF, read/write failures, malformed frames and a
-    /// hard timeout. The next request creates a clean Worker generation.
-    /// </summary>
     private void FaultWorkerConnection(Exception reason, Process? expectedWorker = null, StreamReader? expectedReader = null, StreamWriter? expectedWriter = null)
     {
         StreamWriter? writer;
@@ -490,10 +563,37 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(_options.WorkerStartupTimeoutSeconds));
-        var hello = await reader.ReadLineAsync(timeout.Token).ConfigureAwait(false);
-        var expected = "ZEMAX_MCP_PIPE_HELLO|" + worker.Id + "|" + secret;
-        if (!string.Equals(hello, expected, StringComparison.Ordinal))
-            throw new InvalidOperationException("The Worker private pipe handshake was rejected.");
-        await writer.WriteLineAsync("ZEMAX_MCP_PIPE_OK").ConfigureAwait(false);
+        var helloLine = await reader.ReadLineAsync(timeout.Token).ConfigureAwait(false);
+        WorkerHandshake? hello = null;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(helloLine)) hello = JsonSerializer.Deserialize<WorkerHandshake>(helloLine, _jsonOptions);
+        }
+        catch (JsonException) { }
+
+        string? rejection = null;
+        if (hello == null) rejection = "Worker sent an invalid private RPC handshake.";
+        else if (hello.WorkerProcessId != worker.Id) rejection = "Worker PID did not match the process launched by the Host.";
+        else if (!FixedTimeEquals(hello.Secret, secret)) rejection = "Worker handshake secret did not match.";
+        else if (hello.RpcVersion != ZemaxRpcProtocol.Version) rejection = $"RPC version mismatch: Host={ZemaxRpcProtocol.Version}, Worker={hello.RpcVersion}.";
+        else if (!string.Equals(hello.ManifestFingerprint, StaticToolManifest.ContractFingerprint, StringComparison.Ordinal))
+            rejection = "Tool manifest fingerprint mismatch. Reinstall/update so Host and Worker come from the same package.";
+
+        var acknowledgement = new WorkerHandshakeAck
+        {
+            RpcVersion = ZemaxRpcProtocol.Version,
+            Accepted = rejection == null,
+            ManifestFingerprint = StaticToolManifest.ContractFingerprint,
+            Error = rejection
+        };
+        await writer.WriteLineAsync(JsonSerializer.Serialize(acknowledgement, _jsonOptions)).ConfigureAwait(false);
+        if (rejection != null) throw new InvalidOperationException(rejection);
+    }
+
+    private static bool FixedTimeEquals(string presented, string expected)
+    {
+        var left = Encoding.UTF8.GetBytes(presented ?? string.Empty);
+        var right = Encoding.UTF8.GetBytes(expected ?? string.Empty);
+        return left.Length == right.Length && CryptographicOperations.FixedTimeEquals(left, right);
     }
 }
