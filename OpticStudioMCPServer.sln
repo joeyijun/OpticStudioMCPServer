@@ -12,6 +12,10 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ZemaxMCP.HttpBridge", "src\
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ZemaxMCP.Rpc", "src\ZemaxMCP.Rpc\ZemaxMCP.Rpc.csproj", "{5F9E2A11-7139-4DEB-9B56-1A5C8D7A4F90}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ZemaxMCP.ToolManifest", "src\ZemaxMCP.ToolManifest\ZemaxMCP.ToolManifest.csproj", "{A6A7588A-9F36-4FB2-B739-F32B1581A7BE}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ZemaxMCP.ToolManifestGenerator", "tools\ZemaxMCP.ToolManifestGenerator\ZemaxMCP.ToolManifestGenerator.csproj", "{EA9BB7D8-EAC7-433B-8574-2EC5FD6B1E98}"
+EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ZemaxMCP.Launcher", "src\ZemaxMCP.Launcher\ZemaxMCP.Launcher.csproj", "{1943C127-A3AF-496C-97F1-0E3E1175F6DA}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ZemaxMCP.Installer", "src\ZemaxMCP.Installer\ZemaxMCP.Installer.csproj", "{4EF3C2EB-BB2C-46B9-9825-DAE6377E1B7D}"
@@ -46,6 +50,14 @@ Global
 		{5F9E2A11-7139-4DEB-9B56-1A5C8D7A4F90}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{5F9E2A11-7139-4DEB-9B56-1A5C8D7A4F90}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{5F9E2A11-7139-4DEB-9B56-1A5C8D7A4F90}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A6A7588A-9F36-4FB2-B739-F32B1581A7BE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A6A7588A-9F36-4FB2-B739-F32B1581A7BE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A6A7588A-9F36-4FB2-B739-F32B1581A7BE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A6A7588A-9F36-4FB2-B739-F32B1581A7BE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EA9BB7D8-EAC7-433B-8574-2EC5FD6B1E98}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EA9BB7D8-EAC7-433B-8574-2EC5FD6B1E98}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EA9BB7D8-EAC7-433B-8574-2EC5FD6B1E98}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EA9BB7D8-EAC7-433B-8574-2EC5FD6B1E98}.Release|Any CPU.Build.0 = Release|Any CPU
 		{1943C127-A3AF-496C-97F1-0E3E1175F6DA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{1943C127-A3AF-496C-97F1-0E3E1175F6DA}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{1943C127-A3AF-496C-97F1-0E3E1175F6DA}.Release|Any CPU.ActiveCfg = Release|Any CPU
