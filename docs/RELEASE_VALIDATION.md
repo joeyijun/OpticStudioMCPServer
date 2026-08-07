@@ -1,25 +1,27 @@
 # Release validation
 
-This document defines the release-candidate validation sequence for OpticStudioMCPServer. The goal is to separate checks that can run on GitHub-hosted Windows runners from tests that require a licensed OpticStudio installation.
+This document defines the release-candidate validation sequence for OpticStudioMCPServer. It deliberately separates repository/contract checks that run on GitHub-hosted Windows runners from acceptance tests that require a licensed OpticStudio installation.
 
 ## 1. Hosted CI: contract and architecture
 
-Every pull request must pass the normal Windows workflow before any live OpticStudio acceptance run.
+Every pull request must pass the Windows workflow at the exact release-candidate commit before licensed-machine acceptance.
 
-The hosted checks cover:
+Hosted checks cover:
 
 - 109 Worker tool classes / 126 unique commands;
 - explicit domain and impact metadata for every public tool;
-- generated JSON schemas and the deterministic static-manifest fingerprint;
-- official .NET 10 MCP Host behavior and 2026-07-28 stateless requests;
+- generated JSON schemas and deterministic static-manifest fingerprint;
+- official .NET 10 MCP Host behavior and MCP 2026-07-28 stateless requests;
 - private RPC v3 authentication, contract negotiation, cancellation/recovery, and event dispatch;
-- Host-only `tools/list` and Worker lazy start;
-- client-instance identity and control-lease isolation;
+- Host-only `tools/list` and lazy Worker startup;
+- client-instance identity and OpticStudio control-lease isolation;
 - updater rollback and signed-update tamper rejection;
-- syntax and protocol-shape validation of the live release verifier;
-- functional safety guards for Worker-owned ZOS initialization, read-only analysis boundaries, reviewed MCE mutation/readback contracts, and Glasscat path/data-integrity rules.
+- syntax/protocol-shape validation of the live release verifier;
+- functional-safety guards covering reviewed Stage A-F contracts;
+- dedicated Stage E optimization guards for transactional MFE changes, configuration-aware MCE variable addressing, typed merit reads, and cancellation;
+- dedicated Stage F guards for POP, NSC, tolerancing, BMP rendering, and generic analysis exports.
 
-Hosted CI deliberately does not claim that a ZOS-API call works against a real OpticStudio build because proprietary ZOS-API assemblies and a valid license are not available on the runner. Where a reviewed tool uses version-sensitive ZOS-API members, the implementation is checked against the current Ansys ZOS-API reference and remains subject to licensed live acceptance.
+Hosted CI deliberately does **not** claim that a ZOS-API call works against a real OpticStudio build. Proprietary ZOS-API assemblies and a valid OpticStudio license are not available on the hosted runner. Version-sensitive ZOS-API members are checked against the current Ansys reference and must still pass the licensed-machine acceptance defined below.
 
 ## 2. Live smoke test: real OpticStudio
 
@@ -30,7 +32,7 @@ $env:ZEMAX_MCP_TOKEN = "<token from Copy secure setup>"
 ./scripts/verify-live-mcp.ps1 -Endpoint "http://127.0.0.1:8000/mcp"
 ```
 
-The live verifier uses MCP `2026-07-28` stateless requests as the primary protocol. It first calls `tools/list`, then starts the Worker through the health/status path. It checks:
+The live verifier uses MCP `2026-07-28` stateless requests as the primary protocol. It checks:
 
 - public tool names are unique and schemas are object contracts;
 - required/optional semantics for key editing tools have not regressed;
@@ -46,11 +48,11 @@ For a release candidate that must retain initialize-era compatibility, add:
 ./scripts/verify-live-mcp.ps1 -VerifyLegacyCompatibility
 ```
 
-This performs an explicit `2025-11-25` initialize probe after the modern stateless checks. Legacy compatibility is not used as the primary release path.
+This performs an explicit `2025-11-25` initialize probe after the modern stateless checks. Legacy compatibility is not the primary release path.
 
 ## 3. Safety acceptance
 
-Run the live verifier with safety checks in both modes when licensed-machine acceptance is performed.
+Run the live verifier with safety checks in the intended release mode(s) when licensed-machine acceptance is performed.
 
 Read-only mode:
 
@@ -58,7 +60,7 @@ Read-only mode:
 ./scripts/verify-live-mcp.ps1 -VerifySafety
 ```
 
-The verifier reads current metadata, attempts to write the same values back, and requires the Host policy to reject the mutating tool before Worker/ZOS-API execution. No new snapshot may appear.
+A no-op mutation must be rejected by policy before Worker/ZOS-API execution and no new snapshot may appear.
 
 Read/write mode:
 
@@ -66,97 +68,118 @@ Read/write mode:
 ./scripts/verify-live-mcp.ps1 -VerifySafety
 ```
 
-The same no-op metadata write must succeed and must create a new verified `.zos` pre-change snapshot. The optical metadata itself is not intentionally changed.
+The same no-op mutation must succeed and create a verified `.zos` pre-change snapshot. The optical metadata itself is not intentionally changed.
 
-## 4. Functional review order
+## 4. Functional review order and current status
 
-The 126 tools are reviewed in this order so release-critical editing and recovery paths are validated before specialized analyses.
+The 126 public commands are reviewed in stages so release-critical editing/recovery paths are checked before specialized analyses.
 
 | Stage | Functional area | Review status | Release focus |
 | --- | --- | --- | --- |
-| A | System/session | Static review complete | connect, status, open/new/save, restart/disconnect, path handling, unsaved-work semantics |
+| A | System/session | Static review complete | connect, status, open/new/save, restart/disconnect, paths, unsaved-work semantics |
 | B | Sequential editing | Core static review complete | surfaces, solves, fields, wavelengths, stop, aperture, vignetting, system settings |
-| C | Structured read-only analysis | Static review complete | ray trace/fans, spot, MTF, PSF, aberrations, illumination, encircled energy, GIA, first-order data |
-| D | Configuration/catalog | In progress | MCE configuration editing/readback, glass catalog parsing/filtering/export |
-| E | Optimization | Not started | merit function, variables, local/global/hammer/multistart, cancellation/jobs |
-| F | Specialized | Not started | POP, non-sequential inspection, tolerancing, generic analysis/file exports |
+| C | Structured read-only analysis | Static review complete | ray trace/fans, spot, MTF, PSF, aberrations, illumination, encircled energy, GIA |
+| D | Configuration/catalog | Static review complete | MCE editing/readback, typed configuration cells, AGF parsing/filtering/export |
+| E | Optimization | Static review complete | MFE, variables, constraints, local/global/hammer/multistart, cancellation/jobs |
+| F | Specialized | Static review complete | POP, NSC inspection, tolerancing, BMP/TXT/ZBF/raw-grid exports |
 
-“Static review complete” means no known P0/P1 contract finding remains from repository/API inspection and the reviewed invariant is guarded where practical. It does **not** replace the licensed OpticStudio acceptance run, especially for version-dependent analysis text/grid formats.
+“Static review complete” means no known P0/P1 contract finding remains from repository/API inspection and the important reviewed invariants are guarded where practical. It does **not** replace licensed OpticStudio acceptance, especially for version-dependent analysis settings, text layouts, grids, file exports, tool lifecycles, and COM behavior.
 
-For each public tool, review the following contract:
+For each public tool, review:
 
-1. **Input schema** — required fields, default values, enum vocabulary, units, 0/1-based indexing, null/empty semantics.
-2. **Validation** — reject NaN/infinity, invalid ranges, invalid indices, impossible enum values, and contradictory bounds before COM mutation.
-3. **Bidirectionality** — nullable setters must distinguish omitted values from explicit `false`, `0`, and empty strings when those are meaningful values.
-4. **Safety classification** — ReadOnly/Caution/HighImpact must match actual behavior; recognized mutations must go through a named `ExecuteAsync` command so snapshot policy cannot be bypassed.
-5. **Cancellation** — operations that can wait or queue should accept the injected `CancellationToken` and pass it to session/job APIs where meaningful.
-6. **Result truthfulness** — `Success=true` must describe the primary Zemax operation, not an unrelated sidecar/logging step; partial auxiliary failures should be warnings.
-7. **Readback** — mutating tools should return the value read back from OpticStudio where possible rather than merely echoing requested input.
-8. **Atomicity** — validation should happen before mutation; when a multi-step mutation can fail after the first write, rollback or an explicit partial-failure contract is required.
-9. **Version compatibility** — optional/newer ZOS-API members need explicit fallback/warning behavior rather than an unexplained runtime binder failure.
-10. **Filesystem/data integrity** — a tool must not escape its documented directory, silently use only a subset of requested sources, or convert malformed external data into plausible default values.
+1. **Input schema** — required fields, defaults, enum vocabulary, units, indexing, null/empty semantics.
+2. **Validation** — reject NaN/infinity, invalid ranges/indices/enums, and contradictory bounds before mutation.
+3. **Bidirectionality** — nullable setters distinguish omitted values from explicit `false`, `0`, and empty strings where meaningful.
+4. **Safety classification** — ReadOnly/Caution/HighImpact matches actual side effects and mutations go through named session commands.
+5. **Cancellation** — long/queued operations propagate the injected `CancellationToken` through session/job/algorithm loops where meaningful.
+6. **Result truthfulness** — `Success=true` describes the requested primary operation; missing/invalid primary data is not fabricated as zero/empty success.
+7. **Readback** — mutating tools read back applied values where the ZOS-API supports it.
+8. **Atomicity** — validation precedes mutation; multi-step writes use rollback or explicit partial-failure contracts.
+9. **Version compatibility** — version-sensitive members fail explicitly instead of silently retaining defaults.
+10. **Filesystem/data integrity** — documented path boundaries, source completeness, no-clobber behavior, and malformed-data rejection are enforced.
 
 ## 5. Current functional review fixes
 
 ### Stage A — System/session
 
-- Worker startup is the single owner of `ZOSAPI_Initializer.Initialize()` after private-contract negotiation. `ZemaxSession.ConnectCore()` owns only application connection/reconnection and no longer repeats global ZOS-API initialization.
-- `zemax_connect` normalizes standalone instance IDs to `0`, rejects negative extension IDs, and propagates cancellation; irrelevant standalone `instanceId` values can no longer cause a false reconnect target change.
-- `zemax_restart` propagates cancellation through its delay and reconnect path.
-- `zemax_new_system` no longer records a second HighImpact `NewSystem` operation merely to read the resulting surface count; readback uses `GetSystem`.
-- `zemax_open_file` validates and normalizes the path, propagates cancellation, and records post-open inspection as `GetSystem` rather than a duplicate OpenFile operation.
-- `zemax_save_file` treats the Zemax file as the authoritative save result. A constraint-sidecar failure is reported as a warning after a successful lens save instead of falsely reporting that the lens file failed to save.
-- Quick Focus and Scale Lens accept only the documented criterion/unit vocabularies rather than numeric enum strings and propagate cancellation to the session boundary.
+- Worker startup is the single owner of `ZOSAPI_Initializer.Initialize()` after private-contract negotiation; session reconnects no longer repeat global ZOS initialization.
+- `zemax_connect` normalizes standalone instance IDs, rejects negative extension IDs, and propagates cancellation.
+- `zemax_restart` propagates cancellation through delay/reconnect.
+- `zemax_new_system` and `zemax_open_file` no longer record duplicate HighImpact operations merely for readback.
+- `zemax_save_file` treats the Zemax file as the primary result; constraint-sidecar failure is an auxiliary warning after a successful lens save.
+- Quick Focus and Scale Lens use strict documented criterion/unit vocabularies and propagate cancellation.
 
 ### Stage B — Sequential editing
 
-- `zemax_set_surface` allows explicit empty strings to clear material/comment values, explicit `false` to clear stop status, and explicit `false` to return radius/thickness/conic solves to Fixed. Omission still means leave unchanged.
-- `zemax_set_surface` rejects contradictory thickness bounds and propagates cancellation to the session dispatcher.
-- `zemax_set_surface_solve` validates finite numeric inputs, pupil zone `0..1`, non-negative pickup columns, positive supplied F-number, and pickup/reference surface ranges before applying a solve; cancellation is propagated.
-- `zemax_set_extra_data` rejects non-positive XDAT cells and NaN/infinite values in single and batch writes before touching cells; cancellation is propagated.
-- `zemax_set_surface_parameter` validates PARM `1..20` and finite values before access. Pure read mode uses the explicitly ReadOnly `GetSurfaceParameter` execution command instead of triggering a HighImpact SetSurfaceParameter snapshot.
-- `zemax_set_surface_type` keeps `listTypes=true` only as a compatibility path and returns the static enum before entering the HighImpact session operation. Actual mutation accepts only named enum members, not numeric enum strings.
-- `zemax_set_surface_aperture` validates the documented aperture vocabulary and finite/radius constraints before entering the mutation path; getter and setter propagate cancellation.
-- Field, wavelength, system-aperture, and vignetting operations propagate cancellation through the session dispatcher.
-- Polarization method selection accepts only `XAxisMethod`, `YAxisMethod`, or `ZAxisMethod`, preventing undocumented numeric enum values from passing `Enum.TryParse`.
+- Surface setters preserve omitted-vs-explicit-clear semantics for material/comment/stop and fixed/variable solves.
+- Surface solve/XDAT/PARM/aperture setters validate ranges, finite values, referenced surfaces, and enum vocabulary before mutation.
+- Pure parameter reads use an explicitly ReadOnly execution command rather than accidentally creating HighImpact snapshots.
+- Field, wavelength, system-aperture, vignetting, and common settings operations propagate cancellation.
+- Named enums are required where numeric enum strings would otherwise create undocumented behavior.
 
 ### Stage C — structured read-only analysis
 
-- `zemax_ray_trace` and `zemax_ray_trace_extended` validate normalized Hx/Hy/Px/Py in `[-1,1]`, wavelength and surface ranges, propagate cancellation, and report success only when the ray-trace API succeeds with error code zero.
-- `zemax_ray_fan`, `zemax_opd_fan`, and `zemax_pupil_aberration_fan` require results/text plus complete tangential and sagittal field sections with consistent wavelength/data dimensions. Version-dependent parser failures are explicit instead of being converted into zero-valued curves.
-- `zemax_spot_diagram`, `zemax_rms_spot`, and `zemax_cardinal_points` no longer insert temporary operands into the user's Merit Function Editor. They use `IMeritFunctionEditor.GetOperandValue`; CI rejects structural MFE writes anywhere under `Tools/Analysis`.
-- Spot-diagram field normalization follows rectangular versus radial field-normalization semantics instead of applying one radial-style denominator to both modes.
-- `zemax_fft_mtf`, `zemax_geometric_mtf`, `zemax_fft_mtf_vs_field`, and `zemax_geometric_mtf_vs_field` reject invalid frequencies/wavelengths/sampling instead of silently retaining defaults. Missing settings/results/text and malformed or empty sections are failures, not successful empty/NaN/zero-filled results.
-- `zemax_fft_psf` and `zemax_huygens_psf` use strict named enum/range/result contracts, reject silent fallback, propagate cancellation, and report version-sensitive optional-setting/text-export limitations explicitly.
-- `zemax_seidel_coefficients`, `zemax_chromatic_focal_shift`, `zemax_longitudinal_aberration`, `zemax_lateral_color`, and `zemax_field_curvature_distortion` require complete parseable primary data before success; absent optional metadata is not fabricated as zero.
-- `zemax_relative_illumination` requires a non-empty parseable field/illumination/effective-F-number table and propagates cancellation.
-- `zemax_diffraction_encircled_energy` and `zemax_geometric_encircled_energy` validate sampling, require real results/text and complete data blocks, and propagate cancellation. The legacy geometric `scaleByDiffractionLimit` parameter is retained only for compatibility and rejects `true`, because the verified ZOS-API interface has no such setting.
-- `zemax_aperture_throughput` validates normalized field, wavelength and surface ranges, checks cancellation inside the pupil-ray loop, distinguishes ray-trace errors from aperture/vignette loss, and computes clear fraction over successfully traced rays.
-- `zemax_geometric_image_analysis` now uses the typed `IAS_GeometricImageAnalysis` contract. Because it is classified ReadOnly, it no longer persists `IMA.CFG` or writes TXT/BMP files; those operations belong to the HighImpact export tool. Structured results are limited to grid-producing modes and clearly describe the legacy peak/sum field semantics.
+- Normalized ray inputs, field/wavelength/surface ranges, sampling, frequency, and named settings are validated before analysis execution.
+- Fan/aberration/MTF/PSF/text parsers fail explicitly when required sections are missing or malformed instead of filling missing values with zero.
+- `zemax_spot_diagram`, `zemax_rms_spot`, and `zemax_cardinal_points` use side-effect-free `IMeritFunctionEditor.GetOperandValue`; analysis tools are guarded against structural MFE mutation.
+- Relative illumination, encircled energy, aperture throughput, GIA, and remaining structured analyses require real primary data and propagate cancellation.
+- `zemax_geometric_image_analysis` is strongly typed and remains filesystem/configuration side-effect free; persistent analysis export belongs to Stage F.
 
-Stage C static review is complete for the structured ReadOnly analysis set. `zemax_pop` and generic filesystem export are deliberately reviewed in Stage F. Licensed-machine acceptance is still required for version-dependent text/grid behavior before release.
+### Stage D — configuration and glass catalog
 
-### Stage D — configuration and glass catalog (in progress)
+- MCE operand creation validates named types before insertion, checks `ChangeType`, and rolls back failed post-insert setup.
+- Current-configuration, operand deletion, and configuration-count changes check official mutation return values and read back resulting state/count.
+- MCE cell readback preserves `Double`/`Integer`/`String` types and ConfigPickup source metadata.
+- Fixed-value and ConfigPickup setter modes are mutually exclusive, type-checked, finite, range-checked, and use checked `SetSolveData`/`MakeSolveFixed` paths.
+- Glass filtering validates finite/range/melt-frequency constraints before evaluation.
+- All requested source catalogs must exist; filtering/export never silently falls back to only the correctly spelled subset.
+- AGF numeric parse errors include catalog/line context rather than becoming plausible zero values.
+- Export catalog names are confined to the Zemax `Glasscat` directory and use same-directory temporary files with final move/replace semantics.
+- ZOS-independent simulation fixtures cover malformed AGF data, invalid filters, path escape, and overwrite/no-clobber behavior.
 
-- `zemax_add_configuration_operand` validates a named `MultiConfigOperandType` before creating a row, rejects numeric enum strings, checks `ChangeType`, applies only enabled parameters, and attempts rollback if post-insert setup fails. This closes the prior failure mode where an invalid type returned `Success=false` after leaving an extra MCE row behind.
-- `zemax_set_current_configuration`, `zemax_delete_configuration_operand`, and configuration-count changes check the official MCE success return values and verify resulting state/count instead of assuming mutation succeeded.
-- `zemax_get_configuration_operands` preserves the actual MCE cell `Double`/`Integer`/`String` data type instead of assuming every operand cell is numeric. ConfigPickup readback includes source configuration, source operand, and supported scale/offset values.
-- `zemax_set_configuration_operand_value` makes fixed double/integer/string and ConfigPickup modes mutually exclusive, validates finite values and source ranges, uses typed `CreateSolveType(SolveType.ConfigPickup)` / `_S_ConfigPickup`, checks `SetSolveData` / `MakeSolveFixed`, and returns typed readback. It can therefore represent string-valued operands such as glass selection without coercing them through `DoubleValue`.
-- Glass filtering validates finite values, non-negative distance weights/radius/cost, min/max ordering, positive wavelength coverage and melt-frequency bounds before evaluating the catalog.
-- `zemax_get_glasses`, `zemax_filter_glasses`, and `zemax_export_glass_catalog` require every requested source catalog to exist. They no longer silently build a partial result from the subset of correctly spelled sources.
-- AGF parsing fails with catalog name and line number when a provided numeric token is malformed; invalid source data is no longer silently converted to a plausible zero value.
-- Glass export treats `catalogName` as a file name rather than a path, rejects Windows-invalid/reserved names and path separators, verifies the final canonical path remains under the Zemax `Glasscat` directory, and writes through a same-directory temporary file before replace/move to reduce partial-overwrite risk.
+Stage D static review is complete. Actual OpticStudio MCE/catalog integration remains part of licensed-machine acceptance.
 
-Remaining Stage D work is to finish the cross-check of catalog parsing/export behavior and MCE edge cases, then add any focused ZOS-independent fixtures that can prove the above contracts without OpticStudio. Live validation of actual MCE/AGF behavior remains part of the deferred licensed-machine acceptance.
+### Stage E — optimization
+
+- Local Optimize accepts only explicit finite cycle choices; it no longer maps arbitrary values to a different cycle count or exposes an unbounded synchronous `Infinite` run.
+- Global Search and Hammer treat `RunAndWaitWithTimeout` as a wait timeout rather than a stop signal: wall-clock timeout/cancellation explicitly cancels and drains the ZOS system tool before stable result readback/close.
+- Hammer uses the official `AutomaticOptimization` and `TargetRunTimeM` settings instead of exposing ignored parameters.
+- Custom LM cancellation propagates through finite-difference Jacobians, linear algebra/trial steps, and merit evaluation; cancellation restores the last accepted design and rethrows `OperationCanceledException`.
+- Multistart preserves Job Cancelled semantics, propagates cancellation through variable/material discovery and every LM trial, and checkpoints through `CopySystem` so saving a checkpoint cannot rename the active optical system.
+- Variable discovery and the optimization accessor use `IMCERow.GetOperandCell(configuration)` for MCE variables rather than treating a configuration number as a raw editor column index.
+- Variable and merit data must be finite. A non-finite weighted MFE row fails custom optimization rather than being silently dropped from the objective.
+- Constraint batches are validated/staged before commit; sidecars use strict finite parsing and atomic temporary-file replacement.
+- `zemax_add_operand` validates before insertion, checks typed cell writes and `ChangeType`, and rolls back a failed insertion; cancellation is not wrapped as ordinary failure.
+- `zemax_optimization_wizard` uses the current Wizard2 API and an entire-MFE `.MF` backup/restore transaction; unsupported wavelength selection is explicit.
+- `zemax_forbes_merit_function` validates sampling/Radau/wavelength inputs, preserves zero field weights, checks MFE mutations/cell types, propagates cancellation, and restores the complete original MFE on failure or cancellation.
+- `zemax_save_merit_function_file` writes through a temporary `.MF` with final no-clobber/replace semantics. `zemax_load_merit_function_file` backs up and restores the entire MFE if loading, validation, calculation, or cancellation fails.
+- `zemax_get_merit_function` returns typed active parameter cells and fails on non-finite weighted data instead of sanitizing/ignoring failures into zero values.
+
+Stage E static review is complete. Numerical convergence quality, ZOS optimization runtime behavior, and real checkpoint/MF interoperability remain part of licensed-machine acceptance.
+
+### Stage F — POP, NSC, tolerancing, and exports
+
+- `zemax_pop` is HighImpact rather than ReadOnly because it can export raw/BMP/ZBF files and temporarily change per-surface POP resampling state.
+- POP validates beam/data/sampling/surface/field/wavelength/output inputs, uses typed `IAS_PhysicalOpticsPropagation`/DataGrid result access, polls the analysis lifecycle for cancellation, rejects non-finite grid data, and restores temporary `ResampleAfterRefraction` values in `finally`.
+- POP raw-grid/BMP/ZBF outputs use explicit overwrite policy and same-directory temporary-file commits; a requested output that was not actually produced is an error.
+- `zemax_get_nsc_detector` uses the official `GetDetectorDimensions(... out Rows, out Cols)` ordering and cross-checks rows × columns against detector size, fixing the prior nonsquare-detector row/column swap.
+- NSC object pagination is strict, position/tilt values must be finite, and type-specific parameter reads preserve Integer/Double/String cell types instead of coercing them to one numeric representation.
+- TDE reads preserve `IsParam1/2/3Used` and Nominal/Min/Max used flags; a used numeric bound must be finite and invalid pagination is explicit.
+- Generic `zemax_export_analysis` uses a fixed supported-analysis allowlist, cancellable analysis lifecycle, strict BMP/TXT extension/output semantics, and atomic final file commits. BMP failure never silently creates a TXT fallback.
+- `AnalysisBmpHelper` distinguishes “no renderable DataGrid” from invalid grid/filesystem errors, rejects non-finite pixels, supports cancellation, and writes only to fresh temporary paths.
+
+Stage F static review is complete. POP physics, NSC detector behavior, version-specific analysis grid/text availability, and exported BMP/TXT/ZBF/raw-grid interoperability remain deferred to licensed-machine acceptance.
 
 ## 6. Release gate
 
 A build is release-ready only when all of the following are true:
 
 - GitHub Windows CI is green at the exact release-candidate commit;
-- the live 2026-07-28 verifier passes against a licensed OpticStudio installation;
+- the live MCP 2026-07-28 verifier passes against a licensed OpticStudio installation;
 - safety verification passes in the intended release mode(s);
 - Host/Worker RPC version and manifest fingerprint agree in live health;
-- no P0/P1 findings remain in every functional review stage declared complete for the release;
+- no P0/P1 finding remains in every functional stage declared complete for release;
 - the release ZIP/update signature and rollback checks pass;
 - the tested OpticStudio version(s) are recorded in the release notes.
+
+The current branch has completed static Stage A-F review as documented above, but **licensed OpticStudio acceptance has intentionally not yet been performed**.
