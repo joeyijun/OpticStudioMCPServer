@@ -40,21 +40,19 @@ public sealed class PolarizationTool
             if (jx < 0 || jy < 0) throw new ArgumentException("Jones amplitudes must be non-negative.");
 
             ZOSAPI.SystemData.PolarizationMethod parsedMethod = default;
+            string? normalizedMethod = null;
             if (method != null)
             {
-                parsedMethod = method.Trim().ToLowerInvariant() switch
-                {
-                    "xaxismethod" => ZOSAPI.SystemData.PolarizationMethod.XAxisMethod,
-                    "yaxismethod" => ZOSAPI.SystemData.PolarizationMethod.YAxisMethod,
-                    "zaxismethod" => ZOSAPI.SystemData.PolarizationMethod.ZAxisMethod,
-                    _ => throw new ArgumentException("Method must be XAxisMethod, YAxisMethod, or ZAxisMethod.")
-                };
+                var allowedMethods = new[] { "XAxisMethod", "YAxisMethod", "ZAxisMethod" };
+                normalizedMethod = allowedMethods.FirstOrDefault(value => string.Equals(value, method.Trim(), StringComparison.OrdinalIgnoreCase));
+                if (normalizedMethod == null || !Enum.TryParse<ZOSAPI.SystemData.PolarizationMethod>(normalizedMethod, true, out parsedMethod))
+                    throw new ArgumentException("Method must be XAxisMethod, YAxisMethod, or ZAxisMethod.");
             }
 
             return await _session.ExecuteAsync(command, new Dictionary<string, object?>
             {
                 ["unpolarized"] = unpolarized, ["jx"] = jx, ["jy"] = jy, ["xPhaseDegrees"] = xPhase,
-                ["yPhaseDegrees"] = yPhase, ["method"] = method, ["convertThinFilmPhaseToRayEquivalent"] = convert
+                ["yPhaseDegrees"] = yPhase, ["method"] = normalizedMethod, ["convertThinFilmPhaseToRayEquivalent"] = convert
             }, system =>
             {
                 var data = system.SystemData.Polarization;
@@ -63,7 +61,7 @@ public sealed class PolarizationTool
                 if (jy.HasValue) data.Jy = jy.Value;
                 if (xPhase.HasValue) data.XPhase = xPhase.Value;
                 if (yPhase.HasValue) data.YPhase = yPhase.Value;
-                if (method != null) data.Method = parsedMethod;
+                if (normalizedMethod != null) data.Method = parsedMethod;
                 if (convert.HasValue) data.ConvertThinFilmPhaseToRayEquivalent = convert.Value;
                 return new PolarizationResult(true, null, data.Unpolarized, data.Jx.Sanitize(), data.Jy.Sanitize(), data.XPhase.Sanitize(), data.YPhase.Sanitize(),
                     data.Method.ToString(), data.ConvertThinFilmPhaseToRayEquivalent, system.NeedsSave);
