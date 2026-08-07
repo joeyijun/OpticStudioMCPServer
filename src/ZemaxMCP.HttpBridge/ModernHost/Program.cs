@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
-using System.Security.Claims;
+using System.Text.Json.Nodes;
+using ModelContextProtocol;
 using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Protocol;
 using Serilog;
@@ -18,6 +20,9 @@ namespace ZemaxMCP.HttpBridge.ModernHost;
 /// </summary>
 internal static class Program
 {
+    private const string ClientInstanceMetaKey = "io.zemaxmcp/clientInstanceId";
+    private const string ClientInstanceHeader = "X-Zemax-MCP-Client-Instance";
+
     public static async Task<int> Main(string[] args)
     {
         HostOptions options;
@@ -53,15 +58,9 @@ internal static class Program
                     Name = "zemax-mcp",
                     Version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "unknown"
                 })
-                .WithHttpTransport(transport =>
-                {
-                    transport.Stateless = true;
-                })
+                .WithHttpTransport(transport => transport.Stateless = true)
                 .WithListToolsHandler(async (_, _) =>
                 {
-                    // Discovery is entirely Host-owned. It neither starts nor
-                    // requires the Worker/ZOS-API process, and it uses exactly
-                    // the same manifest admission rule as tools/call.
                     await Task.CompletedTask.ConfigureAwait(false);
                     return new ListToolsResult
                     {
@@ -78,9 +77,6 @@ internal static class Program
                 })
                 .WithCallToolHandler(async (request, cancellationToken) =>
                 {
-                    // Never rely on discovery hiding for authorization. A
-                    // client may call a known tool name directly, so reject it
-                    // here before acquiring a lease or starting the Worker.
                     if (!StaticToolManifest.IsAllowed(options.Toolset, request.Params.Name, options.ReadOnly))
                     {
                         return new CallToolResult
@@ -99,7 +95,27 @@ internal static class Program
                     var clientId = ResolveControlIdentity(request);
                     using var call = activity.Begin(clientId, request.Params.Name);
                     using var lease = await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false);
-                    return await workerClient.CallToolAsync(request.Params, cancellationToken).ConfigureAwait(false);
+
+                    Func<OperationProgress, CancellationToken, Task>? progressHandler = null;
+                    if (request.Params.ProgressToken is { } progressToken)
+                    {
+                        progressHandler = async (progress, progressCancellation) =>
+                        {
+                            // Only publish fraction-based updates as MCP progress;
+                            // queue-position/job lifecycle events remain available
+                            // through structured Worker event state and health.
+                            if (!progress.Fraction.HasValue) return;
+                            var percent = Math.Clamp((float)(progress.Fraction.Value * 100.0), 0f, 100f);
+                            await request.Server.NotifyProgressAsync(progressToken, new ProgressNotificationValue
+                            {
+                                Progress = percent,
+                                Total = 100f,
+                                Message = progress.Message ?? progress.State
+                            }, cancellationToken: progressCancellation).ConfigureAwait(false);
+                        };
+                    }
+
+                    return await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
                 });
 
             var app = builder.Build();
@@ -119,14 +135,27 @@ internal static class Program
                     context.Response.Headers.WWWAuthenticate = "Bearer";
                     return;
                 }
-                var claims = new[]
+
+                var instanceHeader = context.Request.Headers[ClientInstanceHeader].FirstOrDefault();
+                if (!string.IsNullOrWhiteSpace(instanceHeader) && !IsSafeClientInstanceId(instanceHeader))
                 {
-                    new Claim("zemax-mcp-auth-profile", string.IsNullOrWhiteSpace(options.AccessToken) ? "local" : "shared-token"),
-                    new Claim("zemax-mcp-remote-endpoint", context.Connection.RemoteIpAddress?.ToString() ?? "local")
+                    context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                    await context.Response.WriteAsync("Invalid X-Zemax-MCP-Client-Instance header.").ConfigureAwait(false);
+                    return;
+                }
+
+                var claims = new List<Claim>
+                {
+                    new("zemax-mcp-auth-profile", string.IsNullOrWhiteSpace(options.AccessToken) ? "local" : "shared-token"),
+                    new("zemax-mcp-remote-endpoint", context.Connection.RemoteIpAddress?.ToString() ?? "local")
                 };
+                if (!string.IsNullOrWhiteSpace(instanceHeader)) claims.Add(new Claim("zemax-mcp-client-instance", instanceHeader));
+                var sessionId = context.Request.Headers["Mcp-Session-Id"].FirstOrDefault();
+                if (!string.IsNullOrWhiteSpace(sessionId)) claims.Add(new Claim("zemax-mcp-session-id", HashIdentityComponent(sessionId)));
                 context.User = new ClaimsPrincipal(new ClaimsIdentity(claims, "zemax-mcp-token"));
                 await next().ConfigureAwait(false);
             });
+
             app.MapGet(options.McpPath + "/health", async (CancellationToken cancellationToken) =>
             {
                 WorkerStatus? status = null;
@@ -137,6 +166,10 @@ internal static class Program
                 {
                     bridgeRunning = true,
                     mcpServerRunning = status != null,
+                    rpcVersion = ZemaxRpcProtocol.Version,
+                    manifestFingerprint = StaticToolManifest.ContractFingerprint,
+                    workerRpcVersion = status?.RpcVersion,
+                    workerManifestFingerprint = status?.ManifestFingerprint,
                     zosApiLoaded = status?.ZosApiLoaded ?? false,
                     zosApiConnected = status?.Connected ?? false,
                     licenseStatus = status?.CurrentLicenseStatus ?? status?.LastLicenseStatus ?? "Not validated",
@@ -166,7 +199,10 @@ internal static class Program
             });
             app.MapMcp(options.McpPath);
 
-            Log.Information("Official MCP ASP.NET Core Host listening at {Endpoint}", "http://" + options.Host + ":" + options.Port + options.McpPath);
+            Log.Information("Official MCP ASP.NET Core Host listening at {Endpoint}; private RPC v{RpcVersion}, manifest {ManifestFingerprint}",
+                "http://" + options.Host + ":" + options.Port + options.McpPath,
+                ZemaxRpcProtocol.Version,
+                StaticToolManifest.ContractFingerprint);
             await app.RunAsync().ConfigureAwait(false);
             return 0;
         }
@@ -191,15 +227,41 @@ internal static class Program
     private static string ResolveControlIdentity(ModelContextProtocol.Server.RequestContext<CallToolRequestParams> request)
     {
         var profile = request.User?.FindFirst("zemax-mcp-auth-profile")?.Value;
-        if (!string.IsNullOrWhiteSpace(profile) && !string.Equals(profile, "shared-token", StringComparison.Ordinal) && !string.Equals(profile, "local", StringComparison.Ordinal))
+        if (!string.IsNullOrWhiteSpace(profile) &&
+            !string.Equals(profile, "shared-token", StringComparison.Ordinal) &&
+            !string.Equals(profile, "local", StringComparison.Ordinal))
             return "token:" + profile;
 
         var clientInfo = request.Server?.ClientInfo;
-        var name = clientInfo?.Name;
-        var version = clientInfo?.Version;
+        var name = string.IsNullOrWhiteSpace(clientInfo?.Name) ? "unknown" : clientInfo!.Name.Trim();
+        var version = string.IsNullOrWhiteSpace(clientInfo?.Version) ? "unknown" : clientInfo!.Version.Trim();
         var endpoint = request.User?.FindFirst("zemax-mcp-remote-endpoint")?.Value ?? "unknown";
-        return "client:" + (string.IsNullOrWhiteSpace(name) ? "unknown" : name.Trim()) +
-            "@" + (string.IsNullOrWhiteSpace(version) ? "unknown" : version.Trim()) +
-            "|remote:" + endpoint;
+        var instanceId = GetRequestClientInstanceId(request.Params.Meta)
+            ?? request.User?.FindFirst("zemax-mcp-client-instance")?.Value;
+        if (!string.IsNullOrWhiteSpace(instanceId))
+            return $"client:{name}@{version}|instance:{instanceId}|remote:{endpoint}";
+
+        var sessionId = request.User?.FindFirst("zemax-mcp-session-id")?.Value;
+        if (!string.IsNullOrWhiteSpace(sessionId))
+            return $"client:{name}@{version}|session:{sessionId}|remote:{endpoint}";
+
+        return $"client:{name}@{version}|remote:{endpoint}";
+    }
+
+    private static string? GetRequestClientInstanceId(JsonObject? meta)
+    {
+        if (meta == null || !meta.TryGetPropertyValue(ClientInstanceMetaKey, out var node) || node is not JsonValue value ||
+            !value.TryGetValue<string>(out var instanceId) || !IsSafeClientInstanceId(instanceId)) return null;
+        return instanceId;
+    }
+
+    private static bool IsSafeClientInstanceId(string value) =>
+        value.Length is >= 1 and <= 128 && value.All(character =>
+            character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '.' or '_' or '-');
+
+    private static string HashIdentityComponent(string value)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(value));
+        return Convert.ToHexString(hash.AsSpan(0, 8)).ToLowerInvariant();
     }
 }
