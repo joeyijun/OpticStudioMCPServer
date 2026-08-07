@@ -18,5 +18,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\ZemaxMCP.Rpc\ZemaxMCP.Rpc.csproj" />
+    <ProjectReference Include="..\ZemaxMCP.ToolManifest\ZemaxMCP.ToolManifest.csproj" />
   </ItemGroup>
 </Project>
