@@ -68,4 +68,48 @@ foreach ($rayFile in @("RayTraceTool.cs", "RayTraceExtendedTool.cs")) {
     }
 }
 
-Write-Host "Functional safety guards passed: Worker owns ZOS initialization, analysis MFE remains read-only, and reviewed Stage A/B/C contracts are intact."
+# Geometric Image Analysis is classified ReadOnly. Persistent IMA.CFG writes
+# and arbitrary filesystem exports therefore belong in zemax_export_analysis,
+# not in this structured result tool. Strong typing also prevents silent
+# reflection/property-name fallbacks from turning explicit requests into defaults.
+$gia = Get-Content -LiteralPath (Join-Path $analysisRoot "GeometricImageAnalysisTool.cs") -Raw
+if ($gia -notmatch 'IAS_GeometricImageAnalysis' -or
+    $gia -notmatch 'if \(saveSettings\)' -or
+    $gia -notmatch 'Use zemax_export_analysis' -or
+    $gia -match '\.SaveTo\s*\(|File\.WriteAllBytes\s*\(|AnalysisBmpHelper\.TryExportBmp\s*\(') {
+    throw "zemax_geometric_image_analysis must remain strongly typed and side-effect-free; persistent settings/files belong to zemax_export_analysis."
+}
+
+# The verified 2026 R1 IAS_GeometricEncircledEnergy contract has no
+# ScaleByDiffractionLimit property. Keep the old public parameter only as a
+# fail-explicit compatibility placeholder rather than pretending it was applied.
+$gee = Get-Content -LiteralPath (Join-Path $analysisRoot "GeometricEncircledEnergyTool.cs") -Raw
+if ($gee -notmatch 'if \(scaleByDiffractionLimit\)' -or
+    $gee -notmatch 'NotSupportedException' -or
+    $gee -match 'settings\.ScaleByDiffractionLimit') {
+    throw "zemax_geometric_encircled_energy must reject the unsupported scaleByDiffractionLimit=true request explicitly."
+}
+
+# Fan parsers must not fabricate zeroes or claim success when a version-specific
+# text layout is not understood. They also need cancellation at the session edge.
+foreach ($fanFile in @("RayFanTool.cs", "OpticalPathFanTool.cs", "PupilAberrationFanTool.cs")) {
+    $source = Get-Content -LiteralPath (Join-Path $analysisRoot $fanFile) -Raw
+    if ($source -notmatch 'CancellationToken cancellationToken' -or
+        $source -notmatch 'fields\.Count == 0' -or
+        $source -notmatch 'FormatException') {
+        throw "$fanFile must retain cancellation and fail-explicit text parsing."
+    }
+}
+
+# Aperture throughput distinguishes a failed trace from an aperture/vignette
+# loss. Cancellation is checked inside the potentially 10k-ray loop, and the
+# clear fraction uses only successfully traced rays as its denominator.
+$throughput = Get-Content -LiteralPath (Join-Path $analysisRoot "ApertureThroughputTool.cs") -Raw
+if ($throughput -notmatch 'SuccessfulRays' -or
+    $throughput -notmatch 'ClearFraction:\s*\(double\)clear / successful' -or
+    $throughput -notmatch 'cancellationToken\.ThrowIfCancellationRequested\(\)' -or
+    $throughput -notmatch 'ValidateNormalized') {
+    throw "zemax_aperture_throughput must keep trace errors separate from aperture loss and remain cancellable."
+}
+
+Write-Host "Functional safety guards passed: Worker owns ZOS initialization; read-only analyses avoid MFE/config/filesystem side effects; reviewed Stage A/B/C contracts are intact."
