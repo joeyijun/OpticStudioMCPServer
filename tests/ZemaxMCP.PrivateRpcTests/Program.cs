@@ -28,7 +28,7 @@ internal static class Program
             await VerifyHardTimeoutRecoveryAsync().ConfigureAwait(false);
             await VerifyClientCancellationRecoveryBarrierAsync().ConfigureAwait(false);
             await VerifyMcpHttpToWorkerEndToEndAsync().ConfigureAwait(false);
-            Console.WriteLine("Private Host-to-Worker RPC recovery, Origin boundary, and MCP HTTP E2E verification passed.");
+            Console.WriteLine("Private Host-to-Worker RPC recovery, static Host tool discovery, Origin boundary, and MCP HTTP E2E verification passed.");
             return 0;
         }
         catch (Exception ex)
@@ -91,23 +91,22 @@ internal static class Program
     {
         Environment.SetEnvironmentVariable("ZEMAX_MCP_FAKE_WORKER_MODE", null);
         await using var client = new WorkerRpcClient(CreateOptions(10, 20));
-        // Start the generation before applying cancellation. This makes the
-        // test prove an in-flight Worker operation is drained, not merely a
-        // startup that was cancelled before its request was written.
         await client.GetStatusAsync(CancellationToken.None).ConfigureAwait(false);
         using var cancelled = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        var hung = client.CallToolAsync(TestTool("zemax_test_hang"), cancelled.Token);
+        await Task.Delay(75).ConfigureAwait(false);
+        var queued = client.CallToolAsync(TestTool("zemax_test_echo"), CancellationToken.None);
         try
         {
-            await client.CallToolAsync(TestTool("zemax_test_hang"), cancelled.Token).ConfigureAwait(false);
+            await hung.ConfigureAwait(false);
             throw new InvalidOperationException("The intentionally cancelled Worker request unexpectedly completed.");
         }
         catch (OperationCanceledException) { }
 
-        var nextRequest = client.CallToolAsync(TestTool("zemax_test_echo"), CancellationToken.None);
         await Task.Delay(250).ConfigureAwait(false);
-        if (nextRequest.IsCompleted)
-            throw new InvalidOperationException("A new request bypassed the cancelled-operation recovery barrier.");
-        var recovered = await nextRequest.ConfigureAwait(false);
+        if (queued.IsCompleted)
+            throw new InvalidOperationException("A request queued before cancellation bypassed the cancelled-operation recovery barrier.");
+        var recovered = await queued.ConfigureAwait(false);
         if (recovered.IsError == true || recovered.Content.Count == 0)
             throw new InvalidOperationException("Worker did not recover after client cancellation drained its generation.");
     }
@@ -157,40 +156,43 @@ internal static class Program
 
         try
         {
-            // Worker startup on a cold CI runner can legitimately exceed two
-            // seconds. Keep individual HTTP requests bounded, but leave enough
-            // room for the first lazy Worker startup and the deliberate 3 s
-            // fake hold operation.
             using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
             var endpoint = new Uri($"http://127.0.0.1:{port}/mcp");
             await Task.Delay(250).ConfigureAwait(false);
             if (File.Exists(workerLog))
                 throw new InvalidOperationException("Host startup unexpectedly started the Worker.");
 
-            HttpResponseMessage? echo = null;
+            HttpResponseMessage? list = null;
             var lastModernFailure = string.Empty;
             var deadline = DateTime.UtcNow.AddSeconds(15);
             while (DateTime.UtcNow < deadline && !process.HasExited)
             {
                 try
                 {
-                    echo = await Send2026ToolCallAsync(client, endpoint, 1, "zemax_test_echo", "client-a").ConfigureAwait(false);
-                    if (echo.IsSuccessStatusCode) break;
-                    lastModernFailure = ((int)echo.StatusCode) + " " + await echo.Content.ReadAsStringAsync().ConfigureAwait(false);
-                    echo.Dispose();
+                    list = await Send2026ListToolsAsync(client, endpoint, 1, "client-a").ConfigureAwait(false);
+                    if (list.IsSuccessStatusCode) break;
+                    lastModernFailure = ((int)list.StatusCode) + " " + await list.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    list.Dispose();
                 }
                 catch (HttpRequestException ex) { lastModernFailure = ex.Message; }
                 catch (TaskCanceledException ex) { lastModernFailure = ex.Message; }
                 await Task.Delay(100).ConfigureAwait(false);
             }
-            if (echo == null || !echo.IsSuccessStatusCode)
-                throw new InvalidOperationException("The Host did not accept a 2026-07-28 stateless tools/call: " + lastModernFailure);
-            using (echo)
+            if (list == null || !list.IsSuccessStatusCode)
+                throw new InvalidOperationException("The Host did not accept a 2026-07-28 stateless tools/list: " + lastModernFailure);
+            using (list)
             {
-                var echoBody = await ReadFirstMcpPayloadAsync(echo).ConfigureAwait(false);
-                if (!echoBody.Contains("echo-ok", StringComparison.Ordinal) || !File.Exists(workerLog))
-                    throw new InvalidOperationException("2026 MCP tools/call did not traverse Host, control lease, and Fake Worker.");
+                var listBody = await ReadFirstMcpPayloadAsync(list).ConfigureAwait(false);
+                if (!listBody.Contains("zemax_open_file", StringComparison.Ordinal) || !listBody.Contains("filePath", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Static Host tools/list did not expose the generated Zemax tool manifest.");
+                if (File.Exists(workerLog))
+                    throw new InvalidOperationException("tools/list started the Worker; static Host discovery is not independent of ZOS-API.");
             }
+
+            using var echo = await Send2026ToolCallAsync(client, endpoint, 2, "zemax_status", "client-a").ConfigureAwait(false);
+            var echoBody = await ReadFirstMcpPayloadAsync(echo).ConfigureAwait(false);
+            if (!echo.IsSuccessStatusCode || !echoBody.Contains("echo-ok", StringComparison.Ordinal) || !File.Exists(workerLog))
+                throw new InvalidOperationException("2026 MCP tools/call did not lazy-start and traverse Host, control lease, and Fake Worker.");
 
             using var healthRequest = new HttpRequestMessage(HttpMethod.Get, endpoint + "/health");
             healthRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
@@ -199,11 +201,10 @@ internal static class Program
             if (!health.IsSuccessStatusCode || !healthBody.Contains("\"licenseStatus\":\"fake-license\"", StringComparison.Ordinal))
                 throw new InvalidOperationException("Structured Worker health did not preserve the Worker license result.");
 
-            var hold = Send2026ToolCallAsync(client, endpoint, 2, "zemax_test_hold", "client-a");
-            using var heldResponse = await hold.ConfigureAwait(false);
-            if (!heldResponse.IsSuccessStatusCode) throw new InvalidOperationException("The first client could not acquire the control lease.");
+            using var heldResponse = await Send2026ToolCallAsync(client, endpoint, 3, "zemax_get_system", "client-a").ConfigureAwait(false);
+            if (!heldResponse.IsSuccessStatusCode) throw new InvalidOperationException("The first client could not retain the control lease across tool names.");
             await Task.Delay(150).ConfigureAwait(false);
-            using var rejectedLease = await Send2026ToolCallAsync(client, endpoint, 3, "zemax_test_echo", "client-b").ConfigureAwait(false);
+            using var rejectedLease = await Send2026ToolCallAsync(client, endpoint, 4, "zemax_status", "client-b").ConfigureAwait(false);
             var rejectedLeaseBody = await ReadFirstMcpPayloadAsync(rejectedLease).ConfigureAwait(false);
             if (!rejectedLeaseBody.Contains("currently leased", StringComparison.OrdinalIgnoreCase) &&
                 !rejectedLeaseBody.Contains("isError", StringComparison.OrdinalIgnoreCase))
@@ -212,8 +213,6 @@ internal static class Program
             using var spoofed = new HttpRequestMessage(HttpMethod.Get, endpoint + "/health");
             spoofed.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
             spoofed.Headers.Host = "attacker.example";
-            // The Origin itself is configured as valid. Only Host filtering
-            // may reject this request, proving Origin never trusts Host.
             spoofed.Headers.TryAddWithoutValidation("Origin", "http://127.0.0.1:4567");
             using var rejected = await client.SendAsync(spoofed).ConfigureAwait(false);
             if (rejected.StatusCode != HttpStatusCode.BadRequest)
@@ -228,9 +227,23 @@ internal static class Program
         }
     }
 
-    private static async Task<HttpResponseMessage> Send2026ToolCallAsync(HttpClient client, Uri endpoint, int id, string toolName, string clientName)
+    private static Task<HttpResponseMessage> Send2026ListToolsAsync(HttpClient client, Uri endpoint, int id, string clientName)
+    {
+        var body = "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientInfo\":{\"name\":\"" + clientName + "\",\"version\":\"1.0\"},\"io.modelcontextprotocol/clientCapabilities\":{}}}}";
+        var request = Create2026Request(endpoint, body, "tools/list");
+        return client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+    }
+
+    private static Task<HttpResponseMessage> Send2026ToolCallAsync(HttpClient client, Uri endpoint, int id, string toolName, string clientName)
     {
         var body = "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"method\":\"tools/call\",\"params\":{\"name\":\"" + toolName + "\",\"arguments\":{},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientInfo\":{\"name\":\"" + clientName + "\",\"version\":\"1.0\"},\"io.modelcontextprotocol/clientCapabilities\":{}}}}";
+        var request = Create2026Request(endpoint, body, "tools/call");
+        request.Headers.TryAddWithoutValidation("Mcp-Name", toolName);
+        return client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+    }
+
+    private static HttpRequestMessage Create2026Request(Uri endpoint, string body, string method)
+    {
         var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = new StringContent(body, Encoding.UTF8, "application/json")
@@ -238,9 +251,8 @@ internal static class Program
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
         request.Headers.TryAddWithoutValidation("Accept", "application/json, text/event-stream");
         request.Headers.TryAddWithoutValidation("MCP-Protocol-Version", "2026-07-28");
-        request.Headers.TryAddWithoutValidation("Mcp-Method", "tools/call");
-        request.Headers.TryAddWithoutValidation("Mcp-Name", toolName);
-        return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+        request.Headers.TryAddWithoutValidation("Mcp-Method", method);
+        return request;
     }
 
     private static async Task<string> ReadFirstMcpPayloadAsync(HttpResponseMessage response)
@@ -328,8 +340,8 @@ internal static class Program
                 {
                     tools = new[]
                     {
-                        new { name = "zemax_test_echo", description = "Test echo", inputSchema = new { type = "object" } },
-                        new { name = "zemax_test_hold", description = "Test lease hold", inputSchema = new { type = "object" } }
+                        new { name = "zemax_status", description = "Test echo", inputSchema = new { type = "object" } },
+                        new { name = "zemax_get_system", description = "Test lease hold", inputSchema = new { type = "object" } }
                     }
                 }).ConfigureAwait(false);
                 continue;
@@ -342,12 +354,12 @@ internal static class Program
                     await Task.Delay(Timeout.InfiniteTimeSpan).ConfigureAwait(false);
                     return;
                 }
-                if (string.Equals(command, "zemax_test_hold", StringComparison.Ordinal))
+                if (string.Equals(command, "zemax_get_system", StringComparison.Ordinal) || string.Equals(command, "zemax_test_hold", StringComparison.Ordinal))
                 {
                     await SendAsync(writer, ZemaxRpcProtocol.Progress, string.Empty, operationId, new
                     {
                         operationId,
-                        toolName = "zemax_test_hold",
+                        toolName = command,
                         fraction = 0.5,
                         queuePosition = 0,
                         state = "running",
@@ -355,7 +367,8 @@ internal static class Program
                     }).ConfigureAwait(false);
                     await Task.Delay(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
                 }
-                if (string.Equals(command, "zemax_test_echo", StringComparison.Ordinal) || string.Equals(command, "zemax_test_hold", StringComparison.Ordinal))
+                if (string.Equals(command, "zemax_status", StringComparison.Ordinal) || string.Equals(command, "zemax_get_system", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_test_echo", StringComparison.Ordinal) || string.Equals(command, "zemax_test_hold", StringComparison.Ordinal))
                 {
                     await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
                     {
