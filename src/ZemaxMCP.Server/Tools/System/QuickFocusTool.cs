@@ -18,12 +18,19 @@ public sealed class QuickFocusTool
     public async Task<QuickFocusResult> ExecuteAsync(
         [Description("Criterion: SpotSizeRadial, SpotSizeXOnly, SpotSizeYOnly, or RMSWavefront")] string criterion = "SpotSizeRadial",
         [Description("Use centroid reference for spot-size criteria")] bool useCentroid = true,
-        [Description("Maximum run time in seconds (1-300)")] double timeoutSeconds = 30)
+        [Description("Maximum run time in seconds (1-300)")] double timeoutSeconds = 30,
+        CancellationToken cancellationToken = default)
     {
         try
         {
-            if (!Enum.TryParse<ZOSAPI.Tools.General.QuickFocusCriterion>(criterion, true, out var parsed))
-                throw new ArgumentException("Unknown Quick Focus criterion.");
+            var parsed = criterion.Trim().ToLowerInvariant() switch
+            {
+                "spotsizeradial" => ZOSAPI.Tools.General.QuickFocusCriterion.SpotSizeRadial,
+                "spotsizexonly" => ZOSAPI.Tools.General.QuickFocusCriterion.SpotSizeXOnly,
+                "spotsizeyonly" => ZOSAPI.Tools.General.QuickFocusCriterion.SpotSizeYOnly,
+                "rmswavefront" => ZOSAPI.Tools.General.QuickFocusCriterion.RMSWavefront,
+                _ => throw new ArgumentException("Criterion must be SpotSizeRadial, SpotSizeXOnly, SpotSizeYOnly, or RMSWavefront.")
+            };
             if (double.IsNaN(timeoutSeconds) || double.IsInfinity(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 300)
                 throw new ArgumentOutOfRangeException(nameof(timeoutSeconds), "Timeout must be between 1 and 300 seconds.");
             return await _session.ExecuteAsync("QuickFocus", new Dictionary<string, object?>
@@ -31,6 +38,8 @@ public sealed class QuickFocusTool
                 ["criterion"] = criterion, ["useCentroid"] = useCentroid, ["timeoutSeconds"] = timeoutSeconds
             }, system =>
             {
+                if (system.LDE.NumberOfSurfaces < 3)
+                    throw new InvalidOperationException("Quick Focus requires at least one non-object, non-image surface.");
                 var focusSurface = system.LDE.GetSurfaceAt(system.LDE.NumberOfSurfaces - 2);
                 var before = focusSurface.Thickness;
                 var tool = system.Tools.OpenQuickFocus();
@@ -44,7 +53,7 @@ public sealed class QuickFocusTool
                         before.Sanitize(), focusSurface.Thickness.Sanitize(), system.NeedsSave);
                 }
                 finally { tool.Close(); }
-            });
+            }, cancellationToken);
         }
         catch (Exception ex) { return new QuickFocusResult(false, ex.Message, "Failed", criterion, useCentroid, 0, 0, false); }
     }
