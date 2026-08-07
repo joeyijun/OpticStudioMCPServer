@@ -98,9 +98,8 @@ public class SetConfigurationOperandValueTool
                 }
                 else
                 {
-                    var status = cell.MakeSolveFixed();
-                    if (status != SolveStatus.Success)
-                        throw new InvalidOperationException($"OpticStudio could not make the MCE cell fixed: {status}.");
+                    if (!cell.MakeSolveFixed())
+                        throw new InvalidOperationException("OpticStudio could not make the MCE cell fixed.");
                     cell.DoubleValue = value!.Value;
                 }
 
