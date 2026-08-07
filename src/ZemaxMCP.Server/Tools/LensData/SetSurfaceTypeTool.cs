@@ -21,92 +21,62 @@ public class SetSurfaceTypeTool
 
     [ZemaxTool(Name = "zemax_set_surface_type")]
     [Description(
-        "Change the surface type (e.g., Standard, CoordinateBreak, EvenAspheric, Toroidal, etc.). "
-        + "Common types: 'Standard', 'CoordinateBreak', 'EvenAspheric', 'OddAspheric', "
-        + "'ExtendedPolynomial', 'ZernikeStandardSag', 'Paraxial', 'Biconic'. "
-        + "After changing type, use zemax_set_surface_parameter to set type-specific PARM values "
-        + "(e.g., for CoordinateBreak: PARM 1=DecX, 2=DecY, 3=TiltX, 4=TiltY, 5=TiltZ, 6=Order). "
-        + "Set listTypes=true to see all available surface types.")]
+        "Change a surface type (for example Standard, CoordinateBreak, EvenAspheric, Toroidal, or Biconic). "
+        + "Use zemax_list_surface_types for read-only discovery. listTypes=true remains as a compatibility path and returns the static enum without modifying OpticStudio. "
+        + "After changing type, use zemax_set_surface_parameter to set type-specific PARM values.")]
     public async Task<SetSurfaceTypeResult> ExecuteAsync(
         [Description("Surface number to modify")] int surfaceNumber,
-        [Description("Surface type name (e.g., 'CoordinateBreak', 'EvenAsphere')")] string? surfaceType = null,
-        [Description("If true, list all available surface types instead of changing")] bool listTypes = false)
+        [Description("Surface type name; use zemax_list_surface_types to discover names")] string? surfaceType = null,
+        [Description("Compatibility option: when true, return the static surface-type list without modifying the system")] bool listTypes = false,
+        CancellationToken cancellationToken = default)
     {
         try
         {
+            if (listTypes)
+            {
+                var names = Enum.GetNames(typeof(ZOSAPI.Editors.LDE.SurfaceType));
+                Array.Sort(names, StringComparer.OrdinalIgnoreCase);
+                return new SetSurfaceTypeResult(
+                    Success: true,
+                    SurfaceNumber: surfaceNumber,
+                    AvailableTypes: names);
+            }
+
+            if (string.IsNullOrWhiteSpace(surfaceType))
+                return new SetSurfaceTypeResult(false, Error: "surfaceType is required when listTypes=false");
+
+            var enumName = Enum.GetNames(typeof(ZOSAPI.Editors.LDE.SurfaceType))
+                .FirstOrDefault(name => string.Equals(name, surfaceType.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (enumName == null)
+                return new SetSurfaceTypeResult(false,
+                    Error: $"Unknown surface type: '{surfaceType}'. Use zemax_list_surface_types to see valid names.");
+            var targetType = (ZOSAPI.Editors.LDE.SurfaceType)Enum.Parse(typeof(ZOSAPI.Editors.LDE.SurfaceType), enumName, ignoreCase: false);
+
             var parameters = new Dictionary<string, object?>
             {
                 ["surfaceNumber"] = surfaceNumber,
-                ["surfaceType"] = surfaceType,
-                ["listTypes"] = listTypes
+                ["surfaceType"] = enumName
             };
 
             return await _session.ExecuteAsync("SetSurfaceType", parameters, system =>
             {
                 var lde = system.LDE;
-
                 if (surfaceNumber < 0 || surfaceNumber >= lde.NumberOfSurfaces)
-                    throw new ArgumentException(
-                        $"Invalid surface number: {surfaceNumber}. Valid range: 0-{lde.NumberOfSurfaces - 1}");
+                    throw new ArgumentException($"Invalid surface number: {surfaceNumber}. Valid range: 0-{lde.NumberOfSurfaces - 1}");
 
                 var surface = lde.GetSurfaceAt(surfaceNumber);
-                string previousType = surface.Type.ToString();
-
-                if (listTypes)
-                {
-                    // Primary path: dynamic GetAvailableSurfaceTypes (version-sensitive)
-                    try
-                    {
-                        dynamic dynSurface = surface;
-                        var settings = dynSurface.GetSurfaceTypeSettings(surface.Type);
-                        var types = (string[])settings.GetAvailableSurfaceTypes();
-                        return new SetSurfaceTypeResult(
-                            Success: true,
-                            SurfaceNumber: surfaceNumber,
-                            PreviousType: previousType,
-                            AvailableTypes: types);
-                    }
-                    catch
-                    {
-                        // Fallback: enumerate the SurfaceType enum (stable across versions)
-                        var enumNames = Enum.GetNames(typeof(ZOSAPI.Editors.LDE.SurfaceType));
-                        Array.Sort(enumNames, StringComparer.OrdinalIgnoreCase);
-                        return new SetSurfaceTypeResult(
-                            Success: true,
-                            SurfaceNumber: surfaceNumber,
-                            PreviousType: previousType,
-                            AvailableTypes: enumNames);
-                    }
-                }
-
-                if (string.IsNullOrWhiteSpace(surfaceType))
-                    return new SetSurfaceTypeResult(false,
-                        Error: "surfaceType is required when listTypes=false");
-
-                // Change surface type using ZOSAPI
-                // The API requires: GetSurfaceTypeSettings(targetType) then ChangeType(settings)
+                var previousType = surface.Type.ToString();
                 try
                 {
                     dynamic dynSurface = surface;
-
-                    // Parse the target SurfaceType enum
-                    if (!Enum.TryParse<ZOSAPI.Editors.LDE.SurfaceType>(surfaceType, ignoreCase: true, out var targetType))
-                    {
-                        return new SetSurfaceTypeResult(false,
-                            Error: $"Unknown surface type: '{surfaceType}'. "
-                                + "Use listTypes=true to see valid types.");
-                    }
-
                     var typeSettings = dynSurface.GetSurfaceTypeSettings(targetType);
                     dynSurface.ChangeType(typeSettings);
 
-                    string newType = surface.Type.ToString();
-                    if (string.Equals(previousType, newType, StringComparison.OrdinalIgnoreCase)
-                        && !string.Equals(previousType, surfaceType, StringComparison.OrdinalIgnoreCase))
+                    var newType = surface.Type.ToString();
+                    if (!string.Equals(newType, enumName, StringComparison.OrdinalIgnoreCase))
                     {
                         return new SetSurfaceTypeResult(false,
-                            Error: $"Surface {surfaceNumber} type unchanged (still '{newType}'). "
-                                + "Object and image surfaces may not support type changes.",
+                            Error: $"Surface {surfaceNumber} type unchanged or resolved to '{newType}' instead of requested '{enumName}'. Object/image surfaces and some licensed surface types may reject the change.",
                             SurfaceNumber: surfaceNumber,
                             PreviousType: previousType,
                             NewType: newType);
@@ -121,9 +91,12 @@ public class SetSurfaceTypeTool
                 catch (Exception ex)
                 {
                     return new SetSurfaceTypeResult(false,
-                        Error: $"Failed to change surface type: {ex.Message}");
+                        Error: $"Failed to change surface type: {ex.Message}",
+                        SurfaceNumber: surfaceNumber,
+                        PreviousType: previousType,
+                        NewType: surface.Type.ToString());
                 }
-            });
+            }, cancellationToken);
         }
         catch (Exception ex)
         {
