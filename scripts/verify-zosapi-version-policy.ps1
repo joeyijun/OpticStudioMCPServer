@@ -11,6 +11,7 @@ $compatibility = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Server\
 $publish = Get-Content -LiteralPath (Join-Path $root "scripts\publish-windows.ps1") -Raw
 $snapshotSafety = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Core\Session\ZemaxOperationSafety.cs") -Raw
 $multistart = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Server\Tools\Optimization\MultistartOptimizeTool.cs") -Raw
+$systemExplorer = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Server\Tools\SystemSettings\SystemExplorerStatusTool.cs") -Raw
 $matrixVerifier = Join-Path $root "scripts\verify-zosapi-compatibility.ps1"
 
 if ($workerProject -notmatch '<PlatformTarget>x64</PlatformTarget>' -or
@@ -49,8 +50,25 @@ if ($multistart -notmatch 'string saveExtension = "\.zmx"' -or
     $multistart -notmatch 'ZOS was introduced in OpticStudio 21\.3') {
     throw "Unsaved multistart checkpoints must default to ZMX for pre-21.3 compatibility."
 }
+
+# Enhanced Ray Aiming options were introduced/changed during 2021 feature
+# experiments and formalized in 22.1. They must remain late-bound so those
+# optional members do not become a compile-time floor for the whole Worker.
+foreach ($optionalMember in @("UseEnhancedRayAiming", "UseAdvancedConvergence", "UseFallBackSearchDuringCacheSetup", "NumStepsCacheSetup")) {
+    if ($systemExplorer -match [regex]::Escape("data.$optionalMember")) {
+        throw "SystemExplorerStatusTool must not directly bind optional post-2021 ray-aiming member '$optionalMember'."
+    }
+    if ($systemExplorer -notmatch [regex]::Escape('ReadOptionalValue') -or
+        $systemExplorer -notmatch [regex]::Escape('"' + $optionalMember + '"')) {
+        throw "SystemExplorerStatusTool must capability-detect optional ray-aiming member '$optionalMember'."
+    }
+}
+if ($systemExplorer -notmatch 'UnsupportedSettings') {
+    throw "Version-gated System Explorer settings must report unsupported fields explicitly instead of fabricating false/zero values."
+}
+
 if (-not (Test-Path -LiteralPath $matrixVerifier)) {
     throw "The multi-install ZOS-API compile compatibility verifier is missing."
 }
 
-Write-Host "ZOS-API cross-version policy guards passed: x64 Worker, OpticStudio/API build-runtime preflight, ZMX legacy safety, and multi-version compile verification are intact."
+Write-Host "ZOS-API cross-version policy guards passed: x64 Worker, OpticStudio/API build-runtime preflight, ZMX legacy safety, capability-gated ray aiming, and multi-version compile verification are intact."
