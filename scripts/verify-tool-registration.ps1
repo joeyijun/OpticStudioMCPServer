@@ -75,3 +75,4 @@ if ($catalog -notmatch '\[ZemaxToolType\]' -or $catalog -notmatch 'ZemaxTool\s*\
 }
 
 Write-Host "Verified $discovered Worker tool classes and $($toolNames.Count) unique named Worker commands discovered by WorkerToolRegistry."
+& (Join-Path $PSScriptRoot "verify-functional-safety.ps1") -RepositoryRoot $root
