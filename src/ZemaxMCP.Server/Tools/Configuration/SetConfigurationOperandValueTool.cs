@@ -1,8 +1,8 @@
 using System.ComponentModel;
 using ZemaxMCP.Server.Tooling;
-using ZOSAPI.Editors.MCE;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
+using ZOSAPI.Editors;
 
 namespace ZemaxMCP.Server.Tools.Configuration;
 
@@ -20,118 +20,120 @@ public class SetConfigurationOperandValueTool
     );
 
     [ZemaxTool(Name = "zemax_set_configuration_operand_value")]
-    [Description("Set the value or pickup solve for a configuration operand")]
+    [Description("Set one MCE operand/configuration cell to either a fixed numeric value or a same-operand ConfigPickup solve. Fixed and pickup modes are mutually exclusive.")]
     public async Task<SetConfigurationOperandValueResult> ExecuteAsync(
         [Description("Operand row number (1-indexed)")] int operandRow,
         [Description("Configuration number (1-indexed)")] int configurationNumber,
-        [Description("Value to set (use this OR pickup parameters)")] double? value = null,
-        [Description("Set as pickup from this configuration number")] int? pickupConfig = null,
-        [Description("Scale factor for pickup")] double? scaleFactor = null,
-        [Description("Offset for pickup")] double? offset = null)
+        [Description("Fixed value to set. Supply this OR pickupConfig, not both.")] double? value = null,
+        [Description("Set a ConfigPickup solve from this configuration number on the same operand row.")] int? pickupConfig = null,
+        [Description("Scale factor for ConfigPickup. Only valid with pickupConfig.")] double? scaleFactor = null,
+        [Description("Offset for ConfigPickup. Only valid with pickupConfig.")] double? offset = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
+            if (operandRow < 1) throw new ArgumentOutOfRangeException(nameof(operandRow), "operandRow must be >= 1.");
+            if (configurationNumber < 1) throw new ArgumentOutOfRangeException(nameof(configurationNumber), "configurationNumber must be >= 1.");
+            if (value.HasValue == pickupConfig.HasValue)
+                throw new ArgumentException("Provide exactly one of 'value' or 'pickupConfig'.");
+            if (!pickupConfig.HasValue && (scaleFactor.HasValue || offset.HasValue))
+                throw new ArgumentException("scaleFactor and offset are valid only when pickupConfig is provided.");
+            ValidateFinite(value, nameof(value));
+            ValidateFinite(scaleFactor, nameof(scaleFactor));
+            ValidateFinite(offset, nameof(offset));
+            if (pickupConfig.HasValue && pickupConfig.Value < 1)
+                throw new ArgumentOutOfRangeException(nameof(pickupConfig), "pickupConfig must be >= 1.");
+
             var parameters = new Dictionary<string, object?>
             {
                 ["operandRow"] = operandRow,
                 ["configurationNumber"] = configurationNumber,
                 ["value"] = value,
-                ["pickupConfig"] = pickupConfig
+                ["pickupConfig"] = pickupConfig,
+                ["scaleFactor"] = scaleFactor,
+                ["offset"] = offset
             };
 
-            var result = await _session.ExecuteAsync("SetConfigurationOperandValue", parameters, system =>
+            return await _session.ExecuteAsync("SetConfigurationOperandValue", parameters, system =>
             {
                 var mce = system.MCE;
-
-                if (operandRow < 1 || operandRow > mce.NumberOfOperands)
-                {
-                    throw new ArgumentException(
-                        $"Invalid operand row: {operandRow}. Valid range: 1-{mce.NumberOfOperands}");
-                }
-
-                if (configurationNumber < 1 || configurationNumber > mce.NumberOfConfigurations)
-                {
-                    throw new ArgumentException(
-                        $"Invalid configuration: {configurationNumber}. Valid range: 1-{mce.NumberOfConfigurations}");
-                }
+                if (operandRow > mce.NumberOfOperands)
+                    throw new ArgumentOutOfRangeException(nameof(operandRow), $"operandRow {operandRow} exceeds the MCE operand count ({mce.NumberOfOperands}).");
+                if (configurationNumber > mce.NumberOfConfigurations)
+                    throw new ArgumentOutOfRangeException(nameof(configurationNumber), $"configurationNumber {configurationNumber} exceeds the configuration count ({mce.NumberOfConfigurations}).");
+                if (pickupConfig.HasValue && pickupConfig.Value > mce.NumberOfConfigurations)
+                    throw new ArgumentOutOfRangeException(nameof(pickupConfig), $"pickupConfig {pickupConfig.Value} exceeds the configuration count ({mce.NumberOfConfigurations}).");
 
                 var row = mce.GetOperandAt(operandRow);
                 var cell = row.GetOperandCell(configurationNumber);
-
-                // Use dynamic to handle MCE cell operations that may vary by API version
-                dynamic dynCell = cell;
+                if (cell == null || !cell.IsActive)
+                    throw new InvalidOperationException($"MCE cell operand {operandRow}, configuration {configurationNumber} is not active.");
+                if (cell.IsReadOnly)
+                    throw new InvalidOperationException($"MCE cell operand {operandRow}, configuration {configurationNumber} is read-only.");
 
                 if (pickupConfig.HasValue)
                 {
-                    // Set as pickup solve
-                    if (pickupConfig.Value < 1 || pickupConfig.Value > mce.NumberOfConfigurations)
-                    {
-                        throw new ArgumentException(
-                            $"Invalid pickup configuration: {pickupConfig.Value}. Valid range: 1-{mce.NumberOfConfigurations}");
-                    }
+                    if (!cell.IsSolveTypeSupported(SolveType.ConfigPickup))
+                        throw new InvalidOperationException("This MCE cell does not support ConfigPickup solves.");
 
-                    try
-                    {
-                        dynCell.MakeSolvePickup(
-                            pickupConfig.Value,
-                            scaleFactor ?? 1.0,
-                            offset ?? 0.0);
-                    }
-                    catch
-                    {
-                        throw new InvalidOperationException("Pickup solves are not supported for MCE cells in this API version");
-                    }
-                }
-                else if (value.HasValue)
-                {
-                    // Set as fixed value
-                    cell.MakeSolveFixed();
-                    cell.DoubleValue = value.Value;
+                    var solveData = cell.CreateSolveType(SolveType.ConfigPickup)
+                        ?? throw new InvalidOperationException("OpticStudio could not create a ConfigPickup solve.");
+                    var pickup = solveData._S_ConfigPickup
+                        ?? throw new InvalidOperationException("OpticStudio did not expose typed ConfigPickup solve data.");
+                    pickup.Configuration = pickupConfig.Value;
+                    pickup.Operand = operandRow;
+
+                    double requestedScale = scaleFactor ?? 1.0;
+                    double requestedOffset = offset ?? 0.0;
+                    if (pickup.SupportsScale) pickup.ScaleFactor = requestedScale;
+                    else if (scaleFactor.HasValue && requestedScale != 1.0)
+                        throw new InvalidOperationException("This ConfigPickup solve does not support a scale factor.");
+                    if (pickup.SupportsOffset) pickup.Offset = requestedOffset;
+                    else if (offset.HasValue && requestedOffset != 0.0)
+                        throw new InvalidOperationException("This ConfigPickup solve does not support an offset.");
+
+                    var status = cell.SetSolveData(solveData);
+                    if (status != SolveStatus.Success)
+                        throw new InvalidOperationException($"OpticStudio rejected the ConfigPickup solve: {status}.");
                 }
                 else
                 {
-                    throw new ArgumentException("Either 'value' or 'pickupConfig' must be provided");
+                    var status = cell.MakeSolveFixed();
+                    if (status != SolveStatus.Success)
+                        throw new InvalidOperationException($"OpticStudio could not make the MCE cell fixed: {status}.");
+                    cell.DoubleValue = value!.Value;
                 }
 
-                // Get the updated value
-                var solveData = cell.GetSolveData();
+                var updatedSolve = cell.GetSolveData();
                 var newValue = new ConfigurationValue
                 {
                     ConfigurationNumber = configurationNumber,
                     Value = cell.DoubleValue,
-                    SolveType = solveData.Type.ToString()
+                    SolveType = updatedSolve.Type.ToString()
                 };
-
-                if (solveData.Type == ZOSAPI.Editors.SolveType.ConfigPickup)
+                if (updatedSolve.Type == SolveType.ConfigPickup)
                 {
-                    try
+                    var pickup = updatedSolve._S_ConfigPickup;
+                    newValue = newValue with
                     {
-                        dynamic dynSolveData = solveData;
-                        newValue = newValue with
-                        {
-                            PickupConfig = (int?)dynSolveData.ConfigPickup_Configuration,
-                            ScaleFactor = (double?)dynSolveData.ConfigPickup_ScaleFactor,
-                            Offset = (double?)dynSolveData.ConfigPickup_Offset
-                        };
-                    }
-                    catch
-                    {
-                        // Pickup info not available in this API version
-                    }
+                        PickupConfig = pickup.Configuration,
+                        ScaleFactor = pickup.SupportsScale ? pickup.ScaleFactor : null,
+                        Offset = pickup.SupportsOffset ? pickup.Offset : null
+                    };
                 }
 
-                return new SetConfigurationOperandValueResult(
-                    Success: true,
-                    Error: null,
-                    NewValue: newValue
-                );
-            });
-
-            return result;
+                return new SetConfigurationOperandValueResult(true, null, newValue);
+            }, cancellationToken);
         }
         catch (Exception ex)
         {
             return new SetConfigurationOperandValueResult(false, ex.Message, null);
         }
+    }
+
+    private static void ValidateFinite(double? value, string name)
+    {
+        if (value.HasValue && (double.IsNaN(value.Value) || double.IsInfinity(value.Value)))
+            throw new ArgumentOutOfRangeException(name, $"{name} must be finite.");
     }
 }
