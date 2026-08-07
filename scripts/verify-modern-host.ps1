@@ -27,7 +27,7 @@ if ($hostProject -notmatch '<TargetFramework>net10\.0-windows</TargetFramework>'
   throw "The public Host must target .NET 10 and use ModelContextProtocol.AspNetCore."
 }
 if ($hostProject -notmatch 'InternalsVisibleTo Include="ZemaxMCP\.PrivateRpcTests"' -or
-    Test-Path (Join-Path $root "src\ZemaxMCP.HttpBridge\Properties\AssemblyInfo.cs")) {
+    (Test-Path (Join-Path $root "src\ZemaxMCP.HttpBridge\Properties\AssemblyInfo.cs"))) {
   throw "SDK-style Host assembly metadata must stay in the project file; the redundant hand-written AssemblyInfo must not return."
 }
 if ($packages -notmatch 'ModelContextProtocol\.AspNetCore" Version="2\.1\.0"' -or
@@ -48,9 +48,9 @@ if ($bootstrapSource -notmatch 'AssemblyResolve' -or $bootstrapSource -notmatch 
     $workerSource -match 'AssemblyResolve|Assembly\.LoadFrom') {
   throw "ZOS-API CLR binding must have one owner in BootstrapProgram; ServerApplication must not register a duplicate resolver."
 }
-if (Test-Path (Join-Path $root "src\ZemaxMCP.Server\Prompts") -or
-    Test-Path (Join-Path $root "src\ZemaxMCP.Server\Resources") -or
-    Test-Path (Join-Path $root "src\ZemaxMCP.Server\appsettings.json") -or
+if ((Test-Path (Join-Path $root "src\ZemaxMCP.Server\Prompts")) -or
+    (Test-Path (Join-Path $root "src\ZemaxMCP.Server\Resources")) -or
+    (Test-Path (Join-Path $root "src\ZemaxMCP.Server\appsettings.json")) -or
     $workerProject -match 'Configuration\.Json|System\.Management|Serilog\.Sinks\.Console|Compile Remove="Prompts|appsettings\.json' -or
     $packages -match 'Microsoft\.Extensions\.Configuration\.Json|System\.Management|Serilog\.Sinks\.Console|System\.Diagnostics\.DiagnosticSource|System\.Buffers|System\.Memory|System\.Numerics\.Vectors|System\.Runtime\.CompilerServices\.Unsafe|PackageVersion Include="Serilog"|PackageVersion Include="Microsoft\.Extensions\.Logging"') {
   throw "Retired Worker prompt/resource/configuration sources and obsolete direct package pins must not return."
