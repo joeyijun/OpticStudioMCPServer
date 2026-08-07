@@ -41,49 +41,55 @@ public class GetVariablesTool
     );
 
     [ZemaxTool(Name = "zemax_get_variables")]
-    [Description("Scan the current optical system for all variables (Variable solves) and return them with their current constraint settings. Use this before zemax_set_variable_constraints to identify variable numbers.")]
-    public async Task<GetVariablesResult> ExecuteAsync()
+    [Description("Scan the current optical system for variable solves and return finite current values with stored constraint settings. MCE variables are addressed by configuration number through GetOperandCell.")]
+    public async Task<GetVariablesResult> ExecuteAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            var result = await _session.ExecuteAsync("GetVariables", null, system =>
+            cancellationToken.ThrowIfCancellationRequested();
+            return await _session.ExecuteAsync("GetVariables", null, system =>
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var scanner = new VariableScanner();
-                var variables = scanner.ScanVariables(system);
-
-                // Apply any stored constraints
+                var variables = scanner.ScanVariables(system, cancellationToken);
                 _constraintStore.ApplyConstraints(variables);
 
-                var infos = variables.Select(v =>
+                var infos = new VariableInfo[variables.Count];
+                for (int i = 0; i < variables.Count; i++)
                 {
-                    double? min = v.Constraint is ConstraintType.MinAndMax or ConstraintType.MinOnly ? v.Min : null;
-                    double? max = v.Constraint is ConstraintType.MinAndMax or ConstraintType.MaxOnly ? v.Max : null;
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var variable = variables[i];
+                    if (double.IsNaN(variable.Value) || double.IsInfinity(variable.Value))
+                        throw new InvalidDataException($"Variable {variable.VariableNumber} ({variable.Description}) returned non-finite value {variable.Value}.");
 
-                    return new VariableInfo(
-                        v.VariableNumber,
-                        v.Description,
-                        v.Type.ToString(),
-                        v.SurfaceNumber,
-                        v.ParameterNumber,
-                        v.FieldNumber,
-                        v.ConfigOperandRow,
-                        v.ConfigColumn,
-                        v.Value,
-                        v.Constraint.ToString(),
+                    double? min = variable.Constraint is ConstraintType.MinAndMax or ConstraintType.MinOnly ? variable.Min : null;
+                    double? max = variable.Constraint is ConstraintType.MinAndMax or ConstraintType.MaxOnly ? variable.Max : null;
+                    if (min.HasValue && (double.IsNaN(min.Value) || double.IsInfinity(min.Value)))
+                        throw new InvalidDataException($"Variable {variable.VariableNumber} has non-finite minimum constraint {min.Value}.");
+                    if (max.HasValue && (double.IsNaN(max.Value) || double.IsInfinity(max.Value)))
+                        throw new InvalidDataException($"Variable {variable.VariableNumber} has non-finite maximum constraint {max.Value}.");
+
+                    infos[i] = new VariableInfo(
+                        variable.VariableNumber,
+                        variable.Description,
+                        variable.Type.ToString(),
+                        variable.SurfaceNumber,
+                        variable.ParameterNumber,
+                        variable.FieldNumber,
+                        variable.ConfigOperandRow,
+                        variable.ConfigColumn,
+                        variable.Value,
+                        variable.Constraint.ToString(),
                         min,
-                        max
-                    );
-                }).ToArray();
+                        max);
+                }
 
-                return new GetVariablesResult(
-                    Success: true,
-                    Error: null,
-                    VariableCount: infos.Length,
-                    Variables: infos
-                );
-            });
-
-            return result;
+                return new GetVariablesResult(true, null, infos.Length, infos);
+            }, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
