@@ -1,15 +1,14 @@
 using System.ComponentModel;
-using System.Reflection;
 using ZemaxMCP.Server.Tooling;
-using ZemaxMCP.Core.Session;
+using ZemaxMCP.ToolManifest;
 using ZemaxMCP.Toolsets;
 
 namespace ZemaxMCP.Server.Tools.Catalog;
 
 /// <summary>
-/// Gives MCP clients a stable, task-oriented map of the tools compiled into this server.
-/// Tool names remain unchanged; the map is deliberately derived from attributes so it cannot
-/// silently drift when a new tool is registered.
+/// Gives MCP clients a stable, task-oriented map of the installed tool
+/// contract. The same static manifest drives MCP tools/list and Worker
+/// execution admission, so this catalogue cannot drift from the public API.
 /// </summary>
 [ZemaxToolType]
 public sealed class ToolCatalogTool
@@ -29,8 +28,9 @@ public sealed class ToolCatalogTool
         [Description("When true, return only high-impact operations that deserve an explicit confirmation.")] bool highImpactOnly = false)
     {
         var profile = ToolsetCatalog.NormalizeProfile(Environment.GetEnvironmentVariable("ZEMAX_MCP_TOOLSET") ?? ToolsetCatalog.FullExpert);
+        var readOnly = string.Equals(Environment.GetEnvironmentVariable("ZEMAX_MCP_READ_ONLY"), "1", StringComparison.Ordinal);
         var entries = ToolCatalog.Build(highImpactOnly)
-            .Where(entry => ToolsetCatalog.IsToolAllowed(profile, entry.Name))
+            .Where(entry => StaticToolManifest.IsAllowed(profile, entry.Name, readOnly))
             .ToArray();
         var groups = ToolCatalog.Groups
             .Select(group => new ToolGroup(group.Id, group.Title, group.Purpose, entries.Count(entry => entry.Group == group.Title)))
@@ -61,35 +61,25 @@ internal static class ToolCatalog
 
     internal static IReadOnlyList<ToolCatalogTool.ToolEntry> Build(bool highImpactOnly)
     {
-        var entries = typeof(ToolCatalog).Assembly
-            .GetTypes()
-            .Where(type => type.Namespace != null && type.Namespace.StartsWith("ZemaxMCP.Server.Tools.", StringComparison.Ordinal))
-            .SelectMany(type => type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
-                .Select(method => new { Type = type, Method = method, Attribute = method.GetCustomAttribute<ZemaxToolAttribute>() }))
-            .Where(item => item.Attribute != null && !string.IsNullOrWhiteSpace(item.Attribute.Name))
-            .Select(item => CreateEntry(item.Type, item.Method, item.Attribute!.Name!))
+        return StaticToolManifest.All
+            .Select(CreateEntry)
             .Where(entry => !highImpactOnly || entry.Risk == HighImpactRisk)
             .OrderBy(entry => GroupOrder(entry.Group))
             .ThenBy(entry => entry.Name, StringComparer.Ordinal)
             .ToArray();
-        return entries;
     }
 
-    private static ToolCatalogTool.ToolEntry CreateEntry(Type type, MethodInfo method, string name)
+    private static ToolCatalogTool.ToolEntry CreateEntry(ToolManifestEntry tool)
     {
-        var risk = GetRisk(name);
-        var description = method.GetCustomAttribute<DescriptionAttribute>()?.Description ?? "No additional description is available.";
-        return new ToolCatalogTool.ToolEntry(name, GetGroup(type, name), risk, description, GetSafetyGuidance(risk, name));
+        var risk = tool.Impact switch
+        {
+            "HighImpact" => HighImpactRisk,
+            "Caution" => CautionRisk,
+            _ => ReadOnlyRisk
+        };
+        var group = ToolsetCatalog.GetDomain(tool.Name).Title;
+        return new ToolCatalogTool.ToolEntry(tool.Name, group, risk, tool.Description, GetSafetyGuidance(risk, tool.Name));
     }
-
-    private static string GetGroup(Type type, string name) => ToolsetCatalog.GetDomain(name).Title;
-
-    private static string GetRisk(string name) => ZemaxOperationMetadata.GetToolImpact(name) switch
-    {
-        ZemaxOperationImpact.HighImpact => HighImpactRisk,
-        ZemaxOperationImpact.Caution => CautionRisk,
-        _ => ReadOnlyRisk
-    };
 
     private static string GetSafetyGuidance(string risk, string name)
     {
