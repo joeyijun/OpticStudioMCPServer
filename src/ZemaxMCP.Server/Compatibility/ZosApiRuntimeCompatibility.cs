@@ -15,7 +15,7 @@ namespace ZemaxMCP.Server.Compatibility;
 internal static class ZosApiRuntimeCompatibility
 {
     internal const string BuildInfoFileName = "ZOSAPI_BUILD_INFO.txt";
-    private static readonly string[] Components = { "ZOSAPI_Interfaces", "ZOSAPI", "ZOSAPI_NetHelper" };
+    private static readonly string[] Components = { "OpticStudio", "ZOSAPI_Interfaces", "ZOSAPI", "ZOSAPI_NetHelper" };
 
     internal sealed class Report
     {
@@ -29,7 +29,7 @@ internal static class ZosApiRuntimeCompatibility
         public IReadOnlyList<string> Messages { get; }
     }
 
-    internal static Report Validate(string baseDirectory, IReadOnlyDictionary<string, string> runtimeAssemblyPaths)
+    internal static Report Validate(string baseDirectory, IReadOnlyDictionary<string, string> runtimePaths)
     {
         var markerPath = Path.Combine(baseDirectory, BuildInfoFileName);
         if (!File.Exists(markerPath))
@@ -50,8 +50,8 @@ internal static class ZosApiRuntimeCompatibility
         foreach (var component in Components)
         {
             string runtimePath;
-            if (!runtimeAssemblyPaths.TryGetValue(component, out runtimePath) || string.IsNullOrWhiteSpace(runtimePath) || !File.Exists(runtimePath))
-                throw new FileNotFoundException("The selected OpticStudio installation did not load " + component + ".dll for compatibility validation.", runtimePath);
+            if (!runtimePaths.TryGetValue(component, out runtimePath) || string.IsNullOrWhiteSpace(runtimePath) || !File.Exists(runtimePath))
+                throw new FileNotFoundException("The selected OpticStudio installation did not expose the required compatibility component '" + component + "'.", runtimePath);
 
             var buildVersion = GetBuildComparableVersion(buildInfo, component);
             var runtimeVersion = GetFileComparableVersion(runtimePath);
@@ -74,7 +74,7 @@ internal static class ZosApiRuntimeCompatibility
         if (incompatible.Count > 0)
         {
             throw new NotSupportedException(
-                "The selected OpticStudio ZOS-API is older than the API used to compile this Worker. " +
+                "The selected OpticStudio installation is older than the product/ZOS-API baseline used to compile this Worker. " +
                 "Running a newer-compiled Worker against older ZOS-API interfaces is not supported because API members may be missing. " +
                 string.Join("; ", incompatible) + ". " +
                 "Use a Zemax MCP release built against this OpticStudio version (or an older supported baseline), or select a newer OpticStudio installation.");
@@ -120,8 +120,9 @@ internal static class ZosApiRuntimeCompatibility
 
     private static Version? GetBuildComparableVersion(IReadOnlyDictionary<string, string> buildInfo, string component)
     {
-        // ProductVersion is the best indication of the OpticStudio release.
-        // Some CLR assembly identities remain stable across product releases.
+        // OpticStudio.exe ProductVersion is the primary product-release anchor.
+        // DLL Product/FileVersion values are retained as secondary cross-checks;
+        // CLR assembly identities may remain stable across product releases.
         foreach (var suffix in new[] { "productVersion", "fileVersion", "assemblyVersion" })
         {
             string value;
@@ -144,7 +145,7 @@ internal static class ZosApiRuntimeCompatibility
         }
         catch
         {
-            // Fall through to CLR assembly identity.
+            // Fall through to CLR assembly identity for managed ZOS DLLs.
         }
 
         try { return AssemblyName.GetAssemblyName(path).Version; }
