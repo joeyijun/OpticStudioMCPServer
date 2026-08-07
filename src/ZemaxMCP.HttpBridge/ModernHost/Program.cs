@@ -7,6 +7,8 @@ using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Protocol;
 using Serilog;
 using ZemaxMCP.Rpc;
+using ZemaxMCP.ToolManifest;
+using ZemaxMCP.Toolsets;
 
 namespace ZemaxMCP.HttpBridge.ModernHost;
 
@@ -60,8 +62,25 @@ internal static class Program
                     // legacy stateful initialization support when required.
                     transport.Stateless = true;
                 })
-                .WithListToolsHandler(async (_, cancellationToken) =>
-                    await workerClient.ListToolsAsync(cancellationToken).ConfigureAwait(false))
+                .WithListToolsHandler(async (_, _) =>
+                {
+                    // Tool discovery is a Host-only operation. It must remain
+                    // available even when OpticStudio, ZOS-API, or the Worker
+                    // process is unavailable.
+                    await Task.CompletedTask.ConfigureAwait(false);
+                    return new ListToolsResult
+                    {
+                        Tools = StaticToolManifest.All
+                            .Where(entry => ToolsetCatalog.IsToolAllowed(options.Toolset, entry.Name))
+                            .Select(entry => new Tool
+                            {
+                                Name = entry.Name,
+                                Description = entry.Description,
+                                InputSchema = entry.InputSchema
+                            })
+                            .ToList()
+                    };
+                })
                 .WithCallToolHandler(async (request, cancellationToken) =>
                 {
                     var clientId = ResolveControlIdentity(request);
