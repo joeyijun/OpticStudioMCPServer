@@ -91,11 +91,9 @@ For each public tool, review the following contract:
 7. **Readback** — mutating tools should return the value read back from OpticStudio where possible rather than merely echoing requested input.
 8. **Version compatibility** — optional/newer ZOS-API members need explicit fallback/warning behavior rather than an unexplained runtime binder failure.
 
-## 5. Current Stage A/B fixes
+## 5. Current functional review fixes
 
-The first pass identified and corrected several release-relevant issues.
-
-### System/session
+### Stage A — System/session
 
 - Worker startup is the single owner of `ZOSAPI_Initializer.Initialize()` after private-contract negotiation. `ZemaxSession.ConnectCore()` now owns only application connection/reconnection and no longer repeats global ZOS-API initialization.
 - `zemax_connect` normalizes standalone instance IDs to `0`, rejects negative extension IDs, and propagates cancellation; irrelevant standalone `instanceId` values can no longer cause a false reconnect target change.
@@ -103,21 +101,30 @@ The first pass identified and corrected several release-relevant issues.
 - `zemax_new_system` no longer records a second HighImpact `NewSystem` operation merely to read the resulting surface count; readback uses `GetSystem`.
 - `zemax_open_file` validates and normalizes the path, propagates cancellation, and records post-open inspection as `GetSystem` rather than a duplicate OpenFile operation.
 - `zemax_save_file` treats the Zemax file as the authoritative save result. A constraint-sidecar failure is reported as a warning after a successful lens save instead of falsely reporting that the lens file failed to save.
-- Quick Focus and Scale Lens now accept only the documented criterion/unit vocabularies rather than numeric enum strings and propagate cancellation to the session boundary.
+- Quick Focus and Scale Lens accept only the documented criterion/unit vocabularies rather than numeric enum strings and propagate cancellation to the session boundary.
 
-### Sequential editing
+### Stage B — Sequential editing
 
-- `zemax_set_surface` now allows explicit empty strings to clear material/comment values, explicit `false` to clear stop status, and explicit `false` to return radius/thickness/conic solves to Fixed. Omission still means leave unchanged.
+- `zemax_set_surface` allows explicit empty strings to clear material/comment values, explicit `false` to clear stop status, and explicit `false` to return radius/thickness/conic solves to Fixed. Omission still means leave unchanged.
 - `zemax_set_surface` rejects contradictory thickness bounds and propagates cancellation to the session dispatcher.
 - `zemax_set_surface_solve` validates finite numeric inputs, pupil zone `0..1`, non-negative pickup columns, positive supplied F-number, and pickup/reference surface ranges before applying a solve; cancellation is propagated.
 - `zemax_set_extra_data` rejects non-positive XDAT cells and NaN/infinite values in single and batch writes before touching cells; cancellation is propagated.
-- `zemax_set_surface_parameter` validates PARM `1..20` and finite values before access. Pure read mode now uses the explicitly ReadOnly `GetSurfaceParameter` execution command instead of triggering a HighImpact SetSurfaceParameter snapshot.
+- `zemax_set_surface_parameter` validates PARM `1..20` and finite values before access. Pure read mode uses the explicitly ReadOnly `GetSurfaceParameter` execution command instead of triggering a HighImpact SetSurfaceParameter snapshot.
 - `zemax_set_surface_type` keeps `listTypes=true` only as a compatibility path and returns the static enum before entering the HighImpact session operation. Actual mutation accepts only named enum members, not numeric enum strings.
 - `zemax_set_surface_aperture` validates the documented aperture vocabulary and finite/radius constraints before entering the mutation path; getter and setter propagate cancellation.
-- Field, wavelength, system-aperture, and vignetting operations now propagate cancellation through the session dispatcher.
-- Polarization method selection now accepts only `XAxisMethod`, `YAxisMethod`, or `ZAxisMethod`, preventing undocumented numeric enum values from passing `Enum.TryParse`.
+- Field, wavelength, system-aperture, and vignetting operations propagate cancellation through the session dispatcher.
+- Polarization method selection accepts only `XAxisMethod`, `YAxisMethod`, or `ZAxisMethod`, preventing undocumented numeric enum values from passing `Enum.TryParse`.
 
-These fixes still require the live acceptance pass on at least one supported OpticStudio installation before the release candidate is promoted.
+### Stage C — Read-only analysis (in progress)
+
+- `zemax_ray_trace` and `zemax_ray_trace_extended` validate normalized Hx/Hy/Px/Py in `[-1,1]`, wavelength and surface ranges, propagate cancellation, and report success only when the ray-trace API succeeds with error code zero.
+- `zemax_spot_diagram` no longer inserts temporary RSCE/RSRE rows into the user's Merit Function Editor. It evaluates the operands with `IMeritFunctionEditor.GetOperandValue`, keeping the ReadOnly tool side-effect free even when analysis fails. Field normalization now follows rectangular versus radial field normalization semantics.
+- `zemax_rms_spot` likewise uses `GetOperandValue` for RSCE/RSRE/RSCH/RSRH instead of temporary MFE rows, validates normalized field coordinates/reference/wavelength, and propagates cancellation.
+- `zemax_fft_mtf` rejects invalid frequency/wavelength/sampling values instead of silently falling back to default sampling. Empty/unparsable analysis text is an explicit failure rather than a successful empty result.
+- `zemax_fft_psf` rejects invalid named sampling/output/type settings rather than silently retaining defaults, validates field/wavelength/surface/image-delta values, checks result/grid validity, propagates cancellation, and reports version-sensitive optional-setting/text-export failures as warnings.
+- `zemax_huygens_psf` applies the same strict enum/range/result contract and warning behavior to Huygens PSF while preserving the typed `IAS_HuygensPsf` settings path.
+
+Stage C is not complete. Text-output parsers and PSF grid semantics are especially dependent on the installed OpticStudio/ZOS-API version and must be exercised on a licensed test machine before release.
 
 ## 6. Release gate
 
@@ -127,6 +134,6 @@ A build is release-ready only when all of the following are true:
 - the live 2026-07-28 verifier passes against a licensed OpticStudio installation;
 - safety verification passes in the intended release mode(s);
 - Host/Worker RPC version and manifest fingerprint agree in live health;
-- no P0/P1 findings remain in the System/session and Sequential-editing review;
+- no P0/P1 findings remain in every functional review stage declared complete for the release;
 - the release ZIP/update signature and rollback checks pass;
 - the tested OpticStudio version(s) are recorded in the release notes.
