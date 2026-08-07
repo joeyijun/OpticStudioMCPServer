@@ -4,10 +4,12 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- MCP SDK -->
-    <PackageVersion Include="ModelContextProtocol" Version="1.4.1" />
+    <!-- v2 adds the stateless 2026-07-28 protocol while retaining legacy
+         initialize/session compatibility for 2025-era clients. -->
+    <PackageVersion Include="ModelContextProtocol" Version="2.0.0-rc.2" />
 
     <!-- .NET Extensions -->
-    <!-- Keep direct references aligned with ModelContextProtocol 1.4.1's net48 runtime. -->
+    <!-- Keep direct references aligned with the ModelContextProtocol net48 runtime. -->
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.7" />
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.7" />

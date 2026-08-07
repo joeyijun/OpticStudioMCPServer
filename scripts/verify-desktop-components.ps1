@@ -85,8 +85,8 @@ $bridgeSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\Progr
 if ($bridgeSource -notmatch 'EnvironmentVariables\.Remove\("ZEMAX_MCP_TOKEN"\)') {
   throw "The ZOS-API subprocess must not inherit the HTTP access token."
 }
-if ($bridgeSource -notmatch 'NamedPipeClientStream' -or $bridgeSource -notmatch 'ToolsetPolicy') {
-  throw "The Host must isolate the Worker behind a named pipe and enforce the selected toolset policy."
+if ($bridgeSource -notmatch 'NamedPipeServerStream' -or $bridgeSource -notmatch 'ToolsetPolicy') {
+  throw "The Host must own the private Worker named-pipe server and enforce the selected toolset policy."
 }
 
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("ZemaxMCP-desktop-test-" + [guid]::NewGuid().ToString("N"))

@@ -160,9 +160,13 @@ internal sealed class StdioMcpBridge : IDisposable
     private const int MaxRequestBytes = 1024 * 1024;
     private const int MaxTrackedClients = 20;
     private const string DefaultMcpProtocolVersion = "2025-03-26";
+    private const string LegacyMcpProtocolVersion = "2025-11-25";
+    private const string StatelessMcpProtocolVersion = "2026-07-28";
     private static readonly HashSet<string> SupportedMcpProtocolVersions = new HashSet<string>(StringComparer.Ordinal)
     {
-        DefaultMcpProtocolVersion
+        DefaultMcpProtocolVersion,
+        LegacyMcpProtocolVersion,
+        StatelessMcpProtocolVersion
     };
     private static readonly TimeSpan ClientSessionIdleTimeout = TimeSpan.FromMinutes(15);
     // An initialize response is the only point at which a provisional session
@@ -178,6 +182,9 @@ internal sealed class StdioMcpBridge : IDisposable
     private readonly SemaphoreSlim _stdinWriteLock = new SemaphoreSlim(1, 1);
     private readonly object _stateLock = new object();
     private readonly Dictionary<string, ClientActivity> _clients = new Dictionary<string, ClientActivity>(StringComparer.Ordinal);
+    // 2026-07-28 has no MCP session.  Keep request-observability and exclusive
+    // OpticStudio control separate: neither is represented by Mcp-Session-Id.
+    private readonly Dictionary<string, ModernClientActivity> _modernClients = new Dictionary<string, ModernClientActivity>(StringComparer.Ordinal);
     private readonly Dictionary<string, ActiveRequest> _activeOperations = new Dictionary<string, ActiveRequest>(StringComparer.Ordinal);
     private readonly Dictionary<string, JobActivity> _jobs = new Dictionary<string, JobActivity>(StringComparer.Ordinal);
     private readonly Dictionary<string, ResponseWaiter> _responseWaiters = new Dictionary<string, ResponseWaiter>(StringComparer.Ordinal);
@@ -208,6 +215,7 @@ internal sealed class StdioMcpBridge : IDisposable
     private int _queuedRequests;
     private int _hardRecoveryCount;
     private int _remainingTestInitializeWriteFailures;
+    private OpticStudioControlLease? _controlLease;
     private bool _disposed;
 
     public StdioMcpBridge(BridgeOptions options)
@@ -479,6 +487,7 @@ internal sealed class StdioMcpBridge : IDisposable
             _lastServerError = error;
             _consecutiveServerFailures++;
             _clients.Clear(); // Force HTTP clients to initialize again after recovery.
+            _controlLease = null; // The interrupted operation no longer owns the restarted Worker.
         }
         Log.Error("{Error} Automatic recovery will be attempted.", error);
         FailResponseWaiters(process, new EndOfStreamException(error));
@@ -618,6 +627,11 @@ internal sealed class StdioMcpBridge : IDisposable
             var request = await ReadRequestAsync(context.Request).ConfigureAwait(false);
             var json = JObject.Parse(request);
             var now = DateTimeOffset.UtcNow;
+            if (IsStatelessProtocolRequest(context, json))
+            {
+                await HandleStatelessAsync(context, request, json, now).ConfigureAwait(false);
+                return;
+            }
             var method = json["method"]?.ToString() ?? "unknown";
             var id = json["id"];
             var isClientResponse = IsJsonRpcResponse(json);
@@ -849,6 +863,300 @@ internal sealed class StdioMcpBridge : IDisposable
         }
     }
 
+    private static bool IsStatelessProtocolRequest(HttpListenerContext context, JObject request)
+    {
+        var bodyVersion = request["params"]?["_meta"]?["io.modelcontextprotocol/protocolVersion"]?.ToString();
+        return string.Equals(context.Request.Headers["MCP-Protocol-Version"], StatelessMcpProtocolVersion, StringComparison.Ordinal) ||
+               string.Equals(bodyVersion, StatelessMcpProtocolVersion, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Handles the 2026 stateless protocol at the HTTP boundary.  The Worker
+    /// still owns the one STA OpticStudio session, but its transport lifecycle
+    /// is deliberately not used as the lease for that session.
+    /// </summary>
+    private async Task HandleStatelessAsync(HttpListenerContext context, string requestText, JObject request, DateTimeOffset now)
+    {
+        SseResponseStream? sse = null;
+        string? operationId = null;
+        var operationReleased = false;
+        var operationOwnershipTransferredToRecovery = false;
+        try
+        {
+            if (!TryValidateStatelessRequest(context, request, out var method, out var client, out var validationError))
+            {
+                await TryWriteRpcErrorAsync(context, -32020, validationError, HttpStatusCode.BadRequest).ConfigureAwait(false);
+                return;
+            }
+            if (!AcceptsStatelessMcpResponse(context.Request.Headers["Accept"]))
+            {
+                await TryWriteRpcErrorAsync(context, -32020,
+                    "2026-07-28 requests must accept both application/json and text/event-stream.", HttpStatusCode.BadRequest).ConfigureAwait(false);
+                return;
+            }
+
+            var id = request["id"];
+            if (id == null || id.Type == JTokenType.Null)
+            {
+                await TryWriteRpcErrorAsync(context, -32600,
+                    "The 2026-07-28 Streamable HTTP transport accepts JSON-RPC requests, not client notifications or responses.", HttpStatusCode.BadRequest).ConfigureAwait(false);
+                return;
+            }
+            if (method.Equals("initialize", StringComparison.OrdinalIgnoreCase))
+            {
+                await TryWriteRpcErrorAsync(context, -32601,
+                    "initialize is a legacy MCP lifecycle method. Use server/discover or send a self-describing 2026-07-28 request.", HttpStatusCode.NotFound).ConfigureAwait(false);
+                return;
+            }
+
+            var clientId = GetStatelessClientId(client, context);
+            TouchStatelessClient(clientId, client, method, request, now);
+            if (method.Equals("server/discover", StringComparison.OrdinalIgnoreCase))
+            {
+                await WriteMcpJsonAsync(context, BuildDiscoverResponse(id), sessionId: null).ConfigureAwait(false);
+                return;
+            }
+            if (method.Equals("tools/call", StringComparison.OrdinalIgnoreCase) &&
+                !ToolsetPolicy.IsToolAllowed(_options.ToolsetProfile, request["params"]?["name"]?.ToString()))
+            {
+                await TryWriteRpcErrorAsync(context, -32601,
+                    "This tool is not enabled by the selected Launcher run configuration.", HttpStatusCode.Forbidden).ConfigureAwait(false);
+                return;
+            }
+            if (RequiresOpticStudioControlLease(method) && !TryAcquireOrTouchControlLease(clientId, client, now, out var leaseError))
+            {
+                await TryWriteRpcErrorAsync(context, -32002, leaseError, HttpStatusCode.Conflict).ConfigureAwait(false);
+                return;
+            }
+
+            operationId = BeginOperation(method, request, clientId, now);
+            if (ShouldUseSse(context.Request.Headers["Accept"]))
+            {
+                var candidateSse = new SseResponseStream(context, sessionId: null);
+                if (_options.TestFailSseOpen) throw new IOException("Injected SSE-open failure for protocol regression verification.");
+                await candidateSse.OpenAsync().ConfigureAwait(false);
+                sse = candidateSse;
+                RegisterSseStream(operationId, sse);
+            }
+
+            Interlocked.Increment(ref _activeRequests);
+            var ownsRequestLock = false;
+            string? response = null;
+            var releaseRequestLock = true;
+            try
+            {
+                await WaitForRequestExecutionLockAsync().ConfigureAwait(false);
+                ownsRequestLock = true;
+                if (!IsServerRunning()) StartServer(isRestart: true);
+                var server = _server ?? throw new InvalidOperationException("The MCP Worker is not running.");
+                var responseTask = RegisterResponseWaiter(id, server, operationId, clientId, isStateless: true);
+                await WriteToServerAsync(server, requestText).ConfigureAwait(false);
+                response = await ReadResponseWithTimeoutAsync(responseTask, server, operationId).ConfigureAwait(false);
+            }
+            catch (BridgeRequestTimeoutException ex) when (ex.ResponseIsStillDraining)
+            {
+                releaseRequestLock = false;
+                operationOwnershipTransferredToRecovery = true;
+                throw;
+            }
+            finally
+            {
+                if (releaseRequestLock)
+                {
+                    EndOperation(operationId);
+                    operationReleased = true;
+                    if (ownsRequestLock) _requestExecutionLock.Release();
+                }
+                Interlocked.Decrement(ref _activeRequests);
+            }
+
+            response = ToolsetPolicy.FilterToolsListResponse(_options.ToolsetProfile, method, response);
+            if (sse != null)
+                await WriteSseWithTimeoutAsync(sse, () => sse.WriteMessageAsync(response)).ConfigureAwait(false);
+            else
+                await WriteMcpJsonAsync(context, response, sessionId: null).ConfigureAwait(false);
+        }
+        catch (BridgeRequestTimeoutException ex)
+        {
+            Log.Error(ex, "Stateless MCP request timed out; hard recovery is pending if the Worker remains unresponsive");
+            if (sse != null) await WriteSseWithTimeoutAsync(sse, () => sse.WriteRpcErrorAsync(-32001, ex.Message)).ConfigureAwait(false);
+            else await TryWriteRpcErrorAsync(context, -32001, ex.Message, HttpStatusCode.GatewayTimeout).ConfigureAwait(false);
+        }
+        catch (BridgeRequestQueueFullException ex)
+        {
+            if (sse != null) await WriteSseWithTimeoutAsync(sse, () => sse.WriteRpcErrorAsync(-32003, ex.Message)).ConfigureAwait(false);
+            else await TryWriteRpcErrorAsync(context, -32003, ex.Message, (HttpStatusCode)429).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Stateless HTTP MCP request failed");
+            if (sse != null) await WriteSseWithTimeoutAsync(sse, () => sse.WriteRpcErrorAsync(-32603, "Zemax MCP bridge error")).ConfigureAwait(false);
+            else await TryWriteRpcErrorAsync(context, -32603, "Zemax MCP bridge error", HttpStatusCode.InternalServerError).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (!operationReleased && !operationOwnershipTransferredToRecovery && operationId != null)
+                EndOperation(operationId);
+            if (sse != null)
+            {
+                UnregisterSseStream(sse);
+                await sse.CloseAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    private bool TryValidateStatelessRequest(HttpListenerContext context, JObject request, out string method, out ModernClientIdentity client, out string error)
+    {
+        method = request["method"]?.ToString() ?? string.Empty;
+        client = default!;
+        error = string.Empty;
+        var parameters = request["params"] as JObject;
+        var meta = parameters?["_meta"] as JObject;
+        var bodyVersion = meta?["io.modelcontextprotocol/protocolVersion"]?.ToString();
+        var headerVersion = context.Request.Headers["MCP-Protocol-Version"]?.Trim();
+        if (!string.Equals(headerVersion, StatelessMcpProtocolVersion, StringComparison.Ordinal) ||
+            !string.Equals(bodyVersion, StatelessMcpProtocolVersion, StringComparison.Ordinal))
+        {
+            error = "Header mismatch: MCP-Protocol-Version and params._meta.io.modelcontextprotocol/protocolVersion must both be 2026-07-28.";
+            return false;
+        }
+        if (string.IsNullOrWhiteSpace(method))
+        {
+            error = "Header mismatch: Mcp-Method cannot be validated because the request body has no method.";
+            return false;
+        }
+        if (!HeaderMatches(context.Request.Headers["Mcp-Method"], method))
+        {
+            error = "Header mismatch: Mcp-Method must match the JSON-RPC method.";
+            return false;
+        }
+        var bodyName = method.Equals("tools/call", StringComparison.Ordinal) || method.Equals("prompts/get", StringComparison.Ordinal)
+            ? parameters?["name"]?.ToString()
+            : method.Equals("resources/read", StringComparison.Ordinal) ? parameters?["uri"]?.ToString()
+            : null;
+        if (bodyName != null && !HeaderMatches(context.Request.Headers["Mcp-Name"], bodyName))
+        {
+            error = "Header mismatch: Mcp-Name must match the requested tool, resource, or prompt.";
+            return false;
+        }
+        var clientInfo = meta?["io.modelcontextprotocol/clientInfo"] as JObject;
+        var capabilities = meta?["io.modelcontextprotocol/clientCapabilities"];
+        var name = clientInfo?["name"]?.ToString();
+        var version = clientInfo?["version"]?.ToString();
+        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(version) || capabilities == null)
+        {
+            error = "2026-07-28 requests must include clientInfo and clientCapabilities in params._meta.";
+            return false;
+        }
+        client = new ModernClientIdentity(name!, version!);
+        return true;
+    }
+
+    private static bool HeaderMatches(string? rawHeader, string bodyValue)
+    {
+        if (string.IsNullOrWhiteSpace(rawHeader)) return false;
+        var headerValue = rawHeader!.Trim();
+        if (headerValue.StartsWith("=?base64?", StringComparison.Ordinal) && headerValue.EndsWith("?=", StringComparison.Ordinal))
+        {
+            try { headerValue = Encoding.UTF8.GetString(Convert.FromBase64String(headerValue.Substring(9, headerValue.Length - 11))); }
+            catch { return false; }
+        }
+        return string.Equals(headerValue, bodyValue, StringComparison.Ordinal);
+    }
+
+    private static bool AcceptsStatelessMcpResponse(string? accept)
+    {
+        if (string.IsNullOrWhiteSpace(accept)) return false;
+        var values = accept!.Split(',').Select(value => value.Trim().Split(';')[0]).ToArray();
+        return values.Any(value => value.Equals("application/json", StringComparison.OrdinalIgnoreCase) || value == "*/*") &&
+               values.Any(value => value.Equals("text/event-stream", StringComparison.OrdinalIgnoreCase) || value == "*/*");
+    }
+
+    private static bool RequiresOpticStudioControlLease(string method) =>
+        !method.Equals("server/discover", StringComparison.OrdinalIgnoreCase) &&
+        !method.Equals("tools/list", StringComparison.OrdinalIgnoreCase) &&
+        !method.Equals("prompts/list", StringComparison.OrdinalIgnoreCase) &&
+        !method.Equals("resources/list", StringComparison.OrdinalIgnoreCase);
+
+    private string GetStatelessClientId(ModernClientIdentity client, HttpListenerContext context)
+    {
+        var address = context.Request.RemoteEndPoint?.Address.ToString() ?? "unknown";
+        var material = client.Name + "\n" + client.Version + "\n" + address;
+        using (var sha256 = SHA256.Create())
+            return Convert.ToBase64String(sha256.ComputeHash(Encoding.UTF8.GetBytes(material))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    }
+
+    private void TouchStatelessClient(string clientId, ModernClientIdentity client, string method, JObject request, DateTimeOffset now)
+    {
+        var detail = method;
+        if (method.Equals("tools/call", StringComparison.OrdinalIgnoreCase))
+        {
+            var tool = request["params"]?["name"]?.ToString();
+            if (!string.IsNullOrWhiteSpace(tool)) detail += ": " + tool;
+        }
+        lock (_stateLock)
+        {
+            foreach (var expired in _modernClients.Where(pair => now - pair.Value.LastRequestAt > ClientSessionIdleTimeout).Select(pair => pair.Key).ToArray())
+                _modernClients.Remove(expired);
+            if (!_modernClients.TryGetValue(clientId, out var activity))
+            {
+                activity = new ModernClientActivity(client, now);
+                _modernClients[clientId] = activity;
+            }
+            activity.LastRequestAt = now;
+            activity.LastMethod = detail;
+            activity.RequestCount++;
+            _lastRequestAt = now;
+            _lastClient = client.Name;
+        }
+    }
+
+    private bool TryAcquireOrTouchControlLease(string clientId, ModernClientIdentity client, DateTimeOffset now, out string error)
+    {
+        lock (_stateLock)
+        {
+            if (_controlLease != null && now - _controlLease.LastActivity > ClientSessionIdleTimeout && !ClientHasActiveOperation(_controlLease.OwnerClientId))
+                _controlLease = null;
+            if (_controlLease == null)
+            {
+                _controlLease = new OpticStudioControlLease(clientId, client.Name, now);
+                error = string.Empty;
+                return true;
+            }
+            if (!string.Equals(_controlLease.OwnerClientId, clientId, StringComparison.Ordinal))
+            {
+                error = "OpticStudio is currently leased to " + _controlLease.OwnerName + ". Retry after its last activity is older than " + (int)ClientSessionIdleTimeout.TotalMinutes + " minutes.";
+                return false;
+            }
+            _controlLease.LastActivity = now;
+            error = string.Empty;
+            return true;
+        }
+    }
+
+    private bool ClientHasActiveOperation(string clientId) => _activeOperations.Values.Any(operation =>
+        string.Equals(operation.SessionId, clientId, StringComparison.Ordinal));
+
+    private static string BuildDiscoverResponse(JToken id) => new JObject
+    {
+        ["jsonrpc"] = "2.0",
+        ["id"] = id,
+        ["result"] = new JObject
+        {
+            ["resultType"] = "complete",
+            ["supportedVersions"] = new JArray(StatelessMcpProtocolVersion),
+            ["capabilities"] = new JObject { ["tools"] = new JObject(), ["resources"] = new JObject(), ["prompts"] = new JObject() },
+            ["_meta"] = new JObject { ["io.modelcontextprotocol/serverInfo"] = new JObject
+            {
+                ["name"] = "zemax-mcp",
+                ["version"] = typeof(StdioMcpBridge).Assembly.GetName().Version?.ToString(3) ?? "unknown"
+            } },
+            ["instructions"] = "Use tools/list to discover the enabled OpticStudio tool surface. OpticStudio control is leased to one active client at a time.",
+            ["ttlMs"] = 300000,
+            ["cacheScope"] = "public"
+        }
+    }.ToString(Newtonsoft.Json.Formatting.None);
+
     private bool ValidateOrigin(HttpListenerContext context)
     {
         var origin = context.Request.Headers["Origin"];
@@ -922,6 +1230,19 @@ internal sealed class StdioMcpBridge : IDisposable
                     ["protocolVersion"] = x.ProtocolVersion,
                     ["active"] = now - x.LastRequestAt <= TimeSpan.FromMinutes(5)
                 }));
+            var statelessClients = new JArray(_modernClients.Values
+                .OrderByDescending(x => x.LastRequestAt)
+                .Select(x => new JObject
+                {
+                    ["name"] = x.Name,
+                    ["version"] = x.Version,
+                    ["connectedAt"] = x.ConnectedAt.ToString("O"),
+                    ["lastRequestAt"] = x.LastRequestAt.ToString("O"),
+                    ["lastMethod"] = x.LastMethod,
+                    ["requestCount"] = x.RequestCount,
+                    ["protocolVersion"] = StatelessMcpProtocolVersion,
+                    ["active"] = now - x.LastRequestAt <= TimeSpan.FromMinutes(5)
+                }));
             var activeOperations = new JArray(_activeOperations.Values
                 .OrderBy(x => x.StartedAt)
                 .Select(x => new JObject
@@ -956,6 +1277,7 @@ internal sealed class StdioMcpBridge : IDisposable
                 ["transport"] = _options.UseStdioBackend ? "stdio-test" : "private-named-pipe",
                 ["toolsetProfile"] = _options.ToolsetProfile,
                 ["enabledToolDomains"] = new JArray(ToolsetPolicy.EnabledDomains(_options.ToolsetProfile)),
+                ["enabledToolImpacts"] = new JArray(ToolsetPolicy.EnabledImpacts(_options.ToolsetProfile)),
                 ["snapshotDirectory"] = _options.SnapshotDirectory,
                 ["lastSnapshotPath"] = _lastSnapshotPath,
                 ["bridgeStartedAt"] = _startedAt.ToString("O"),
@@ -994,11 +1316,21 @@ internal sealed class StdioMcpBridge : IDisposable
                 ["lastRequestAt"] = _lastRequestAt?.ToString("O"),
                 ["lastClient"] = _lastClient,
                 ["clientCount"] = clients.Count,
+                ["statelessClientCount"] = statelessClients.Count,
                 ["provisionalSessionCount"] = _clients.Values.Count(x => x.IsProvisional),
                 ["activeClientCount"] = _clients.Values.Count(x => now - x.LastRequestAt <= TimeSpan.FromMinutes(5)),
                 ["maxActiveMcpClients"] = _options.MaxActiveMcpClients,
-                ["clientIsolation"] = "single shared OpticStudio session; concurrent MCP clients are rejected",
-                ["clients"] = clients
+                ["clientIsolation"] = "legacy clients use MCP sessions; 2026 clients use a separate exclusive OpticStudio control lease",
+                ["controlLease"] = _controlLease == null ? null : new JObject
+                {
+                    ["ownerClientId"] = _controlLease.OwnerClientId,
+                    ["ownerName"] = _controlLease.OwnerName,
+                    ["acquiredAt"] = _controlLease.AcquiredAt.ToString("O"),
+                    ["lastActivity"] = _controlLease.LastActivity.ToString("O"),
+                    ["idleSeconds"] = Math.Max(0, (long)(now - _controlLease.LastActivity).TotalSeconds)
+                },
+                ["clients"] = clients,
+                ["statelessClients"] = statelessClients
             };
         }
     }
@@ -1017,6 +1349,13 @@ internal sealed class StdioMcpBridge : IDisposable
                 .Select(pair => pair.Key)
                 .ToArray();
             foreach (var key in expired) _clients.Remove(key);
+
+            if (_controlLease != null && now - _controlLease.LastActivity <= ClientSessionIdleTimeout)
+            {
+                rejection = "OpticStudio is currently leased to " + _controlLease.OwnerName + ". Retry after its last activity is older than " + (int)ClientSessionIdleTimeout.TotalMinutes + " minutes.";
+                return false;
+            }
+            if (_controlLease != null) _controlLease = null;
 
             if (_clients.Count >= _options.MaxActiveMcpClients)
             {
@@ -1063,6 +1402,7 @@ internal sealed class StdioMcpBridge : IDisposable
             if (!_clients.TryGetValue(sessionId, out var client) || !client.IsProvisional || !SupportedMcpProtocolVersions.Contains(protocolVersion)) return false;
             client.IsProvisional = false;
             client.ProtocolVersion = protocolVersion;
+            _controlLease = new OpticStudioControlLease(sessionId, client.Name, DateTimeOffset.UtcNow);
             return true;
         }
     }
@@ -1129,6 +1469,8 @@ internal sealed class StdioMcpBridge : IDisposable
                 activity.LastMethod = detail;
                 activity.RequestCount++;
                 _lastClient = activity.Name;
+                if (_controlLease != null && string.Equals(_controlLease.OwnerClientId, sessionId, StringComparison.Ordinal))
+                    _controlLease.LastActivity = now;
             }
         }
     }
@@ -1162,7 +1504,13 @@ internal sealed class StdioMcpBridge : IDisposable
 
     private bool RemoveSession(string sessionId)
     {
-        lock (_stateLock) return _clients.Remove(sessionId);
+        lock (_stateLock)
+        {
+            var removed = _clients.Remove(sessionId);
+            if (removed && _controlLease != null && string.Equals(_controlLease.OwnerClientId, sessionId, StringComparison.Ordinal))
+                _controlLease = null;
+            return removed;
+        }
     }
 
     private bool SessionHasActiveOperation(string sessionId)
@@ -1346,12 +1694,12 @@ internal sealed class StdioMcpBridge : IDisposable
         finally { _stdinWriteLock.Release(); }
     }
 
-    private Task<string> RegisterResponseWaiter(JToken id, Process server, string operationId, string sessionId)
+    private Task<string> RegisterResponseWaiter(JToken id, Process server, string operationId, string sessionId, bool isStateless = false)
     {
         if (!ReferenceEquals(_server, server) || !IsServerRunning())
             throw new InvalidOperationException("The MCP stdio server is no longer available.");
         var key = ResponseKey(id);
-        var waiter = new ResponseWaiter(operationId, sessionId);
+        var waiter = new ResponseWaiter(operationId, sessionId, isStateless);
         lock (_stateLock)
         {
             if (_responseWaiters.ContainsKey(key))
@@ -1399,6 +1747,13 @@ internal sealed class StdioMcpBridge : IDisposable
                     var owner = GetCurrentResponseWaiter();
                     if (IsJsonRpcServerRequest(message))
                     {
+                        if (owner?.IsStateless == true)
+                        {
+                            // 2026-07-28 replaces server-initiated JSON-RPC
+                            // requests with inputRequired results (MRTR).
+                            await RejectUndeliverableServerRequestAsync(server, message["id"]!).ConfigureAwait(false);
+                            continue;
+                        }
                         if (owner == null || !HasSseStream(owner.OperationId))
                         {
                             await RejectUndeliverableServerRequestAsync(server, message["id"]!).ConfigureAwait(false);
@@ -1675,6 +2030,48 @@ internal sealed class StdioMcpBridge : IDisposable
         public string ProtocolVersion { get; set; }
     }
 
+    private sealed class ModernClientActivity
+    {
+        public ModernClientActivity(ModernClientIdentity identity, DateTimeOffset connectedAt)
+        {
+            Name = identity.Name;
+            Version = identity.Version;
+            ConnectedAt = connectedAt;
+            LastRequestAt = connectedAt;
+            LastMethod = "server/discover";
+        }
+
+        public string Name { get; }
+        public string Version { get; }
+        public DateTimeOffset ConnectedAt { get; }
+        public DateTimeOffset LastRequestAt { get; set; }
+        public string LastMethod { get; set; }
+        public long RequestCount { get; set; }
+    }
+
+    private sealed class OpticStudioControlLease
+    {
+        public OpticStudioControlLease(string ownerClientId, string ownerName, DateTimeOffset acquiredAt)
+        {
+            OwnerClientId = ownerClientId;
+            OwnerName = ownerName;
+            AcquiredAt = acquiredAt;
+            LastActivity = acquiredAt;
+        }
+
+        public string OwnerClientId { get; }
+        public string OwnerName { get; }
+        public DateTimeOffset AcquiredAt { get; }
+        public DateTimeOffset LastActivity { get; set; }
+    }
+
+    private sealed class ModernClientIdentity
+    {
+        public ModernClientIdentity(string name, string version) { Name = name; Version = version; }
+        public string Name { get; }
+        public string Version { get; }
+    }
+
     private sealed class ActiveRequest
     {
         public ActiveRequest(string method, string toolName, string? sessionId, DateTimeOffset startedAt)
@@ -1698,15 +2095,17 @@ internal sealed class StdioMcpBridge : IDisposable
 
     private sealed class ResponseWaiter
     {
-        public ResponseWaiter(string operationId, string sessionId)
+        public ResponseWaiter(string operationId, string sessionId, bool isStateless)
         {
             OperationId = operationId;
             SessionId = sessionId;
+            IsStateless = isStateless;
             Completion = new TaskCompletionSource<string>();
         }
 
         public string OperationId { get; }
         public string SessionId { get; }
+        public bool IsStateless { get; }
         public TaskCompletionSource<string> Completion { get; }
     }
 
@@ -1837,6 +2236,7 @@ internal static class ToolsetPolicy
     internal const string FullExpert = ToolsetCatalog.FullExpert;
     internal static string NormalizeProfile(string? profile) => ToolsetCatalog.NormalizeProfile(profile);
     internal static IEnumerable<string> EnabledDomains(string profile) => ToolsetCatalog.EnabledDomains(profile);
+    internal static IEnumerable<string> EnabledImpacts(string profile) => ToolsetCatalog.EnabledImpacts(profile);
     internal static bool IsToolAllowed(string profile, string? toolName) => ToolsetCatalog.IsToolAllowed(profile, toolName);
 
     internal static string FilterToolsListResponse(string profile, string method, string response)

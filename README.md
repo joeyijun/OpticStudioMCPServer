@@ -19,7 +19,7 @@ For the complete one- and two-computer guide, see [Windows Quick Start](docs/QUI
 
 ```mermaid
 flowchart LR
-  A["OpticStudio computer\nInstall.exe → Start-Zemax-MCP.exe"] --> B["ZemaxMCP.Host\nStreamable HTTP, auth, sessions"]
+  A["OpticStudio computer\nInstall.exe → Start-Zemax-MCP.exe"] --> B["ZemaxMCP.Host\nStreamable HTTP, auth, protocol + control lease"]
   B -->|"private Named Pipe"| C["ZemaxMCP.Worker\nsingle STA + ZOS-API"]
   C --> F["Licensed OpticStudio"]
   D["Codex / Claude / Cursor / Kimi / WorkBuddy / Copilot\nlocal or trusted LAN computer"] -->|"HTTP MCP"| B
@@ -32,12 +32,12 @@ For a single computer, the AI client uses the local MCP address. For two compute
 
 - **Graphical install and update** — `Install.exe` installs or updates the per-user application. `Portable-Install.cmd` is available where an organisation blocks the installer executable.
 - **Hardened Host / Worker isolation** — `ZemaxMCP.Host` owns Streamable HTTP, authentication, sessions, client policy, SSE, and audit status. It creates a private Windows named pipe restricted to the current Windows user; `ZemaxMCP.Worker` connects as its client and proves the launched PID plus a random handshake secret before carrying the one STA ZOS-API connection.
-- **Resilient built-in HTTP MCP** — One external AI session per OpticStudio process, bounded queueing, soft timeouts, graceful recovery, and automatic Worker restart prevent a stuck operation from blocking later work forever.
+- **Dual-era built-in HTTP MCP** — Supports legacy session-based 2025 clients and stateless 2026 clients. A separate OpticStudio control lease preserves one safe STA/ZOS-API owner without treating an MCP transport session as device ownership.
 - **Authenticated LAN use** — Every launcher-managed request uses a random Bearer token. LAN listening is refused without a token, browser origins are restricted, and token rotation is one click.
 - **Lens-change safety** — One explicit metadata catalogue drives both the MCP risk display and ZOS-API protection. Read-only mode blocks high-impact operations; in read/write mode, every recognised mutation first saves a timestamped copy of the current lens, while unknown execution commands fail closed as high impact.
-- **Verified, recoverable updates** — Release metadata is RSA-signed, the ZIP size and SHA-256 are checked before extraction, and a separate updater restores the previous installation if replacement fails.
+- **Verified, clean updates** — Release metadata is RSA-signed, the ZIP size and SHA-256 are checked before extraction, and the updater replaces superseded program files while retaining logs and snapshots; it restores the previous installation if replacement fails.
 - **Dedicated ZOS-API thread** — The Worker serializes every connection and tool operation on one long-lived STA thread to respect the COM threading model and avoid cross-thread session access.
-- **Streamable HTTP lifecycle** — The built-in bridge validates MCP response negotiation and negotiated `MCP-Protocol-Version`, supports JSON and multi-message SSE streams, routes server notifications before the final response, preserves a controlled MCP session, and supports `DELETE` session cleanup.
+- **Streamable HTTP lifecycle** — The bridge validates response negotiation and version-specific metadata, supports JSON and request-scoped multi-message SSE, preserves legacy session cleanup where applicable, and never lets an HTTP session stand in for OpticStudio ownership.
 - **Long-job control** — POP, global search, and multistart optimization can return immediately with a job id. Use `zemax_job_status`, `zemax_job_list`, and `zemax_job_cancel` for queue position, live progress, result retrieval, and cooperative cancellation; the launcher also shows the active tool/job and elapsed time.
 - **Per-client live dashboard** — Colour-coded cards distinguish installation, configuration, historical activity, and a real request made within the last five minutes. The launcher health check is excluded from AI activity.
 - **Multi-version OpticStudio detection** — Detects classic Zemax and current `ANSYS Inc\v*` layouts from environment variables, both registry views, uninstall entries, and known Program Files locations. The launcher validates all three ZOS-API assemblies before offering a version.
@@ -50,7 +50,16 @@ The Worker reports its installed assembly version through MCP `serverInfo.versio
 
 The Host starts the Worker through a current-user-only named pipe. The Host is the pipe server, so a Worker cannot reserve the random pipe name first. During startup it verifies the connecting Worker PID and a per-launch random secret before accepting MCP messages. `--worker-startup-timeout-seconds` controls the connection-and-handshake deadline (default **90**, range **10–600**); the Host detects an early Worker exit immediately instead of always waiting for the deadline.
 
-After `initialize`, HTTP clients may send `MCP-Protocol-Version: 2025-03-26` on subsequent session requests. The bridge validates it against the negotiated version and returns HTTP 400 for invalid, unsupported, or mismatched values. Clients that do not yet send the header remain compatible because the bridge uses the version stored in their MCP session.
+### MCP protocol compatibility
+
+The Worker uses the C# MCP SDK 2.0 compatibility layer. The Host supports both protocol eras without conflating their transport state with control of the live optical system:
+
+| Client protocol | HTTP lifecycle | Host ownership rule |
+|---|---|---|
+| `2025-03-26` / `2025-11-25` | Legacy `initialize`, optional `Mcp-Session-Id`, and `DELETE` cleanup. `MCP-Protocol-Version` is checked against the negotiated version. | The initialized legacy client holds the OpticStudio control lease. |
+| `2026-07-28` | Stateless POST requests. Every request carries matching `MCP-Protocol-Version`, `Mcp-Method`, and `_meta` body metadata; tool/resource/prompt requests also carry `Mcp-Name`. `server/discover` is available and no session is minted. | The Host derives a stable client key from authenticated-request metadata and network endpoint, then grants one independent OpticStudio control lease. |
+
+The lease expires after fifteen minutes without activity (unless an operation is still draining) and is cleared when the Worker is restarted. Thus a modern stateless client can use independent POSTs while OpticStudio remains intentionally single-owner, single-STA, and serialized.
 
 ## Connection modes
 
@@ -63,7 +72,7 @@ The server supports the following OpticStudio connection modes:
 
 `zemax_connect` compares both the requested mode and Extension instance ID with the current connection. If they differ, it cleanly disconnects and reconnects to the requested target; `zemax_status` reports the actual active mode. Use the launcher status dashboard to confirm that ZOS-API is loaded and OpticStudio is connected before asking the AI to work on a design.
 
-For inspection-only sessions, enable **Read-only mode** before connecting the AI. In normal read/write mode, automatic lens snapshots are kept under `%LOCALAPPDATA%\ZemaxMCP\snapshots` (up to the newest 100 files). The status details show the active protection mode, snapshot folder, and most recent snapshot created in the current bridge session. One live bridge accepts one external AI-client session at a time; close that client's MCP session (or wait 15 minutes without an active call) before moving the same live lens system to another client.
+For inspection-only sessions, enable **Read-only mode** before connecting the AI. In normal read/write mode, automatic lens snapshots are kept under `%LOCALAPPDATA%\ZemaxMCP\snapshots` (up to the newest 100 files). The status details show the active protection mode, snapshot folder, and most recent snapshot created in the current bridge session. One live bridge has one OpticStudio control lease at a time; close a legacy client's MCP session, or wait 15 minutes without activity, before moving the live lens system to another client.
 
 ## Zemax discovery and license diagnostics
 
@@ -96,13 +105,13 @@ The server exposes a broad tool set. AI clients discover the exact, version-matc
 
 The existing MCP names are intentionally unchanged, so current Codex, Claude, Cursor, and other client configurations continue to work. The Launcher can expose a smaller, task-focused surface. This is enforced by the Host for both `tools/list` and `tools/call`, not merely hidden in the UI.
 
-| Launcher configuration | Enabled domains |
+| Launcher configuration | Enabled domains and impacts |
 |---|---|
-| **基础查看** | System, Analysis, Administration |
-| **顺序成像设计** | System, Sequential editing, Analysis, Polarization, Files, Administration |
-| **非序列与杂散光** | System, Non-sequential, Analysis, Files, Administration |
-| **优化与公差** | System, Sequential editing, Analysis, Optimization, Tolerance, Polarization, Files, Administration |
-| **完整专家模式** | All domains |
+| **View & analyze** | System, Sequential editing, Analysis, Administration — Read-only only |
+| **Sequential design** | System, Sequential editing, Analysis, Polarization, Files, Administration — all impacts |
+| **Non-sequential & stray light** | System, Non-sequential, Analysis, Files, Administration — all impacts |
+| **Optimization & tolerance** | System, Sequential editing, Analysis, Optimization, Tolerance, Polarization, Files, Administration — all impacts |
+| **Full expert** | All domains and impacts |
 
 `zemax_tool_catalog` uses the same shared source of truth and presents the following domains:
 
@@ -119,6 +128,8 @@ The existing MCP names are intentionally unchanged, so current Codex, Claude, Cu
 | **Administration** | Connection, session, and service management. | Verify the Worker connection before starting a task. |
 
 Operations tagged **High impact** by `zemax_tool_catalog` can change lens data, a saved file, or optimization state. Confirm the target system and intended change before calling one. In read-only mode, recognized lens changes are blocked; in read/write mode, recognized ZOS-API mutations create a pre-change lens snapshot. **Caution** operations can alter the active session, connection, or job state. All other catalogue entries are intended for inspection or calculation and are marked **Read-only**.
+
+The **View & analyze** run configuration is a true no-change profile: it composes explicit tool **domains** (`system`, `sequential-editing`, `analysis`, and `administration`) with the explicit **Read-only** impact. It includes inspection such as `zemax_status`, `zemax_tool_catalog`, and `zemax_get_system`, but excludes `zemax_connect`, file operations, background-job control, and every high-impact edit even when a tool's domain would otherwise be available.
 
 A safe default workflow is: inspect the system → make the smallest necessary edit → run an analysis → save or export deliberately. For POP, global search, or multistart optimization, use the returned Job ID with `zemax_job_status` / `zemax_job_cancel` rather than waiting on a long synchronous request.
 
