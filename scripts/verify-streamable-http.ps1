@@ -30,7 +30,17 @@ $initializeWriteFailureProcess = $null
 function Get-Response([scriptblock]$action) {
   try { return & $action }
   catch {
-    if ($_.Exception.Response) { return $_.Exception.Response }
+    if ($_.Exception.Response) {
+      $response = $_.Exception.Response
+      $content = ""
+      try {
+        $reader = [IO.StreamReader]::new($response.GetResponseStream())
+        try { $content = $reader.ReadToEnd() }
+        finally { $reader.Dispose() }
+      } catch { }
+      if ([string]::IsNullOrWhiteSpace($content) -and $_.ErrorDetails -and $_.ErrorDetails.Message) { $content = $_.ErrorDetails.Message }
+      return [PSCustomObject]@{ StatusCode = [int]$response.StatusCode; Headers = $response.Headers; Content = $content }
+    }
     throw
   }
 }
@@ -56,6 +66,9 @@ try {
   if ($init.StatusCode -ne 200 -or $init.Headers["Content-Type"] -notmatch "application/json" -or $init.Content -notmatch 'fake-mcp') { throw "Initialize did not return a JSON MCP response." }
   $session = [string]$init.Headers["Mcp-Session-Id"]
   if ([string]::IsNullOrWhiteSpace($session)) { throw "Initialize did not establish an MCP session." }
+
+  $corsPreflight = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Options -Headers @{ Origin = "http://127.0.0.1:$port"; "Access-Control-Request-Method" = "POST"; "Access-Control-Request-Headers" = "Mcp-Method, Mcp-Name" } }
+  if ($corsPreflight.StatusCode -ne 204 -or $corsPreflight.Headers["Access-Control-Allow-Headers"] -notmatch "Mcp-Method" -or $corsPreflight.Headers["Access-Control-Allow-Headers"] -notmatch "Mcp-Name") { throw "CORS preflight did not allow the required 2026 MCP headers." }
 
   $otherInitialize = $initialize.Replace('"streamable-verifier"', '"zemax-mcp-launcher"')
   $secondClient = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $headers -Body $otherInitialize }
@@ -153,6 +166,13 @@ try {
   $legacyDeleted = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Delete -Headers @{ Authorization = "Bearer streamable-verifier-token"; "Mcp-Session-Id" = $legacySession; "MCP-Protocol-Version" = "2025-11-25" } }
   if ($legacyDeleted.StatusCode -ne 200) { throw "The 2025-11-25 session could not release its OpticStudio lease." }
 
+  $unsupportedLegacyInitialize = $initialize.Replace('2025-03-26', '2025-06-18')
+  $unsupportedLegacyInit = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $headers -Body $unsupportedLegacyInitialize }
+  if ([int]$unsupportedLegacyInit.StatusCode -ne 400 -or $unsupportedLegacyInit.Content -notmatch '"code":-32022' -or $unsupportedLegacyInit.Content -notmatch '"id":1') { throw "An unsupported legacy initialize version was not rejected before Host session registration. status=$($unsupportedLegacyInit.StatusCode), content=$($unsupportedLegacyInit.Content)" }
+  $mismatchedProtocolInitialize = $initialize.Replace('"streamable-verifier"', '"mismatched-protocol"')
+  $mismatchedProtocolInit = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $headers -Body $mismatchedProtocolInitialize }
+  if ([int]$mismatchedProtocolInit.StatusCode -ne 400 -or $mismatchedProtocolInit.Headers["Mcp-Session-Id"] -or $mismatchedProtocolInit.Content -notmatch '"code":-32022') { throw "A Worker protocol mismatch was committed as a legacy Host session." }
+
   $failedInitialize = $initialize.Replace('"streamable-verifier"', '"fail-init"')
   $failed = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $headers -Body $failedInitialize }
   if ($failed.StatusCode -ne 200 -or $failed.Headers["Mcp-Session-Id"] -or $failed.Content -notmatch 'simulated initialize failure') { throw "A failed initialize exposed a provisional MCP session." }
@@ -201,7 +221,7 @@ try {
   # 2026-07-28 is stateless: no initialize and no Mcp-Session-Id. Every POST
   # carries matching body/header metadata, while the Host independently holds
   # the exclusive OpticStudio control lease.
-  $modernMeta = '"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"stateless-verifier","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}}'
+  $modernMeta = '"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"stateless-verifier","version":"1"},"io.modelcontextprotocol/clientCapabilities":{},"io.zemaxmcp/clientInstanceId":"stateless-instance-a"}'
   $discover = '{"jsonrpc":"2.0","id":"discover-1","method":"server/discover","params":{' + $modernMeta + '}}'
   $modernHeaders = @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json, text/event-stream"; "MCP-Protocol-Version" = "2026-07-28"; "Mcp-Method" = "server/discover" }
   $discoverResponse = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $modernHeaders -Body $discover }
@@ -211,15 +231,19 @@ try {
   $modernListResponse = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $modernListHeaders -Body $modernList }
   if ($modernListResponse.StatusCode -ne 200 -or $modernListResponse.Headers["Mcp-Session-Id"] -or $modernListResponse.Content -notmatch '"result"') { throw "A stateless tools/list request was not forwarded without an MCP session." }
   $badModernHeader = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers (@{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json, text/event-stream"; "MCP-Protocol-Version" = "2026-07-28"; "Mcp-Method" = "tools/call" }) -Body $modernList }
-  if ([int]$badModernHeader.StatusCode -ne 400) { throw "A mismatched 2026 Mcp-Method header was accepted." }
+  if ([int]$badModernHeader.StatusCode -ne 400 -or $badModernHeader.Content -notmatch '"code":-32020' -or $badModernHeader.Content -notmatch '"id":"modern-list"') { throw "A mismatched 2026 Mcp-Method header was accepted or lost its JSON-RPC id." }
+  $unknownModernMeta = $modernMeta.Replace('2026-07-28', '2026-12-01')
+  $unknownModern = $modernList.Replace($modernMeta, $unknownModernMeta)
+  $unknownModernResponse = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers (@{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json, text/event-stream"; "MCP-Protocol-Version" = "2026-12-01"; "Mcp-Method" = "tools/list" }) -Body $unknownModern }
+  if ([int]$unknownModernResponse.StatusCode -ne 400 -or $unknownModernResponse.Content -notmatch '"code":-32022' -or $unknownModernResponse.Content -notmatch '"id":"modern-list"') { throw "An unknown modern protocol version incorrectly fell through to the legacy transport." }
   $modernCall = '{"jsonrpc":"2.0","id":"modern-call","method":"tools/call","params":{"name":"zemax_tool_catalog","arguments":{},' + $modernMeta + '}}'
   $modernCallHeaders = @{ Authorization = "Bearer streamable-verifier-token"; Accept = "application/json, text/event-stream"; "MCP-Protocol-Version" = "2026-07-28"; "Mcp-Method" = "tools/call"; "Mcp-Name" = "zemax_tool_catalog" }
   $modernCallResponse = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $modernCallHeaders -Body $modernCall }
   if ($modernCallResponse.StatusCode -ne 200 -or $modernCallResponse.Headers["Mcp-Session-Id"] -or $modernCallResponse.Content -notmatch '"result"') { throw "A stateless tool call did not complete through the OpticStudio lease." }
-  $otherModernMeta = $modernMeta.Replace('stateless-verifier', 'other-stateless-verifier')
+  $otherModernMeta = $modernMeta.Replace('stateless-instance-a', 'stateless-instance-b')
   $otherModernCall = $modernCall.Replace($modernMeta, $otherModernMeta)
   $otherModernCallResponse = Get-Response { Invoke-WebRequest -UseBasicParsing -Uri $url -Method Post -ContentType "application/json" -Headers $modernCallHeaders -Body $otherModernCall }
-  if ([int]$otherModernCallResponse.StatusCode -ne 409) { throw "A second stateless client bypassed the OpticStudio control lease." }
+  if ([int]$otherModernCallResponse.StatusCode -ne 409) { throw "A same-name stateless client with a distinct explicit instance identity bypassed the OpticStudio control lease." }
 
   # Opening an SSE response can fail before request execution starts. Verify that
   # this leaves no permanent active operation/session deletion blocker.
