@@ -2,7 +2,7 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
     <RootNamespace>ZemaxMCP.ToolManifest</RootNamespace>
-    <GeneratedManifestFile>$(IntermediateOutputPath)GeneratedToolManifest.g.cs</GeneratedManifestFile>
+    <GeneratedManifestFile>$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\GeneratedToolManifest.g.cs</GeneratedManifestFile>
     <ToolSourceRoot>$(MSBuildThisFileDirectory)..\ZemaxMCP.Server\Tools</ToolSourceRoot>
     <ManifestGeneratorProject>$(MSBuildThisFileDirectory)..\..\tools\ZemaxMCP.ToolManifestGenerator\ZemaxMCP.ToolManifestGenerator.csproj</ManifestGeneratorProject>
   </PropertyGroup>
