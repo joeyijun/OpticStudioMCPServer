@@ -39,6 +39,13 @@ if ($workerSource -match 'WithStdioServerTransport|WithStreamServerTransport|Add
     $workerTools -match 'ModelContextProtocol|McpServerTool') {
   throw "The Worker must not own an MCP transport."
 }
+if (Test-Path (Join-Path $root "src\ZemaxMCP.Server\Prompts") -or
+    Test-Path (Join-Path $root "src\ZemaxMCP.Server\Resources") -or
+    Test-Path (Join-Path $root "src\ZemaxMCP.Server\appsettings.json") -or
+    $workerProject -match 'Configuration\.Json|System\.Management|Serilog\.Sinks\.Console|Compile Remove="Prompts|appsettings\.json' -or
+    $packages -match 'Microsoft\.Extensions\.Configuration\.Json|System\.Management|Serilog\.Sinks\.Console|System\.Diagnostics\.DiagnosticSource|System\.Buffers|System\.Memory|System\.Numerics\.Vectors|System\.Runtime\.CompilerServices\.Unsafe|PackageVersion Include="Serilog"|PackageVersion Include="Microsoft\.Extensions\.Logging"') {
+  throw "Retired Worker prompt/resource/configuration sources and obsolete direct package pins must not return."
+}
 if ($workerRpc -notmatch 'ZemaxRpcProtocol\.InvokeTool' -or $workerRpc -notmatch 'CancellationTokenSource' -or
     $workerRpc -notmatch 'WorkerToolRegistry' -or $workerRpc -notmatch 'SemaphoreSlim _executionGate' -or
     $workerRpc -notmatch 'StaticToolManifest\.IsAllowed') {
