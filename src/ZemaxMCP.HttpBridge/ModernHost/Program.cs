@@ -13,7 +13,7 @@ using ZemaxMCP.Toolsets;
 namespace ZemaxMCP.HttpBridge.ModernHost;
 
 /// <summary>
-/// Public product boundary.  ModelContextProtocol.AspNetCore owns HTTP,
+/// Public product boundary. ModelContextProtocol.AspNetCore owns HTTP,
 /// Streamable HTTP, negotiation, SSE and protocol compatibility; this project
 /// contains no hand-written MCP JSON-RPC dispatcher.
 /// </summary>
@@ -39,8 +39,6 @@ internal static class Program
         {
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = Array.Empty<string>() });
             builder.WebHost.UseUrls("http://" + options.Host + ":" + options.Port);
-            // Host filtering consumes this standard ASP.NET Core setting. It
-            // is intentionally never the framework's permissive "*" default.
             builder.WebHost.UseSetting("AllowedHosts", string.Join(";", options.AllowedHosts));
             builder.Host.UseSerilog();
             builder.Services.AddSingleton(options);
@@ -58,20 +56,21 @@ internal static class Program
                 })
                 .WithHttpTransport(transport =>
                 {
-                    // The SDK accepts modern stateless requests and retains
-                    // legacy stateful initialization support when required.
                     transport.Stateless = true;
                 })
                 .WithListToolsHandler(async (_, _) =>
                 {
-                    // Tool discovery is a Host-only operation. It must remain
-                    // available even when OpticStudio, ZOS-API, or the Worker
-                    // process is unavailable.
+                    // Discovery is entirely Host-owned. It neither starts nor
+                    // requires the Worker/ZOS-API process. Read-only mode also
+                    // narrows discovery itself so advertised tools match the
+                    // execution policy rather than failing only at invocation.
                     await Task.CompletedTask.ConfigureAwait(false);
                     return new ListToolsResult
                     {
                         Tools = StaticToolManifest.All
-                            .Where(entry => ToolsetCatalog.IsToolAllowed(options.Toolset, entry.Name))
+                            .Where(entry =>
+                                ToolsetCatalog.IsToolAllowed(options.Toolset, entry.Name) &&
+                                (!options.ReadOnly || ToolsetCatalog.GetImpact(entry.Name) == ToolsetCatalog.ToolImpact.ReadOnly))
                             .Select(entry => new Tool
                             {
                                 Name = entry.Name,
@@ -106,10 +105,6 @@ internal static class Program
                     context.Response.Headers.WWWAuthenticate = "Bearer";
                     return;
                 }
-                // A single shared launcher token is authentication, not a
-                // client identity. Keep the token profile distinct so leases
-                // can fall back to client-info + remote endpoint. Per-client
-                // tokens can later supply a non-shared profile here.
                 var claims = new[]
                 {
                     new Claim("zemax-mcp-auth-profile", string.IsNullOrWhiteSpace(options.AccessToken) ? "local" : "shared-token"),
