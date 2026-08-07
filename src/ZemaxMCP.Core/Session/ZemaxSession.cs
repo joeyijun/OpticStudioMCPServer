@@ -102,23 +102,14 @@ public class ZemaxSession : IZemaxSession
             _logger.LogInformation("ZEMAX_ROOT configured: {Configured}", !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ZEMAX_ROOT")));
             _logger.LogInformation("Ansys license environment configured: {Configured}", !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ANSYSLMD_LICENSE_FILE")));
 
-            // Initialize ZOSAPI
-            var zemaxRoot = Environment.GetEnvironmentVariable("ZEMAX_ROOT");
-            bool isInitialized = string.IsNullOrWhiteSpace(zemaxRoot)
-                ? ZOSAPI_NetHelper.ZOSAPI_Initializer.Initialize()
-                : ZOSAPI_NetHelper.ZOSAPI_Initializer.Initialize(zemaxRoot);
-            if (!isInitialized)
-            {
-                throw new ZemaxConnectionException(
-                    $"Failed to initialize ZOSAPI. Ensure OpticStudio is installed. " +
-                    $"ZEMAX_ROOT='{zemaxRoot ?? "<auto-detect>"}'");
-            }
-
+            // ZOSAPI_NetHelper initialization is owned by the Worker startup
+            // sequence after the authenticated Host/Worker contract handshake.
+            // Re-initializing it on every connect/reconnect obscures lifecycle
+            // ownership and provides no additional protection.
             var connection = new ZOSAPI_Connection();
 
             if (mode == ConnectionMode.Standalone)
             {
-                // Create standalone instance
                 _application = connection.CreateNewApplication();
                 if (_application == null)
                 {
@@ -127,7 +118,6 @@ public class ZemaxSession : IZemaxSession
             }
             else if (mode == ConnectionMode.Extension)
             {
-                // Connect to running instance via Interactive Extension
                 _application = connection.ConnectAsExtension(instanceId);
                 if (_application == null)
                 {
@@ -138,9 +128,6 @@ public class ZemaxSession : IZemaxSession
                 }
             }
 
-            // Both connection modes must yield an application before using it.  Keep a
-            // non-null local reference so a future connection mode cannot accidentally
-            // bypass the checks above and cause a less useful NullReferenceException.
             var application = _application ?? throw new ZemaxConnectionException(
                 $"Failed to create an OpticStudio application for connection mode {mode}.");
 
@@ -164,8 +151,6 @@ public class ZemaxSession : IZemaxSession
                 throw new ZemaxConnectionException("Failed to get primary optical system");
             }
 
-            // Keep status and save operations aligned with the system OpticStudio
-            // actually opened before this MCP process attached to it.
             var systemFile = _primarySystem.SystemFile;
             CurrentFilePath = string.IsNullOrWhiteSpace(systemFile) ? null : systemFile;
             CurrentMode = mode;
@@ -243,7 +228,6 @@ public class ZemaxSession : IZemaxSession
         Func<IOpticalSystem, T> operation,
         CancellationToken cancellationToken = default)
     {
-        // Wait for background connection if still in progress
         if (IsConnecting)
         {
             await WaitForBackgroundConnectAsync(cancellationToken);
@@ -284,7 +268,6 @@ public class ZemaxSession : IZemaxSession
         Action<IOpticalSystem> operation,
         CancellationToken cancellationToken = default)
     {
-        // Wait for background connection if still in progress
         if (IsConnecting)
         {
             await WaitForBackgroundConnectAsync(cancellationToken);
