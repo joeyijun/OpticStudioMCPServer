@@ -93,13 +93,29 @@ For each public tool, review the following contract:
 
 ## 5. Current Stage A/B fixes
 
-The first pass identified and corrected several release-relevant issues:
+The first pass identified and corrected several release-relevant issues.
+
+### System/session
+
+- Worker startup is the single owner of `ZOSAPI_Initializer.Initialize()` after private-contract negotiation. `ZemaxSession.ConnectCore()` now owns only application connection/reconnection and no longer repeats global ZOS-API initialization.
+- `zemax_connect` normalizes standalone instance IDs to `0`, rejects negative extension IDs, and propagates cancellation; irrelevant standalone `instanceId` values can no longer cause a false reconnect target change.
+- `zemax_restart` propagates cancellation through its delay and reconnect path.
+- `zemax_new_system` no longer records a second HighImpact `NewSystem` operation merely to read the resulting surface count; readback uses `GetSystem`.
+- `zemax_open_file` validates and normalizes the path, propagates cancellation, and records post-open inspection as `GetSystem` rather than a duplicate OpenFile operation.
+- `zemax_save_file` treats the Zemax file as the authoritative save result. A constraint-sidecar failure is reported as a warning after a successful lens save instead of falsely reporting that the lens file failed to save.
+- Quick Focus and Scale Lens now accept only the documented criterion/unit vocabularies rather than numeric enum strings and propagate cancellation to the session boundary.
+
+### Sequential editing
 
 - `zemax_set_surface` now allows explicit empty strings to clear material/comment values, explicit `false` to clear stop status, and explicit `false` to return radius/thickness/conic solves to Fixed. Omission still means leave unchanged.
-- `zemax_set_surface` rejects contradictory thickness bounds and propagates Worker cancellation to the session dispatcher.
-- `zemax_new_system` no longer records a second HighImpact `NewSystem` operation merely to read the resulting surface count; readback uses `GetSystem`.
-- `zemax_open_file` validates/normalizes the path, propagates cancellation, and records post-open inspection as `GetSystem` rather than a duplicate OpenFile operation.
-- `zemax_save_file` treats the Zemax file as the authoritative save result. A constraint-sidecar failure is reported as a warning after a successful lens save instead of falsely reporting that the lens file failed to save.
+- `zemax_set_surface` rejects contradictory thickness bounds and propagates cancellation to the session dispatcher.
+- `zemax_set_surface_solve` validates finite numeric inputs, pupil zone `0..1`, non-negative pickup columns, positive supplied F-number, and pickup/reference surface ranges before applying a solve; cancellation is propagated.
+- `zemax_set_extra_data` rejects non-positive XDAT cells and NaN/infinite values in single and batch writes before touching cells; cancellation is propagated.
+- `zemax_set_surface_parameter` validates PARM `1..20` and finite values before access. Pure read mode now uses the explicitly ReadOnly `GetSurfaceParameter` execution command instead of triggering a HighImpact SetSurfaceParameter snapshot.
+- `zemax_set_surface_type` keeps `listTypes=true` only as a compatibility path and returns the static enum before entering the HighImpact session operation. Actual mutation accepts only named enum members, not numeric enum strings.
+- `zemax_set_surface_aperture` validates the documented aperture vocabulary and finite/radius constraints before entering the mutation path; getter and setter propagate cancellation.
+- Field, wavelength, system-aperture, and vignetting operations now propagate cancellation through the session dispatcher.
+- Polarization method selection now accepts only `XAxisMethod`, `YAxisMethod`, or `ZAxisMethod`, preventing undocumented numeric enum values from passing `Enum.TryParse`.
 
 These fixes still require the live acceptance pass on at least one supported OpticStudio installation before the release candidate is promoted.
 
