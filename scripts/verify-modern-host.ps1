@@ -15,12 +15,19 @@ $workerRpc = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Rpc\WorkerRp
 $workerProject = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\ZemaxMCP.Server.csproj")
 $workerRegistry = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Tooling\ZemaxToolAttributes.cs")
 $workerTools = Get-ChildItem (Join-Path $root "src\ZemaxMCP.Server\Tools") -Recurse -Filter *.cs | ForEach-Object { Get-Content -Raw $_.FullName } | Out-String
+$setSurfaceSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Tools\LensData\SetSurfaceTool.cs")
 $manifestProject = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.ToolManifest\ZemaxMCP.ToolManifest.csproj")
 $manifestSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.ToolManifest\ToolManifestEntry.cs")
 $generatorSource = Get-Content -Raw (Join-Path $root "tools\ZemaxMCP.ToolManifestGenerator\Program.cs")
 $privateRpcTest = Get-Content -Raw (Join-Path $root "tests\ZemaxMCP.PrivateRpcTests\Program.cs")
 $schemaTest = Get-Content -Raw (Join-Path $root "tests\ZemaxMCP.PrivateRpcTests\StaticToolManifestAssertions.cs")
+$liveVerifier = Get-Content -Raw (Join-Path $root "scripts\verify-live-mcp.ps1")
 $packages = Get-Content -Raw (Join-Path $root "Directory.Packages.props")
+
+# Parse the manual/live acceptance harness during CI even though the hosted
+# runner cannot execute it against proprietary ZOS-API. This catches broken
+# PowerShell edits before a maintainer reaches the OpticStudio test machine.
+[scriptblock]::Create($liveVerifier) | Out-Null
 
 if ($hostProject -notmatch '<TargetFramework>net10\.0-windows</TargetFramework>' -or
     $hostProject -notmatch 'ModelContextProtocol\.AspNetCore') {
@@ -37,6 +44,9 @@ if ($packages -notmatch 'ModelContextProtocol\.AspNetCore" Version="2\.1\.0"' -o
 if ($hostSource -notmatch 'MapMcp\(' -or $hostSource -notmatch 'WithHttpTransport' -or
     $hostSource -match 'HttpListener|JsonRpcRequest') {
   throw "The Host must use the official ASP.NET Core MCP transport rather than a hand-written HTTP/JSON-RPC dispatcher."
+}
+if ($hostSource -notmatch 'toolset = options\.Toolset') {
+  throw "Structured Host health must report the active toolset so live release verification can interpret the policy-visible catalogue."
 }
 if ($workerSource -match 'WithStdioServerTransport|WithStreamServerTransport|AddMcpServer|host\.RunAsync\(' -or
     $workerRpc -match 'ModelContextProtocol|McpServerTool|RequestContext' -or
@@ -127,8 +137,32 @@ if ($schemaTest -notmatch 'StaticToolManifest\.All\.Count != 126' -or $schemaTes
   throw "Generated manifest regressions must verify count, policy metadata, required parameters, nested records, defaults, and absence of opaque contracts."
 }
 
+# Release-validation contract: modern stateless MCP is the primary live path;
+# legacy initialize is an explicit compatibility probe rather than the default.
+if ($liveVerifier -notmatch '2026-07-28' -or $liveVerifier -notmatch 'MCP-Protocol-Version' -or
+    $liveVerifier -notmatch 'io\.modelcontextprotocol/clientInfo' -or $liveVerifier -notmatch 'io\.zemaxmcp/clientInstanceId' -or
+    $liveVerifier -notmatch 'VerifyLegacyCompatibility' -or $liveVerifier -notmatch '2025-11-25' -or
+    $liveVerifier -match '2024-11-05') {
+  throw "The live release verifier must exercise 2026-07-28 stateless MCP by default and keep 2025-11-25 only as an explicit compatibility probe."
+}
+$listIndex = $liveVerifier.IndexOf('Invoke-ModernMcpRequest -Method "tools/list"', [StringComparison]::Ordinal)
+$healthIndex = $liveVerifier.IndexOf('$health = Get-McpHealth', [StringComparison]::Ordinal)
+if ($listIndex -lt 0 -or $healthIndex -lt 0 -or $listIndex -gt $healthIndex) {
+  throw "Live release verification must exercise Host-only tools/list before the Worker-backed health endpoint."
+}
+
+# First reviewed sequential-editing regression: omitted values preserve state,
+# while explicit false/empty values must be able to clear state in both directions.
+if ($setSurfaceSource -notmatch 'material is not null' -or $setSurfaceSource -notmatch 'surface\.Material = material' -or
+    $setSurfaceSource -notmatch 'comment is not null' -or $setSurfaceSource -notmatch 'surface\.Comment = comment' -or
+    $setSurfaceSource -notmatch 'surface\.IsStop = isStop\.Value' -or $setSurfaceSource -notmatch 'ApplyVariableSolve' -or
+    $setSurfaceSource -notmatch 'MakeSolveFixed\(\)' -or $setSurfaceSource -notmatch 'thicknessMin\.Value > thicknessMax\.Value' -or
+    $setSurfaceSource -notmatch 'CancellationToken cancellationToken' -or $setSurfaceSource -notmatch '\}, cancellationToken\);') {
+  throw "zemax_set_surface must preserve nullable omission semantics while supporting explicit clear/fixed operations and cancellation."
+}
+
 dotnet build (Join-Path $root "src\ZemaxMCP.HttpBridge\ZemaxMCP.HttpBridge.csproj") -c $Configuration --nologo
 if ($LASTEXITCODE -ne 0) { throw "Modern Host build failed." }
 dotnet run --project (Join-Path $root "tests\ZemaxMCP.PrivateRpcTests\ZemaxMCP.PrivateRpcTests.csproj") -c $Configuration
 if ($LASTEXITCODE -ne 0) { throw "Private Host-to-Worker RPC integration verification failed." }
-Write-Host "Modern .NET 10 Host / static manifest / private RPC v3 boundary verification passed."
+Write-Host "Modern .NET 10 Host / static manifest / private RPC v3 / release-verifier contract verification passed."
