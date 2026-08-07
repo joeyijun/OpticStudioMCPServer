@@ -15,7 +15,7 @@ public class RelativeIlluminationTool
 
     [ZemaxTool(Name = "zemax_relative_illumination")]
     [Description("Calculate relative illumination as a function of field angle. Shows how image illumination falls off from the center to the edge of the field, including the effective F/# at each field point.")]
-    public async Task<RelativeIlluminationData> ExecuteAsync()
+    public async Task<RelativeIlluminationData> ExecuteAsync(CancellationToken cancellationToken = default)
     {
         try
         {
@@ -25,11 +25,14 @@ public class RelativeIlluminationTool
                 try
                 {
                     analysis.ApplyAndWaitForCompletion();
+                    var results = analysis.GetResults() ?? throw new InvalidOperationException("Relative Illumination returned no results object.");
 
                     var tempFile = Path.Combine(Path.GetTempPath(), $"zemax_ri_{Guid.NewGuid():N}.txt");
                     try
                     {
-                        analysis.GetResults().GetTextFile(tempFile);
+                        results.GetTextFile(tempFile);
+                        if (!File.Exists(tempFile) || new FileInfo(tempFile).Length == 0)
+                            throw new InvalidOperationException("Relative Illumination produced no text output.");
                         return ParseRelativeIlluminationTextFile(tempFile);
                     }
                     finally
@@ -41,7 +44,7 @@ public class RelativeIlluminationTool
                 {
                     analysis.Close();
                 }
-            });
+            }, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -52,8 +55,7 @@ public class RelativeIlluminationTool
     private static RelativeIlluminationData ParseRelativeIlluminationTextFile(string filePath)
     {
         var lines = File.ReadAllLines(filePath);
-
-        double wavelength = 0;
+        double wavelength = double.NaN;
         string fieldUnits = "";
         var fields = new List<double>();
         var relIll = new List<double>();
@@ -68,21 +70,19 @@ public class RelativeIlluminationTool
             if (trimmed.StartsWith("Wavelength:", StringComparison.OrdinalIgnoreCase))
             {
                 var parts = trimmed.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length >= 2)
-                    double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out wavelength);
+                if (parts.Length < 2 || !double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out wavelength))
+                    throw new FormatException($"Could not parse Relative Illumination wavelength from '{trimmed}'.");
                 continue;
             }
 
             if (trimmed.StartsWith("Field values are in", StringComparison.OrdinalIgnoreCase))
             {
-                var prefix = "Field values are in";
+                const string prefix = "Field values are in";
                 var idx = trimmed.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
-                if (idx >= 0)
-                    fieldUnits = trimmed.Substring(idx + prefix.Length).Trim().TrimEnd('.');
+                if (idx >= 0) fieldUnits = trimmed.Substring(idx + prefix.Length).Trim().TrimEnd('.');
                 continue;
             }
 
-            // Detect column header
             if (trimmed.IndexOf("Field", StringComparison.OrdinalIgnoreCase) >= 0 &&
                 trimmed.IndexOf("Rel. Ill", StringComparison.OrdinalIgnoreCase) >= 0)
             {
@@ -91,18 +91,23 @@ public class RelativeIlluminationTool
             }
 
             if (!inData) continue;
-
             var values = trimmed.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
-            if (values.Length >= 3 &&
-                double.TryParse(values[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double field) &&
-                double.TryParse(values[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double ri) &&
-                double.TryParse(values[2], NumberStyles.Float, CultureInfo.InvariantCulture, out double efn))
-            {
-                fields.Add(field);
-                relIll.Add(ri);
-                effFNum.Add(efn);
-            }
+            if (!double.TryParse(values.FirstOrDefault(), NumberStyles.Float, CultureInfo.InvariantCulture, out double field))
+                continue;
+            if (values.Length < 3 ||
+                !double.TryParse(values[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double ri) ||
+                !double.TryParse(values[2], NumberStyles.Float, CultureInfo.InvariantCulture, out double efn))
+                throw new FormatException($"Could not parse Relative Illumination data row '{trimmed}'.");
+
+            fields.Add(field);
+            relIll.Add(ri);
+            effFNum.Add(efn);
         }
+
+        if (fields.Count == 0)
+            throw new FormatException("Relative Illumination text output contained no parseable data rows.");
+        if (relIll.Count != fields.Count || effFNum.Count != fields.Count)
+            throw new FormatException("Relative Illumination data columns have inconsistent lengths.");
 
         return new RelativeIlluminationData
         {
