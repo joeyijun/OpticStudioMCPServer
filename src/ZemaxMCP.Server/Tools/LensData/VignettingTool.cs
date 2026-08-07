@@ -16,17 +16,17 @@ public sealed class VignettingTool
 
     [ZemaxTool(Name = "zemax_get_vignetting")]
     [Description("Read VDX, VDY, VCX, VCY, and TAN vignetting factors for every sequential field.")]
-    public Task<VignettingResult> GetAsync() => ExecuteAsync("read");
+    public Task<VignettingResult> GetAsync(CancellationToken cancellationToken = default) => ExecuteAsync("read", cancellationToken);
 
     [ZemaxTool(Name = "zemax_set_vignetting")]
     [Description("Ask OpticStudio to calculate and set vignetting factors for all sequential fields. The file is not saved automatically.")]
-    public Task<VignettingResult> SetAsync() => ExecuteAsync("calculate");
+    public Task<VignettingResult> SetAsync(CancellationToken cancellationToken = default) => ExecuteAsync("calculate", cancellationToken);
 
     [ZemaxTool(Name = "zemax_clear_vignetting")]
     [Description("Clear all sequential field vignetting factors. The file is not saved automatically.")]
-    public Task<VignettingResult> ClearAsync() => ExecuteAsync("clear");
+    public Task<VignettingResult> ClearAsync(CancellationToken cancellationToken = default) => ExecuteAsync("clear", cancellationToken);
 
-    private async Task<VignettingResult> ExecuteAsync(string operation)
+    private async Task<VignettingResult> ExecuteAsync(string operation, CancellationToken cancellationToken)
     {
         try
         {
@@ -44,7 +44,7 @@ public sealed class VignettingTool
                             field.VCX.Sanitize(), field.VCY.Sanitize(), field.TAN.Sanitize()));
                     }
                     return new VignettingResult(true, null, operation, fields.Normalization.ToString(), values, system.NeedsSave);
-                });
+                }, cancellationToken);
         }
         catch (Exception ex) { return new VignettingResult(false, ex.Message, operation, "", Array.Empty<FieldVignetting>(), false); }
     }
