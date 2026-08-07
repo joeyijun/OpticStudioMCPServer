@@ -8,7 +8,6 @@ using ModelContextProtocol.Protocol;
 using Serilog;
 using ZemaxMCP.Rpc;
 using ZemaxMCP.ToolManifest;
-using ZemaxMCP.Toolsets;
 
 namespace ZemaxMCP.HttpBridge.ModernHost;
 
@@ -61,16 +60,13 @@ internal static class Program
                 .WithListToolsHandler(async (_, _) =>
                 {
                     // Discovery is entirely Host-owned. It neither starts nor
-                    // requires the Worker/ZOS-API process. Read-only mode also
-                    // narrows discovery itself so advertised tools match the
-                    // execution policy rather than failing only at invocation.
+                    // requires the Worker/ZOS-API process, and it uses exactly
+                    // the same manifest admission rule as tools/call.
                     await Task.CompletedTask.ConfigureAwait(false);
                     return new ListToolsResult
                     {
                         Tools = StaticToolManifest.All
-                            .Where(entry =>
-                                ToolsetCatalog.IsToolAllowed(options.Toolset, entry.Name) &&
-                                (!options.ReadOnly || ToolsetCatalog.GetImpact(entry.Name) == ToolsetCatalog.ToolImpact.ReadOnly))
+                            .Where(entry => StaticToolManifest.IsAllowed(options.Toolset, entry.Name, options.ReadOnly))
                             .Select(entry => new Tool
                             {
                                 Name = entry.Name,
@@ -82,6 +78,24 @@ internal static class Program
                 })
                 .WithCallToolHandler(async (request, cancellationToken) =>
                 {
+                    // Never rely on discovery hiding for authorization. A
+                    // client may call a known tool name directly, so reject it
+                    // here before acquiring a lease or starting the Worker.
+                    if (!StaticToolManifest.IsAllowed(options.Toolset, request.Params.Name, options.ReadOnly))
+                    {
+                        return new CallToolResult
+                        {
+                            Content = new List<ContentBlock>
+                            {
+                                new TextContentBlock
+                                {
+                                    Text = "The selected toolset/read-only policy does not permit " + request.Params.Name + "."
+                                }
+                            },
+                            IsError = true
+                        };
+                    }
+
                     var clientId = ResolveControlIdentity(request);
                     using var call = activity.Begin(clientId, request.Params.Name);
                     using var lease = await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false);
