@@ -208,14 +208,14 @@ if (-not $SkipReadOnlyCalls) {
         if ($result.result.isError -eq $true) { throw "$toolName returned an MCP tool error: $(Get-ToolText $result)" }
         $text = Get-ToolText $result
         if ($text) {
-            try {
-                $toolPayload = $text | ConvertFrom-Json
-                if ($toolPayload.PSObject.Properties.Name -contains "success" -and $toolPayload.success -eq $false) {
-                    throw "$toolName returned success=false: $($toolPayload.error)"
-                }
+            $toolPayload = $null
+            $parsedJson = $true
+            try { $toolPayload = $text | ConvertFrom-Json }
+            catch { $parsedJson = $false }
+            if ($parsedJson -and $toolPayload.PSObject.Properties.Name -contains "success" -and $toolPayload.success -eq $false) {
+                throw "$toolName returned success=false: $($toolPayload.error)"
             }
-            catch [System.Management.Automation.RuntimeException] { throw }
-            catch { Write-Verbose "$toolName returned non-JSON text content; MCP transport result remains valid." }
+            if (-not $parsedJson) { Write-Verbose "$toolName returned non-JSON text content; MCP transport result remains valid." }
         }
         Write-Host "Read-only call OK: $toolName"
     }
