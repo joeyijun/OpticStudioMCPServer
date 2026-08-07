@@ -70,6 +70,7 @@ public class AddOperandTool
             ValidateFinite(data6, nameof(data6));
             if (insertAt < 0)
                 throw new ArgumentOutOfRangeException(nameof(insertAt), "insertAt must be 0 (append) or a positive operand position.");
+            cancellationToken.ThrowIfCancellationRequested();
 
             var enumName = Enum.GetNames(typeof(MeritOperandType))
                 .FirstOrDefault(name => name.Equals(normalizedType, StringComparison.OrdinalIgnoreCase));
@@ -98,6 +99,7 @@ public class AddOperandTool
                 var mfe = system.MFE ?? throw new InvalidOperationException("Merit Function Editor is not available.");
                 if (insertAt > mfe.NumberOfOperands + 1)
                     throw new ArgumentOutOfRangeException(nameof(insertAt), $"insertAt must be 0 or in 1..{mfe.NumberOfOperands + 1}.");
+                cancellationToken.ThrowIfCancellationRequested();
 
                 IMFERow? row = null;
                 try
@@ -119,10 +121,16 @@ public class AddOperandTool
 
                     row.Target = target;
                     row.Weight = weight;
-                    mfe.CalculateMeritFunction();
                     cancellationToken.ThrowIfCancellationRequested();
+                    var merit = mfe.CalculateMeritFunction();
+                    if (double.IsNaN(merit) || double.IsInfinity(merit))
+                        throw new InvalidDataException($"Merit Function became non-finite after adding {enumName}: {merit}.");
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var value = row.Value;
+                    if (double.IsNaN(value) || double.IsInfinity(value))
+                        throw new InvalidDataException($"Added operand {enumName} returned non-finite value {value}.");
 
-                    return new AddOperandResult(true, null, row.OperandNumber, row.Type.ToString(), row.Value,
+                    return new AddOperandResult(true, null, row.OperandNumber, row.Type.ToString(), value,
                         row.Target, row.Weight, operandDef.Description);
                 }
                 catch (Exception original)
@@ -147,6 +155,10 @@ public class AddOperandTool
                     throw;
                 }
             }, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
