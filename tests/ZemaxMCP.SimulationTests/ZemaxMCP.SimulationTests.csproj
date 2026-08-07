@@ -14,6 +14,7 @@
     <Compile Include="..\..\src\ZemaxMCP.Core\Services\GlassCatalog\CatalogExportService.cs" Link="Core\GlassCatalog\CatalogExportService.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Services\GlassCatalog\DispersionCalculator.cs" Link="Core\GlassCatalog\DispersionCalculator.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Services\GlassCatalog\GlassFilterService.cs" Link="Core\GlassCatalog\GlassFilterService.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Compatibility\ZosApiRuntimeCompatibility.cs" Link="Server\ZosApiRuntimeCompatibility.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Services\Jobs\McpJobManager.cs" Link="Server\McpJobManager.cs" />
   </ItemGroup>
 </Project>
