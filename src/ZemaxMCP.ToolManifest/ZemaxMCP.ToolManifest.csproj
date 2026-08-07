@@ -8,7 +8,9 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.Text.Json" />
+    <Compile Include="..\ZemaxMCP.Toolsets\ToolsetCatalog.cs" Link="Toolsets\ToolsetCatalog.cs" />
     <ToolManifestSource Include="$(ToolSourceRoot)\**\*.cs" />
+    <ToolManifestSource Include="..\ZemaxMCP.Toolsets\ToolsetCatalog.cs" />
     <ToolManifestGeneratorSource Include="$(MSBuildThisFileDirectory)..\..\tools\ZemaxMCP.ToolManifestGenerator\**\*.cs" />
     <ToolManifestGeneratorSource Include="$(ManifestGeneratorProject)" />
     <Compile Include="$(GeneratedManifestFile)" Visible="false" />
