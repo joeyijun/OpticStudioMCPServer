@@ -86,11 +86,27 @@ internal static class ZosApiRuntimeCompatibility
     internal static Version? ParseComparableVersion(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
+
+        // Ansys branding commonly uses forms such as "2026 R1.00". Normalize
+        // that to the same scale as legacy Zemax versions (26.1.0.0), so it can
+        // be compared directly with values such as 21.3 or 23.2.
+        var releaseMatch = Regex.Match(value, @"(?<!\d)20(\d{2})\s*R\s*(\d+)(?:\.(\d+))?", RegexOptions.IgnoreCase);
+        if (releaseMatch.Success)
+        {
+            return new Version(
+                ParsePart(releaseMatch.Groups[1]),
+                ParsePart(releaseMatch.Groups[2]),
+                ParsePart(releaseMatch.Groups[3]),
+                0);
+        }
+
         var match = Regex.Match(value, @"(?<!\d)(\d+)(?:\.(\d+))(?:\.(\d+))?(?:\.(\d+))?");
         if (!match.Success) return null;
 
+        var major = ParsePart(match.Groups[1]);
+        if (major >= 2000 && major <= 2099) major -= 2000;
         return new Version(
-            ParsePart(match.Groups[1]),
+            major,
             ParsePart(match.Groups[2]),
             ParsePart(match.Groups[3]),
             ParsePart(match.Groups[4]));
@@ -104,7 +120,9 @@ internal static class ZosApiRuntimeCompatibility
 
     private static Version? GetBuildComparableVersion(IReadOnlyDictionary<string, string> buildInfo, string component)
     {
-        foreach (var suffix in new[] { "fileVersion", "productVersion", "assemblyVersion" })
+        // ProductVersion is the best indication of the OpticStudio release.
+        // Some CLR assembly identities remain stable across product releases.
+        foreach (var suffix in new[] { "productVersion", "fileVersion", "assemblyVersion" })
         {
             string value;
             if (buildInfo.TryGetValue(component + "." + suffix, out value))
@@ -121,7 +139,7 @@ internal static class ZosApiRuntimeCompatibility
         try
         {
             var info = FileVersionInfo.GetVersionInfo(path);
-            var parsed = ParseComparableVersion(info.FileVersion) ?? ParseComparableVersion(info.ProductVersion);
+            var parsed = ParseComparableVersion(info.ProductVersion) ?? ParseComparableVersion(info.FileVersion);
             if (parsed != null) return parsed;
         }
         catch
