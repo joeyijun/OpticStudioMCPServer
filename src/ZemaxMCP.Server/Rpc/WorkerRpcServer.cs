@@ -173,7 +173,10 @@ internal sealed class WorkerRpcServer
             ConnectionMode = session.CurrentMode?.ToString() ?? "not-connected",
             ZosApiAssembly = typeof(ZOSAPI.ZOSAPI_Connection).Assembly.Location,
             OpticStudioDataDirectory = session.ZemaxDataDir,
-            LicenseStatus = session.LicenseStatus ?? "not-validated",
+            CurrentLicenseStatus = session.CurrentLicenseStatus,
+            LastLicenseStatus = session.LastLicenseStatus,
+            LicenseValidForApi = session.LicenseValidForApi,
+            LastConnectionError = session.LastConnectionError,
             SnapshotDirectory = session.SnapshotDirectory,
             LastSnapshotPath = session.LastSnapshotPath,
             Jobs = jobs.List().Select(ToWorkerJobStatus).ToArray()

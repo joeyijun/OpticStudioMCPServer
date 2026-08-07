@@ -8,6 +8,7 @@ $hostOptions = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\Modern
 $rpcClient = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\WorkerRpcClient.cs")
 $workerSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Program.cs")
 $workerRpc = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Rpc\WorkerRpcServer.cs")
+$privateRpcTest = Get-Content -Raw (Join-Path $root "tests\ZemaxMCP.PrivateRpcTests\Program.cs")
 $packages = Get-Content -Raw (Join-Path $root "Directory.Packages.props")
 
 if ($hostProject -notmatch '<TargetFramework>net10\.0-windows</TargetFramework>' -or
@@ -34,7 +35,7 @@ if ($rpcClient -notmatch 'PipeSecurity' -or $rpcClient -notmatch 'ZEMAX_MCP_PIPE
 }
 if ($hostSource -notmatch 'OpticStudioControlLease' -or $hostSource -notmatch 'ResolveControlIdentity' -or
     $hostSource -match 'AllowAnyOrigin\(' -or $hostSource -notmatch 'zemax-mcp-remote-endpoint' -or
-    $hostSource -notmatch 'UseSetting\("AllowedHosts"' -or $hostOptions -notmatch 'allowed-origin') {
+    $hostSource -match 'zemax-mcp-client-name|Mcp-Version' -or $hostSource -notmatch 'UseSetting\("AllowedHosts"' -or $hostOptions -notmatch 'allowed-origin') {
   throw "Control ownership must use an authenticated profile or client-info plus remote endpoint; Host and Origin allow-lists must not be wildcarded."
 }
 if ($rpcClient -notmatch 'HardRecoveryTimeoutSeconds' -or $rpcClient -notmatch 'FaultWorkerConnection' -or
@@ -42,6 +43,10 @@ if ($rpcClient -notmatch 'HardRecoveryTimeoutSeconds' -or $rpcClient -notmatch '
     $rpcClient -notmatch 'RequestWriteTimeoutSeconds' -or $rpcClient -notmatch 'hardDeadline' -or
     $rpcClient -notmatch 'RecoverCancelledOperationAsync') {
   throw "Worker RPC must retain bounded request/cancellation writes, soft cancellation, hard recovery, and one fault-recovery path."
+}
+if ($privateRpcTest -notmatch '2026-07-28' -or $privateRpcTest -notmatch 'io\.modelcontextprotocol/clientInfo' -or
+    $privateRpcTest -notmatch 'Mcp-Method' -or $privateRpcTest -match '"initialize"') {
+  throw "The private RPC E2E test must exercise a stateless 2026 MCP tools/call with request-scoped clientInfo and no initialize step."
 }
 
 dotnet build (Join-Path $root "src\ZemaxMCP.HttpBridge\ZemaxMCP.HttpBridge.csproj") -c $Configuration --nologo

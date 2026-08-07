@@ -59,7 +59,7 @@ Browser Origins are configuration-based, never inferred from an incoming `Host` 
 
 The .NET 10 Host uses `ModelContextProtocol.AspNetCore` 2.1.0, so the upstream SDK owns Streamable HTTP negotiation, protocol compatibility, headers, request IDs, SSE, and future protocol upgrades. The Worker exposes no MCP transport and receives only versioned `command + arguments` RPC envelopes. The current release retains the existing annotated-tool binder inside the Worker as a migration adapter; moving the static tool schemas and native command descriptors fully into the Host is the next architectural step.
 
-The separate OpticStudio control lease expires after fifteen minutes without activity (unless an operation is active). This keeps a live optical system single-owner even when a modern client uses independent stateless requests.
+The separate OpticStudio control lease expires after fifteen minutes without activity (unless an operation is active). This keeps a live optical system single-owner even when a modern client uses independent stateless requests. The lease uses a dedicated authenticated client profile when one is provisioned; otherwise it uses the official request-scoped MCP `clientInfo` together with the remote endpoint. MCP routing headers such as `Mcp-Name` are never treated as client identity.
 
 ## Connection modes
 

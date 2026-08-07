@@ -26,7 +26,10 @@ public class ZemaxSession : IZemaxSession
     public int? CurrentInstanceId { get; private set; }
     public string? CurrentFilePath { get; private set; }
     public string? ZemaxDataDir { get; private set; }
-    public string? LicenseStatus { get; private set; }
+    public string? CurrentLicenseStatus { get; private set; }
+    public string? LastLicenseStatus { get; private set; }
+    public bool? LicenseValidForApi { get; private set; }
+    public string? LastConnectionError { get; private set; }
     public string SnapshotDirectory => _safety.SnapshotDirectory;
     public string? LastSnapshotPath => _safety.LastSnapshotPath;
     public event Action<string>? SnapshotCreated;
@@ -143,7 +146,10 @@ public class ZemaxSession : IZemaxSession
 
             _logger.LogInformation("ZOSAPI Application created. LicenseStatus={Status}, IsValidLicenseForAPI={Valid}",
                 application.LicenseStatus, application.IsValidLicenseForAPI);
-            LicenseStatus = application.LicenseStatus.ToString();
+            CurrentLicenseStatus = application.LicenseStatus.ToString();
+            LastLicenseStatus = CurrentLicenseStatus;
+            LicenseValidForApi = application.IsValidLicenseForAPI;
+            LastConnectionError = null;
 
             if (!application.IsValidLicenseForAPI)
             {
@@ -171,6 +177,7 @@ public class ZemaxSession : IZemaxSession
         }
         catch (Exception ex) when (ex is not ZemaxConnectionException)
         {
+            LastConnectionError = ex.Message;
             _logger.LogError(ex, "Failed to connect to OpticStudio");
             _commandLog.LogError("Connect", ex);
             Cleanup();
@@ -178,6 +185,7 @@ public class ZemaxSession : IZemaxSession
         }
         catch (ZemaxConnectionException ex)
         {
+            LastConnectionError = ex.Message;
             _commandLog.LogError("Connect", ex);
             Cleanup();
             throw;
@@ -392,7 +400,7 @@ public class ZemaxSession : IZemaxSession
 
         CurrentFilePath = null;
         ZemaxDataDir = null;
-        LicenseStatus = null;
+        CurrentLicenseStatus = null;
         CurrentMode = null;
         CurrentInstanceId = null;
     }

@@ -8,7 +8,7 @@ namespace ZemaxMCP.HttpBridge.ModernHost;
 /// </summary>
 internal static class OriginPolicy
 {
-    private const string AllowedHeaders = "Authorization, Content-Type, Accept, MCP-Protocol-Version, Mcp-Method, Mcp-Name, Mcp-Version, Mcp-Session-Id";
+    private const string AllowedHeaders = "Authorization, Content-Type, Accept, MCP-Protocol-Version, Mcp-Method, Mcp-Name, Mcp-Session-Id";
 
     public static bool TryApply(HttpContext context, IReadOnlyCollection<OriginRule> allowedOrigins)
     {

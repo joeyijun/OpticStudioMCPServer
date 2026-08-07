@@ -94,9 +94,7 @@ internal static class Program
                 var claims = new[]
                 {
                     new Claim("zemax-mcp-auth-profile", string.IsNullOrWhiteSpace(options.AccessToken) ? "local" : "shared-token"),
-                    new Claim("zemax-mcp-remote-endpoint", context.Connection.RemoteIpAddress?.ToString() ?? "local"),
-                    new Claim("zemax-mcp-client-name", context.Request.Headers["Mcp-Name"].FirstOrDefault() ?? string.Empty),
-                    new Claim("zemax-mcp-client-version", context.Request.Headers["Mcp-Version"].FirstOrDefault() ?? string.Empty)
+                    new Claim("zemax-mcp-remote-endpoint", context.Connection.RemoteIpAddress?.ToString() ?? "local")
                 };
                 context.User = new ClaimsPrincipal(new ClaimsIdentity(claims, "zemax-mcp-token"));
                 await next().ConfigureAwait(false);
@@ -113,7 +111,9 @@ internal static class Program
                     mcpServerRunning = status != null,
                     zosApiLoaded = status?.ZosApiLoaded ?? false,
                     zosApiConnected = status?.Connected ?? false,
-                    licenseStatus = status?.LicenseStatus ?? "Not validated",
+                    licenseStatus = status?.CurrentLicenseStatus ?? status?.LastLicenseStatus ?? "Not validated",
+                    licenseValidForApi = status?.LicenseValidForApi,
+                    lastConnectionError = status?.LastConnectionError,
                     zemaxDataDirectory = status?.OpticStudioDataDirectory ?? "Not reported",
                     loadedZosApiFiles = new { zosApi = status?.ZosApiAssembly },
                     authenticationRequired = !string.IsNullOrWhiteSpace(options.AccessToken),
@@ -167,12 +167,8 @@ internal static class Program
             return "token:" + profile;
 
         var clientInfo = request.Server?.ClientInfo;
-        // Stateless MCP requests do not necessarily carry the legacy
-        // initialize ClientInfo. These optional headers are only a shared-token
-        // lease discriminator; authentication still comes from the bearer
-        // token and a future per-client token overrides this fallback.
-        var name = clientInfo?.Name ?? request.User?.FindFirst("zemax-mcp-client-name")?.Value;
-        var version = clientInfo?.Version ?? request.User?.FindFirst("zemax-mcp-client-version")?.Value;
+        var name = clientInfo?.Name;
+        var version = clientInfo?.Version;
         var endpoint = request.User?.FindFirst("zemax-mcp-remote-endpoint")?.Value ?? "unknown";
         return "client:" + (string.IsNullOrWhiteSpace(name) ? "unknown" : name.Trim()) +
             "@" + (string.IsNullOrWhiteSpace(version) ? "unknown" : version.Trim()) +

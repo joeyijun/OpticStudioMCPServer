@@ -10,7 +10,10 @@ public interface IZemaxSession : IDisposable
     int? CurrentInstanceId { get; }
     string? CurrentFilePath { get; }
     string? ZemaxDataDir { get; }
-    string? LicenseStatus { get; }
+    string? CurrentLicenseStatus { get; }
+    string? LastLicenseStatus { get; }
+    bool? LicenseValidForApi { get; }
+    string? LastConnectionError { get; }
     string SnapshotDirectory { get; }
     string? LastSnapshotPath { get; }
     event Action<string>? SnapshotCreated;

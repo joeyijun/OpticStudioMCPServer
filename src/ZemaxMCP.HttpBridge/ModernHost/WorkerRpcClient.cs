@@ -24,6 +24,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly SemaphoreSlim _startupGate = new(1, 1);
     private readonly object _connectionGate = new();
+    private readonly object _recoveryGate = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<ZemaxRpcEnvelope>> _pending = new(StringComparer.Ordinal);
     private readonly JsonSerializerOptions _jsonOptions = McpJsonUtilities.DefaultOptions;
     private Process? _worker;
@@ -33,6 +34,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     private Task? _pump;
     private DateTimeOffset? _startedAt;
     private bool _disposed;
+    private Task? _cancelledOperationRecovery;
     private OperationProgress? _lastProgress;
     private string? _lastSnapshotPath;
 
@@ -83,6 +85,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
 
     public async Task<ListToolsResult> ListToolsAsync(CancellationToken cancellationToken)
     {
+        await WaitForCancelledOperationRecoveryAsync(cancellationToken).ConfigureAwait(false);
         await StartAsync(cancellationToken).ConfigureAwait(false);
         return await SendAsync<ListToolsResult>(ZemaxRpcProtocol.GetToolCatalog,
             new ToolCatalogRequest { Toolset = _options.Toolset, ReadOnly = _options.ReadOnly }, Guid.NewGuid().ToString("N"), cancellationToken).ConfigureAwait(false);
@@ -90,6 +93,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
 
     public async Task<CallToolResult> CallToolAsync(CallToolRequestParams request, CancellationToken cancellationToken)
     {
+        await WaitForCancelledOperationRecoveryAsync(cancellationToken).ConfigureAwait(false);
         await StartAsync(cancellationToken).ConfigureAwait(false);
         var operationId = Guid.NewGuid().ToString("N");
         await _executionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -109,6 +113,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
 
     public async Task<WorkerStatus> GetStatusAsync(CancellationToken cancellationToken)
     {
+        await WaitForCancelledOperationRecoveryAsync(cancellationToken).ConfigureAwait(false);
         await StartAsync(cancellationToken).ConfigureAwait(false);
         return await SendAsync<WorkerStatus>(ZemaxRpcProtocol.GetStatus, new { }, Guid.NewGuid().ToString("N"), cancellationToken).ConfigureAwait(false);
     }
@@ -166,7 +171,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested && written)
         {
             backgroundRecoveryOwnsPending = true;
-            _ = RecoverCancelledOperationAsync(completion.Task, requestId, operationId, writer);
+            BeginCancelledOperationRecovery(completion.Task, requestId, operationId, writer);
             throw;
         }
         finally
@@ -274,7 +279,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
             }
             catch (OperationCanceledException) when (deadline?.IsCancellationRequested == true)
             {
-                var timeout = new TimeoutException("The Worker RPC pipe did not accept a cancellation message before its write deadline.");
+                var timeout = new TimeoutException("The Worker RPC pipe did not accept a message before its write deadline.");
                 FaultWorkerConnection(timeout, expectedWriter: writer);
                 throw timeout;
             }
@@ -286,14 +291,14 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
                 var remaining = writeTimeout.Value - elapsed;
                 if (remaining <= TimeSpan.Zero)
                 {
-                    var timeout = new TimeoutException("The Worker RPC pipe did not accept a cancellation message before its write deadline.");
+                    var timeout = new TimeoutException("The Worker RPC pipe did not accept a message before its write deadline.");
                     FaultWorkerConnection(timeout, expectedWriter: writer);
                     throw timeout;
                 }
                 var completed = await Task.WhenAny(write, Task.Delay(remaining)).ConfigureAwait(false);
                 if (completed != write)
                 {
-                    var timeout = new TimeoutException("The Worker RPC pipe did not accept a cancellation message before its write deadline.");
+                    var timeout = new TimeoutException("The Worker RPC pipe did not accept a message before its write deadline.");
                     FaultWorkerConnection(timeout, expectedWriter: writer);
                     throw timeout;
                 }
@@ -360,6 +365,32 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
             FaultWorkerConnection(ex, expectedWriter: writer);
         }
         finally { _pending.TryRemove(requestId, out _); }
+    }
+
+    private void BeginCancelledOperationRecovery(Task<ZemaxRpcEnvelope> responseTask, string requestId, string operationId, StreamWriter writer)
+    {
+        lock (_recoveryGate)
+        {
+            if (_cancelledOperationRecovery is { IsCompleted: false })
+                throw new InvalidOperationException("A cancelled Worker operation recovery is already active.");
+            _cancelledOperationRecovery = RecoverCancelledOperationAsync(responseTask, requestId, operationId, writer);
+        }
+    }
+
+    private async Task WaitForCancelledOperationRecoveryAsync(CancellationToken cancellationToken)
+    {
+        Task? recovery;
+        lock (_recoveryGate) recovery = _cancelledOperationRecovery;
+        if (recovery == null) return;
+        try { await recovery.WaitAsync(cancellationToken).ConfigureAwait(false); }
+        finally
+        {
+            if (recovery.IsCompleted)
+            {
+                lock (_recoveryGate)
+                    if (ReferenceEquals(_cancelledOperationRecovery, recovery)) _cancelledOperationRecovery = null;
+            }
+        }
     }
 
     private void CloseStaleConnection(string reason) => FaultWorkerConnection(new IOException(reason));
