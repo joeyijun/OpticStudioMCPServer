@@ -64,27 +64,27 @@ public class PopTool
     public async Task<PopResult> ExecuteAsync(
         [Description("Beam type: GaussianWaist, GaussianAngle, GaussianSizeAngle, TopHat, File, DLL, Multimode, AstigmaticGaussian")] string beamType = "GaussianWaist",
         [Description("Comma-separated beam parameters in the active beam type's published order. Leave empty for defaults.")] string? beamParams = null,
-        [Description("POP start surface (1-indexed); 0 keeps the POP default") ] int startSurface = 0,
-        [Description("POP end surface (1-indexed); -1 uses image surface, 0 keeps the POP default") ] int endSurface = -1,
-        [Description("X sampling: 1=32, 2=64, 3=128, 4=256, 5=512, 6=1024") ] int xSampling = 5,
-        [Description("Y sampling: 1=32, 2=64, 3=128, 4=256, 5=512, 6=1024") ] int ySampling = 5,
-        [Description("X width in lens units; 0 leaves the POP default") ] double xWidth = 0,
-        [Description("Y width in lens units; 0 leaves the POP default") ] double yWidth = 0,
-        [Description("Call AutoCalculateBeamSampling after explicit sampling/width values") ] bool autoCalculate = true,
-        [Description("Data type: Irradiance, EXIrradiance, EYIrradiance, Phase, EXPhase, EYPhase, TransferMagnitude, TransferPhase") ] string dataType = "Irradiance",
-        [Description("Use peak-irradiance normalization") ] bool peakNormalize = false,
-        [Description("Input-side axial beam offset from startSurface; must be finite") ] double surfaceToBeam = 0,
-        [Description("Optional raw-grid output path") ] string? outputGridPath = null,
-        [Description("Optional .BMP output path") ] string? exportBmpPath = null,
-        [Description("Wavelength number (1-indexed); 0 keeps the POP default") ] int wavelength = 0,
-        [Description("Field number (1-indexed); 0 keeps the POP default") ] int field = 0,
-        [Description("Sampling auto-calc override; null inherits autoCalculate") ] bool? autoSampling = null,
-        [Description("Width auto-calc override; null inherits autoCalculate") ] bool? autoWidth = null,
-        [Description("Temporarily force ResampleAfterRefraction=true on the selected LDE surface range; original values are restored afterward") ] bool resampleAfterRefraction = false,
-        [Description("If true, set POP UsePolarization=false") ] bool ignorePolarization = false,
-        [Description("Optional .ZBF output path") ] string? outputBeamFilePath = null,
-        [Description("Queue POP and return a job id immediately") ] bool runInBackground = true,
-        [Description("Allow replacement of requested raw-grid/BMP/ZBF output files") ] bool overwriteOutputFiles = false,
+        [Description("POP start surface (1-indexed); 0 keeps the POP default")] int startSurface = 0,
+        [Description("POP end surface (1-indexed); -1 uses image surface, 0 keeps the POP default")] int endSurface = -1,
+        [Description("X sampling: 1=32, 2=64, 3=128, 4=256, 5=512, 6=1024")] int xSampling = 5,
+        [Description("Y sampling: 1=32, 2=64, 3=128, 4=256, 5=512, 6=1024")] int ySampling = 5,
+        [Description("X width in lens units; 0 leaves the POP default")] double xWidth = 0,
+        [Description("Y width in lens units; 0 leaves the POP default")] double yWidth = 0,
+        [Description("Call AutoCalculateBeamSampling after explicit sampling/width values")] bool autoCalculate = true,
+        [Description("Data type: Irradiance, EXIrradiance, EYIrradiance, Phase, EXPhase, EYPhase, TransferMagnitude, TransferPhase")] string dataType = "Irradiance",
+        [Description("Use peak-irradiance normalization")] bool peakNormalize = false,
+        [Description("Input-side axial beam offset from startSurface; must be finite")] double surfaceToBeam = 0,
+        [Description("Optional raw-grid output path")] string? outputGridPath = null,
+        [Description("Optional .BMP output path")] string? exportBmpPath = null,
+        [Description("Wavelength number (1-indexed); 0 keeps the POP default")] int wavelength = 0,
+        [Description("Field number (1-indexed); 0 keeps the POP default")] int field = 0,
+        [Description("Sampling auto-calc override; null inherits autoCalculate")] bool? autoSampling = null,
+        [Description("Width auto-calc override; null inherits autoCalculate")] bool? autoWidth = null,
+        [Description("Temporarily force ResampleAfterRefraction=true on the selected LDE surface range; original values are restored afterward")] bool resampleAfterRefraction = false,
+        [Description("If true, set POP UsePolarization=false")] bool ignorePolarization = false,
+        [Description("Optional .ZBF output path")] string? outputBeamFilePath = null,
+        [Description("Queue POP and return a job id immediately")] bool runInBackground = true,
+        [Description("Allow replacement of requested raw-grid/BMP/ZBF output files")] bool overwriteOutputFiles = false,
         CancellationToken cancellationToken = default)
     {
         try
@@ -337,8 +337,9 @@ public class PopTool
                         var bmpTempPath = CreateSiblingTempPath(finalBmpPath, ".BMP");
                         try
                         {
-                            if (!AnalysisBmpHelper.TryExportBmp(results, bmpTempPath) || !File.Exists(bmpTempPath))
+                            if (!AnalysisBmpHelper.TryExportBmp(results, bmpTempPath, cancellationToken) || !File.Exists(bmpTempPath))
                                 throw new IOException("POP BMP export was requested but OpticStudio did not produce a BMP file.");
+                            cancellationToken.ThrowIfCancellationRequested();
                             CommitTempFile(bmpTempPath, finalBmpPath, overwriteOutputFiles);
                             bmpPath = finalBmpPath;
                         }
@@ -351,6 +352,7 @@ public class PopTool
                     string? zbfPath = null;
                     if (finalZbfPath != null)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         if (zbfTempPath == null || !File.Exists(zbfTempPath) || new FileInfo(zbfTempPath).Length == 0)
                             throw new IOException("POP ZBF export was requested but OpticStudio did not produce a non-empty output beam file.");
                         CommitTempFile(zbfTempPath, finalZbfPath, overwriteOutputFiles);
