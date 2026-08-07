@@ -14,6 +14,8 @@ namespace ZemaxMCP.PrivateRpcTests;
 
 internal static class Program
 {
+    private static readonly JsonSerializerOptions PrivateRpcJson = new(JsonSerializerDefaults.Web);
+
     public static async Task<int> Main(string[] args)
     {
         if (args.Length == 2 && string.Equals(args[0], "--pipe", StringComparison.OrdinalIgnoreCase))
@@ -290,9 +292,7 @@ internal static class Program
 
     private static string Build2026Body(int id, string method, string? toolName, string clientName, string instanceId)
     {
-        var parameters = toolName == null
-            ? ""
-            : "\"name\":\"" + toolName + "\",\"arguments\":{},";
+        var parameters = toolName == null ? "" : "\"name\":\"" + toolName + "\",\"arguments\":{},";
         return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"method\":\"" + method + "\",\"params\":{" + parameters +
             "\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientInfo\":{\"name\":\"" + clientName +
             "\",\"version\":\"1.0\"},\"io.modelcontextprotocol/clientCapabilities\":{},\"io.zemaxmcp/clientInstanceId\":\"" + instanceId + "\"}}}";
@@ -357,9 +357,11 @@ internal static class Program
             WorkerProcessId = Environment.ProcessId,
             Secret = secret,
             ManifestFingerprint = fingerprint
-        })).ConfigureAwait(false);
+        }, PrivateRpcJson)).ConfigureAwait(false);
         var acknowledgementLine = await reader.ReadLineAsync().ConfigureAwait(false);
-        var acknowledgement = string.IsNullOrWhiteSpace(acknowledgementLine) ? null : JsonSerializer.Deserialize<WorkerHandshakeAck>(acknowledgementLine);
+        var acknowledgement = string.IsNullOrWhiteSpace(acknowledgementLine)
+            ? null
+            : JsonSerializer.Deserialize<WorkerHandshakeAck>(acknowledgementLine, PrivateRpcJson);
         if (acknowledgement == null || !acknowledgement.Accepted)
         {
             if (string.Equals(mode, "bad-manifest", StringComparison.Ordinal)) return;
@@ -451,8 +453,8 @@ internal static class Program
             Kind = kind,
             RequestId = requestId,
             OperationId = operationId,
-            Payload = JsonSerializer.SerializeToElement(payload)
+            Payload = JsonSerializer.SerializeToElement(payload, PrivateRpcJson)
         };
-        return writer.WriteLineAsync(JsonSerializer.Serialize(message));
+        return writer.WriteLineAsync(JsonSerializer.Serialize(message, PrivateRpcJson));
     }
 }
