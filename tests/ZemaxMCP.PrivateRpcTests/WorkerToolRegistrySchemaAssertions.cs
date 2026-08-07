@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using ZemaxMCP.Server.Tooling;
 
@@ -42,6 +43,22 @@ internal static class WorkerToolRegistrySchemaAssertions
         if (coefficients.GetProperty("type").GetString() != "object" ||
             coefficients.GetProperty("additionalProperties").GetProperty("type").GetString() != "number")
             throw new InvalidOperationException("String-keyed dictionaries must publish object schemas with typed additional properties.");
+
+        using var validDocument = JsonDocument.Parse("{\"filePath\":\"probe.zos\",\"fields\":[{\"x\":1.0,\"y\":2.0}],\"mode\":\"Accurate\",\"coefficients\":{\"a\":3.5}}");
+        var result = registry.InvokeAsync("zemax_test_schema_contract", validDocument.RootElement.Clone(), CancellationToken.None)
+            .GetAwaiter().GetResult();
+        var modeValue = result?.GetType().GetProperty("mode")?.GetValue(result)?.ToString();
+        if (!string.Equals(modeValue, "Accurate", StringComparison.Ordinal))
+            throw new InvalidOperationException("Worker binder did not accept the string enum contract advertised by its schema.");
+
+        using var missingRequiredDocument = JsonDocument.Parse("{\"fields\":[]}");
+        try
+        {
+            registry.InvokeAsync("zemax_test_schema_contract", missingRequiredDocument.RootElement.Clone(), CancellationToken.None)
+                .GetAwaiter().GetResult();
+            throw new InvalidOperationException("Worker binder accepted a request that omitted a required argument.");
+        }
+        catch (ArgumentException ex) when (ex.Message.Contains("filePath", StringComparison.Ordinal)) { }
     }
 }
 
