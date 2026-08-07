@@ -87,7 +87,7 @@ public class ExportGlassCatalogTool
                 return Task.FromResult(new ExportResult(false, "Duplicate glass names found across source catalogs.", null, 0, duplicates));
 
             cancellationToken.ThrowIfCancellationRequested();
-            CatalogExportService.Export(filtered, outputPath, catalogName);
+            CatalogExportService.Export(filtered, outputPath, catalogName, overwrite);
             if (!File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
                 throw new IOException($"Catalog export completed without a non-empty output file at '{outputPath}'.");
 
