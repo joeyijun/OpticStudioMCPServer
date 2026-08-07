@@ -243,8 +243,8 @@ if ($VerifySafety) {
         if ($writeAttempt.result.isError -eq $true -or $payload.success -ne $true) { throw "The no-op metadata write failed: $($payload.error)" }
         if ([string]::IsNullOrWhiteSpace([string]$afterHealth.lastSnapshotPath) -or
             $afterHealth.lastSnapshotPath -eq $beforeHealth.lastSnapshotPath -or
-            $afterHealth.lastSnapshotPath -notlike "*.zos") {
-            throw "The live mutating call did not report a new verified .zos safety snapshot."
+            $afterHealth.lastSnapshotPath -notlike "*.zmx") {
+            throw "The live mutating call did not report a new verified cross-version .zmx safety snapshot."
         }
         Write-Host "Live safety OK: a no-op metadata write created $($afterHealth.lastSnapshotPath) before execution."
     }
