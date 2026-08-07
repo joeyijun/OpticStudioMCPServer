@@ -25,8 +25,12 @@ internal static class StaticToolManifestAssertions
         if (statusEntry.DomainId != "administration" || statusEntry.Impact != "ReadOnly" ||
             !StaticToolManifest.IsAllowed("full-expert", statusEntry.Name, readOnly: true))
             throw new InvalidOperationException("Read-only policy metadata must be available directly from the static manifest.");
-        if (StaticToolManifest.IsAllowed("full-expert", openFileEntry.Name, readOnly: true))
-            throw new InvalidOperationException("Static manifest read-only admission must reject non-read-only tools.");
+        if (!StaticToolManifest.IsAllowed("full-expert", openFileEntry.Name, readOnly: true))
+            throw new InvalidOperationException("Global read-only mode must preserve Caution session operations.");
+        if (StaticToolManifest.IsAllowed("full-expert", "zemax_set_surface", readOnly: true))
+            throw new InvalidOperationException("Global read-only mode must reject HighImpact tools.");
+        if (StaticToolManifest.IsAllowed("basic-viewing", openFileEntry.Name, readOnly: false))
+            throw new InvalidOperationException("The basic-viewing profile must remain stricter than the global read-only switch.");
 
         var setFields = StaticToolManifest.GetRequired("zemax_set_fields").InputSchema;
         var setFieldsRequired = setFields.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
