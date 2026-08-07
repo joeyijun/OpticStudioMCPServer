@@ -18,6 +18,8 @@ namespace ZemaxMCP.Server;
 
 internal static class ServerApplication
 {
+    private static readonly JsonSerializerOptions PrivateRpcJson = new(JsonSerializerDefaults.Web);
+
     public static async Task RunAsync(string[] args)
     {
         var pipeName = ReadOption(args, "--pipe");
@@ -50,11 +52,11 @@ internal static class ServerApplication
                 Secret = pipeSecret,
                 ManifestFingerprint = StaticToolManifest.ContractFingerprint
             };
-            await workerPipeWriter.WriteLineAsync(JsonSerializer.Serialize(handshake)).ConfigureAwait(false);
+            await workerPipeWriter.WriteLineAsync(JsonSerializer.Serialize(handshake, PrivateRpcJson)).ConfigureAwait(false);
             var acknowledgementLine = await workerPipeReader.ReadLineAsync().ConfigureAwait(false);
             var acknowledgement = string.IsNullOrWhiteSpace(acknowledgementLine)
                 ? null
-                : JsonSerializer.Deserialize<WorkerHandshakeAck>(acknowledgementLine);
+                : JsonSerializer.Deserialize<WorkerHandshakeAck>(acknowledgementLine, PrivateRpcJson);
             if (acknowledgement == null || !acknowledgement.Accepted ||
                 acknowledgement.RpcVersion != ZemaxRpcProtocol.Version ||
                 !string.Equals(acknowledgement.ManifestFingerprint, StaticToolManifest.ContractFingerprint, StringComparison.Ordinal))
@@ -121,6 +123,7 @@ internal static class ServerApplication
         }
         catch (Exception ex)
         {
+            Console.Error.WriteLine(ex.Message);
             Log.Fatal(ex, "Worker terminated unexpectedly");
             Environment.ExitCode = 1;
         }
