@@ -25,8 +25,6 @@ public sealed class ZemaxToolAttribute : Attribute
 public sealed class WorkerToolDefinition
 {
     public string Name { get; set; } = string.Empty;
-    public string Description { get; set; } = string.Empty;
-    public JsonElement InputSchema { get; set; }
     internal Type DeclaringType { get; set; } = null!;
     internal MethodInfo Method { get; set; } = null!;
 }
@@ -97,8 +95,6 @@ public sealed class WorkerToolRegistry
                 return new WorkerToolDefinition
                 {
                     Name = manifest.Name,
-                    Description = manifest.Description,
-                    InputSchema = manifest.InputSchema,
                     DeclaringType = item.Type,
                     Method = item.Method
                 };
