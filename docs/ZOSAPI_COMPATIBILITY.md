@@ -44,15 +44,15 @@ A compile failure is treated as a real compatibility failure: some source member
 
 ## Current compatibility assessment
 
-The following is the repository/API assessment before licensed multi-version acceptance:
+The following is the repository/API assessment before licensed multi-version acceptance. **Compatibility target is not the same as verified support.** A row becomes verified only after the complete Worker compiles against that version's real ZOS-API assemblies and the licensed live acceptance passes.
 
 | OpticStudio family | Current status | Notes |
 | --- | --- | --- |
 | 2026 | Static reference reviewed | Current ZOS-API documentation used for exact signatures; licensed runtime acceptance still pending. |
-| 2024 | Compatibility target | No known architectural blocker; must pass the real 2024 DLL compile matrix and live smoke test before being claimed as verified. |
+| 2024 | Compatibility target | No known architectural blocker; real 2024 DLL compile matrix and live smoke test still required. |
 | 2023 | Compatibility target | Same as 2024. Explicit x64 Worker avoids the legacy NetHelper bitness/registry issue. |
 | 2021 R3 / 21.3+ | Compatibility target | `.ZOS` exists from 21.3 onward, but safety code no longer depends on it. Enhanced Ray Aiming was still experimental; later-only settings are capability-detected. |
-| 2021 R1/R2 / 21.1-21.2 | Compatibility target, not yet verified | `.ZOS` does not exist. Safety snapshots and unsaved multistart checkpoints use `.ZMX`. Ray-aiming settings added during the 21.x/22.1 Enhanced Ray Aiming transition are late-bound and return `null` plus `UnsupportedSettings` when absent. The complete Worker still must compile against the actual 21.1/21.2 ZOS-API DLLs before this can be advertised as verified support. |
+| 2021 R1/R2 / 21.1-21.2 | Compatibility target, not verified | `.ZOS` does not exist. Safety snapshots and unsaved multistart checkpoints use `.ZMX`. Ray-aiming settings added during the 21.x/22.1 Enhanced Ray Aiming transition are late-bound and return `null` plus `UnsupportedSettings` when absent. The complete Worker still must compile against the actual 21.1/21.2 ZOS-API DLLs before support can be advertised. |
 
 Important reviewed APIs are older than 2021: the sequential Off-Axis Conic Freeform appeared in OpticStudio 20.2, POP was added to ZOS-API in 20.3, `ISEQOptimizationWizard2` was already the recommended wizard interface before 2021, and `IMCERow.GetOperandCell(configuration)` appears in Zemax examples from 2019. These specific Stage E/F changes therefore do not by themselves force a 2023/2024/2026 minimum.
 
