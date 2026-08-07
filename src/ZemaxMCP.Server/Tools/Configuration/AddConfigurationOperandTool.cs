@@ -21,9 +21,9 @@ public class AddConfigurationOperandTool
     );
 
     [ZemaxTool(Name = "zemax_add_configuration_operand")]
-    [Description("Add a configuration operand to the Multi-Configuration Editor. Operand type is validated before the editor is modified; a failed type/parameter application is rolled back.")]
+    [Description("Add a configuration operand to the Multi-Configuration Editor. Operand type is validated before the editor is modified; a failed type/parameter application is rolled back or reported explicitly as a partial mutation.")]
     public async Task<AddConfigurationOperandResult> ExecuteAsync(
-        [Description("Named MCE operand type (for example THIC, CRVT, CONI, PRAM, MOFF). Numeric enum values are not accepted.")] string operandType,
+        [Description("Named MCE operand type (for example THIC, CRVT, GLSS, PRAM, MOFF). Numeric enum values are not accepted.")] string operandType,
         [Description("Operand position to insert at (1..NumberOfOperands+1), or 0 to append.")] int insertAt = 0,
         [Description("Parameter 1; ignored when zero and the selected operand does not expose Param1.")] int param1 = 0,
         [Description("Parameter 2; ignored when zero and the selected operand does not expose Param2.")] int param2 = 0,
@@ -78,11 +78,24 @@ public class AddConfigurationOperandTool
                         OperandType: row.Type.ToString(),
                         NumberOfOperands: mce.NumberOfOperands);
                 }
-                catch
+                catch (Exception original)
                 {
                     if (row != null && row.IsValidRow)
                     {
-                        try { mce.RemoveOperandAt(row.OperandNumber); } catch { }
+                        bool rolledBack;
+                        try { rolledBack = mce.RemoveOperandAt(row.OperandNumber); }
+                        catch (Exception rollbackException)
+                        {
+                            throw new InvalidOperationException(
+                                $"MCE operand setup failed and rollback threw an exception. The inserted row may remain and the pre-change safety snapshot should be used for recovery. Original error: {original.Message}; rollback error: {rollbackException.Message}",
+                                original);
+                        }
+                        if (!rolledBack)
+                        {
+                            throw new InvalidOperationException(
+                                $"MCE operand setup failed and OpticStudio rejected rollback. The inserted row may remain and the pre-change safety snapshot should be used for recovery. Original error: {original.Message}",
+                                original);
+                        }
                     }
                     throw;
                 }
