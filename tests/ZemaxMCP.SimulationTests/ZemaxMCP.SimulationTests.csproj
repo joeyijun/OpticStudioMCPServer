@@ -9,6 +9,11 @@
     <Compile Include="..\..\src\ZemaxMCP.Core\Session\ZemaxOperationMetadata.cs" Link="Core\ZemaxOperationMetadata.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Session\ZemaxOperationSafety.cs" Link="Core\ZemaxOperationSafety.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Session\ZosApiDispatcher.cs" Link="Core\ZosApiDispatcher.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Core\Models\GlassEntry.cs" Link="Core\GlassEntry.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Core\Services\GlassCatalog\AgfFileParser.cs" Link="Core\GlassCatalog\AgfFileParser.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Core\Services\GlassCatalog\CatalogExportService.cs" Link="Core\GlassCatalog\CatalogExportService.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Core\Services\GlassCatalog\DispersionCalculator.cs" Link="Core\GlassCatalog\DispersionCalculator.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Core\Services\GlassCatalog\GlassFilterService.cs" Link="Core\GlassCatalog\GlassFilterService.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Services\Jobs\McpJobManager.cs" Link="Server\McpJobManager.cs" />
   </ItemGroup>
 </Project>
