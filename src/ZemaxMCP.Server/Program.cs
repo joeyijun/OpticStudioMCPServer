@@ -2,7 +2,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Serilog;
 using System.IO.Pipes;
-using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using ZemaxMCP.Core.Logging;
@@ -35,9 +34,9 @@ internal static class ServerApplication
 
         try
         {
-            // Establish and verify the private contract before loading ZOS-API.
-            // Mixed Host/Worker binaries fail immediately with a clear contract
-            // mismatch instead of reaching reflection binding or COM execution.
+            // BootstrapProgram has already established the CLR assembly binding
+            // boundary. Authenticate the Host/Worker contract before ZOS-API is
+            // initialized or any OpticStudio COM operation can begin.
             var pipeSecret = Environment.GetEnvironmentVariable("ZEMAX_MCP_PIPE_SECRET");
             if (string.IsNullOrWhiteSpace(pipeSecret))
                 throw new InvalidOperationException("The private Worker pipe did not receive its handshake secret.");
@@ -65,19 +64,7 @@ internal static class ServerApplication
                     (acknowledgement?.Error ?? "invalid acknowledgement"));
             }
 
-            // Initialize ZOSAPI assembly resolver only after the Host/Worker
-            // contract has been authenticated and version-matched.
             var zemaxRoot = Environment.GetEnvironmentVariable("ZEMAX_ROOT");
-            if (!string.IsNullOrWhiteSpace(zemaxRoot))
-            {
-                AppDomain.CurrentDomain.AssemblyResolve += (_, eventArgs) =>
-                {
-                    var name = new AssemblyName(eventArgs.Name).Name;
-                    if (string.IsNullOrWhiteSpace(name) || !name.StartsWith("ZOSAPI", StringComparison.OrdinalIgnoreCase)) return null;
-                    var candidate = Path.Combine(zemaxRoot, name + ".dll");
-                    return File.Exists(candidate) ? Assembly.LoadFrom(candidate) : null;
-                };
-            }
             var initialized = string.IsNullOrWhiteSpace(zemaxRoot)
                 ? ZOSAPI_NetHelper.ZOSAPI_Initializer.Initialize()
                 : ZOSAPI_NetHelper.ZOSAPI_Initializer.Initialize(zemaxRoot);
@@ -114,7 +101,7 @@ internal static class ServerApplication
             var commandLog = host.Services.GetRequiredService<IZemaxCommandLog>();
             Log.Information("ZEMAX Command Log: {LogPath}", commandLog.LogFilePath);
 
-            var session = host.Services.GetRequiredService<IZemaxSession>();
+            var session = host.Services.GetRequiredServiceService<IZemaxSession>();
             session.StartConnectInBackground(ConnectionMode.Standalone);
             Log.Information("OpticStudio background connection started");
 
