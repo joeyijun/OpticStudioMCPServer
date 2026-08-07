@@ -6,6 +6,7 @@ $hostProject = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ZemaxM
 $hostSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\Program.cs")
 $hostOptions = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\HostOptions.cs")
 $rpcClient = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\WorkerRpcClient.cs")
+$rpcContracts = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Rpc\Contracts.cs")
 $workerSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Program.cs")
 $workerRpc = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Rpc\WorkerRpcServer.cs")
 $workerProject = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\ZemaxMCP.Server.csproj")
@@ -41,6 +42,9 @@ if ($workerRpc -notmatch 'ZemaxRpcProtocol\.InvokeTool' -or $workerRpc -notmatch
     $workerRpc -notmatch 'SemaphoreSlim _executionGate') {
   throw "The Worker RPC server must provide protocol-neutral tool invocation, cancellation, and a single execution boundary."
 }
+if ($rpcContracts -notmatch 'public const int Version = 2;' -or $rpcContracts -notmatch 'Tool discovery is Host-owned') {
+  throw "Private RPC v2 must explicitly separate Host-owned discovery from Worker execution."
+}
 if ($manifestProject -notmatch 'GenerateStaticToolManifest' -or $manifestProject -notmatch 'ZemaxMCP\.ToolManifestGenerator' -or
     $manifestSource -notmatch 'StaticToolManifest' -or $generatorSource -notmatch 'ZemaxToolType' -or $generatorSource -notmatch 'ZemaxTool') {
   throw "Tool schemas must be generated at build time into the shared static Host/Worker manifest."
@@ -49,8 +53,9 @@ if ($hostProject -notmatch 'ZemaxMCP\.ToolManifest' -or $workerProject -notmatch
   throw "Both Host and Worker must consume the same generated tool manifest."
 }
 if ($hostSource -notmatch 'StaticToolManifest\.All' -or $hostSource -notmatch 'ToolsetCatalog\.IsToolAllowed' -or
+    $hostSource -notmatch 'options\.ReadOnly' -or $hostSource -notmatch 'ToolsetCatalog\.GetImpact' -or
     $hostSource -match 'workerClient\.ListToolsAsync') {
-  throw "MCP tools/list must be served entirely from the Host static manifest without starting the Worker."
+  throw "MCP tools/list must be served entirely from the Host static manifest and filtered by both toolset and read-only policy."
 }
 if ($workerRegistry -notmatch 'StaticToolManifest\.GetRequired' -or $workerRegistry -match 'BuildSchema\(|BuildTypeSchema\(') {
   throw "Worker execution must consume the shared manifest rather than maintain a second schema generator."
@@ -80,8 +85,8 @@ if ([string]::IsNullOrWhiteSpace($callToolBody) -or
 }
 if ($privateRpcTest -notmatch '2026-07-28' -or $privateRpcTest -notmatch 'io\.modelcontextprotocol/clientInfo' -or
     $privateRpcTest -notmatch 'Send2026ListToolsAsync' -or $privateRpcTest -notmatch 'tools/list started the Worker' -or
-    $privateRpcTest -match '"initialize"') {
-  throw "The E2E test must prove stateless 2026 tools/list is Host-only before tools/call lazy-starts the Worker."
+    $privateRpcTest -notmatch 'Read-only Host tools/list exposed mutating tools' -or $privateRpcTest -match '"initialize"') {
+  throw "The E2E test must prove stateless 2026 tools/list is Host-only and read-only filtered before tools/call lazy-starts the Worker."
 }
 if ($schemaTest -notmatch 'StaticToolManifest\.All\.Count != 126' -or $schemaTest -notmatch 'zemax_open_file' -or
     $schemaTest -notmatch 'zemax_set_fields' -or $schemaTest -notmatch 'zemax_optimize') {
