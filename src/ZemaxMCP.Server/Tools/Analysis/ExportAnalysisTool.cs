@@ -76,7 +76,7 @@ public class ExportAnalysisTool
                         var tempImagePath = CreateSiblingTempPath(finalImagePath, ".BMP");
                         try
                         {
-                            if (!AnalysisBmpHelper.TryExportBmp(results, tempImagePath) ||
+                            if (!AnalysisBmpHelper.TryExportBmp(results, tempImagePath, cancellationToken) ||
                                 !File.Exists(tempImagePath) || new FileInfo(tempImagePath).Length == 0)
                             {
                                 throw new NotSupportedException($"Analysis '{canonicalName}' did not expose image/grid data that can be exported as BMP by the standalone MCP exporter.");
@@ -194,7 +194,6 @@ public class ExportAnalysisTool
         }
         else
         {
-            // Final no-clobber check; File.Move fails if another process created the target.
             File.Move(tempPath, finalPath);
         }
     }
