@@ -183,15 +183,15 @@ internal static class Program
             using (list)
             {
                 var listBody = await ReadFirstMcpPayloadAsync(list).ConfigureAwait(false);
-                if (!listBody.Contains("zemax_status", StringComparison.Ordinal))
-                    throw new InvalidOperationException("Read-only Host tools/list did not expose an allowed static tool.");
-                if (listBody.Contains("zemax_open_file", StringComparison.Ordinal) || listBody.Contains("zemax_set_surface", StringComparison.Ordinal))
-                    throw new InvalidOperationException("Read-only Host tools/list exposed mutating tools that execution policy would reject.");
+                if (!listBody.Contains("zemax_status", StringComparison.Ordinal) || !listBody.Contains("zemax_open_file", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Read-only Host tools/list did not preserve ReadOnly and Caution tools.");
+                if (listBody.Contains("zemax_set_surface", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Read-only Host tools/list exposed a HighImpact tool that execution policy would reject.");
                 if (File.Exists(workerLog))
                     throw new InvalidOperationException("tools/list started the Worker; static Host discovery is not independent of ZOS-API.");
             }
 
-            using var blocked = await Send2026ToolCallAsync(client, endpoint, 2, "zemax_open_file", "client-a").ConfigureAwait(false);
+            using var blocked = await Send2026ToolCallAsync(client, endpoint, 2, "zemax_set_surface", "client-a").ConfigureAwait(false);
             var blockedBody = await ReadFirstMcpPayloadAsync(blocked).ConfigureAwait(false);
             if (!blockedBody.Contains("does not permit", StringComparison.OrdinalIgnoreCase) ||
                 !blockedBody.Contains("isError", StringComparison.OrdinalIgnoreCase))
