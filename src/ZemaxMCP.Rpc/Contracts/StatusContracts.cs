@@ -5,6 +5,8 @@ namespace ZemaxMCP.Rpc;
 
 public sealed class WorkerStatus
 {
+    public int RpcVersion { get; set; }
+    public string ManifestFingerprint { get; set; } = string.Empty;
     public bool ZosApiLoaded { get; set; }
     public bool Connected { get; set; }
     public string ConnectionMode { get; set; } = "unknown";
