@@ -14,13 +14,17 @@ public class DiffractionEncircledEnergyTool
     public DiffractionEncircledEnergyTool(IZemaxSession session) => _session = session;
 
     [ZemaxTool(Name = "zemax_diffraction_encircled_energy")]
-    [Description("Calculate FFT diffraction encircled energy as a function of radial distance from the reference point. Returns the fraction of total energy enclosed within a given radius for each field point, plus the diffraction limit curve. Useful for evaluating image quality and comparing to the Airy disk.")]
+    [Description("Calculate FFT diffraction encircled energy as a function of radial distance from the reference point. Returns the fraction of total energy enclosed within a given radius for each field point, plus the diffraction limit curve.")]
     public async Task<DiffractionEncircledEnergyData> ExecuteAsync(
-        [Description("Sampling (1-6, higher = more accurate). 1=32x32, 2=64x64, 3=128x128, 4=256x256, 5=512x512, 6=1024x1024")] int sampling = 3,
-        [Description("Use dashes for data? If true, uses dashes; if false uses center of reference field")] bool useDashes = false)
+        [Description("Sampling (1-6): 1=32x32, 2=64x64, 3=128x128, 4=256x256, 5=512x512, 6=1024x1024")] int sampling = 3,
+        [Description("Use dashes for data instead of the reference-field center.")] bool useDashes = false,
+        CancellationToken cancellationToken = default)
     {
         try
         {
+            if (sampling is < 1 or > 6)
+                throw new ArgumentOutOfRangeException(nameof(sampling), "Sampling must be in the range 1..6.");
+
             var parameters = new Dictionary<string, object?>
             {
                 ["sampling"] = sampling,
@@ -32,19 +36,20 @@ public class DiffractionEncircledEnergyTool
                 var analysis = system.Analyses.New_DiffractionEncircledEnergy();
                 try
                 {
-                    var settings = analysis.GetSettings() as ZOSAPI.Analysis.Settings.EncircledEnergy.IAS_DiffractionEncircledEnergy;
-                    if (settings != null)
-                    {
-                        settings.SampleSize = MapSampling(sampling);
-                        settings.UseDashes = useDashes;
-                    }
+                    var settings = analysis.GetSettings() as ZOSAPI.Analysis.Settings.EncircledEnergy.IAS_DiffractionEncircledEnergy
+                        ?? throw new InvalidOperationException("OpticStudio did not expose Diffraction Encircled Energy settings.");
+                    settings.SampleSize = MapSampling(sampling);
+                    settings.UseDashes = useDashes;
 
                     analysis.ApplyAndWaitForCompletion();
+                    var results = analysis.GetResults() ?? throw new InvalidOperationException("Diffraction Encircled Energy returned no results object.");
 
                     var tempFile = Path.Combine(Path.GetTempPath(), $"zemax_dee_{Guid.NewGuid():N}.txt");
                     try
                     {
-                        analysis.GetResults().GetTextFile(tempFile);
+                        results.GetTextFile(tempFile);
+                        if (!File.Exists(tempFile) || new FileInfo(tempFile).Length == 0)
+                            throw new InvalidOperationException("Diffraction Encircled Energy produced no text output.");
                         return ParseTextFile(tempFile);
                     }
                     finally
@@ -56,7 +61,7 @@ public class DiffractionEncircledEnergyTool
                 {
                     analysis.Close();
                 }
-            });
+            }, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -72,16 +77,14 @@ public class DiffractionEncircledEnergyTool
         4 => ZOSAPI.Analysis.SampleSizes.S_256x256,
         5 => ZOSAPI.Analysis.SampleSizes.S_512x512,
         6 => ZOSAPI.Analysis.SampleSizes.S_1024x1024,
-        _ => ZOSAPI.Analysis.SampleSizes.S_128x128
+        _ => throw new ArgumentOutOfRangeException(nameof(sampling))
     };
 
     private static DiffractionEncircledEnergyData ParseTextFile(string filePath)
     {
         var lines = File.ReadAllLines(filePath);
-
         string surface = "", wavelength = "", reference = "", distanceUnits = "";
         var fields = new List<DiffractionEncircledEnergyFieldData>();
-
         string currentLabel = "";
         double currentFieldDeg = -1;
         double refX = 0, refY = 0;
@@ -94,25 +97,21 @@ public class DiffractionEncircledEnergyTool
             var trimmed = line.Trim();
             if (string.IsNullOrWhiteSpace(trimmed)) continue;
 
-            // Header metadata
             if (trimmed.StartsWith("Surface:", StringComparison.OrdinalIgnoreCase))
             {
                 surface = trimmed.Substring("Surface:".Length).Trim();
                 continue;
             }
-
             if (trimmed.StartsWith("Wavelength:", StringComparison.OrdinalIgnoreCase))
             {
                 wavelength = trimmed.Substring("Wavelength:".Length).Trim();
                 continue;
             }
-
             if (trimmed.StartsWith("Reference:", StringComparison.OrdinalIgnoreCase))
             {
                 reference = trimmed.Substring("Reference:".Length).Trim();
                 continue;
             }
-
             if (trimmed.StartsWith("Distance units", StringComparison.OrdinalIgnoreCase))
             {
                 var idx = trimmed.IndexOf("are", StringComparison.OrdinalIgnoreCase);
@@ -120,25 +119,9 @@ public class DiffractionEncircledEnergyTool
                 continue;
             }
 
-            // "Diff. Limit" or "Field: X.XX (deg)"
-            if (trimmed.StartsWith("Diff. Limit", StringComparison.OrdinalIgnoreCase) ||
-                trimmed.StartsWith("Field:", StringComparison.OrdinalIgnoreCase))
+            if (trimmed.StartsWith("Diff. Limit", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("Field:", StringComparison.OrdinalIgnoreCase))
             {
-                // Save previous block
-                if (distances.Count > 0)
-                {
-                    fields.Add(new DiffractionEncircledEnergyFieldData
-                    {
-                        Label = currentLabel,
-                        FieldValueDeg = currentFieldDeg,
-                        ReferenceX = refX,
-                        ReferenceY = refY,
-                        RadialDistances = distances.ToArray(),
-                        Fractions = fractions.ToArray(),
-                        DataPoints = distances.Count
-                    });
-                }
-
+                SaveBlock(fields, currentLabel, currentFieldDeg, refX, refY, distances, fractions);
                 distances = new List<double>();
                 fractions = new List<double>();
                 refX = 0;
@@ -153,53 +136,39 @@ public class DiffractionEncircledEnergyTool
                 else
                 {
                     currentLabel = trimmed;
-                    currentFieldDeg = ParseFieldValue(trimmed);
+                    currentFieldDeg = ParseRequiredFieldValue(trimmed);
                 }
                 continue;
             }
 
-            // "Reference Coordinates: X =    5.203E-06 Y =    5.203E-06"
             if (trimmed.StartsWith("Reference Coordinates:", StringComparison.OrdinalIgnoreCase))
             {
                 ParseReferenceCoordinates(trimmed, out refX, out refY);
                 continue;
             }
 
-            // Column header: "Radial distance              Fraction"
             var lower = trimmed.ToLowerInvariant();
             if (!inData && lower.Contains("radial distance") && lower.Contains("fraction"))
             {
                 inData = true;
                 continue;
             }
-
             if (!inData) continue;
 
-            // Parse data row
             var values = trimmed.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
-            if (values.Length >= 2 &&
-                double.TryParse(values[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double dist) &&
-                double.TryParse(values[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double frac))
-            {
-                distances.Add(dist);
-                fractions.Add(frac);
-            }
+            if (!double.TryParse(values.FirstOrDefault(), NumberStyles.Float, CultureInfo.InvariantCulture, out double dist))
+                continue;
+            if (values.Length < 2 || !double.TryParse(values[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double frac))
+                throw new FormatException($"Could not parse Diffraction Encircled Energy row '{trimmed}'.");
+            if (dist < 0 || frac < 0)
+                throw new FormatException($"Diffraction Encircled Energy returned a negative distance/fraction in '{trimmed}'.");
+            distances.Add(dist);
+            fractions.Add(frac);
         }
 
-        // Save last block
-        if (distances.Count > 0)
-        {
-            fields.Add(new DiffractionEncircledEnergyFieldData
-            {
-                Label = currentLabel,
-                FieldValueDeg = currentFieldDeg,
-                ReferenceX = refX,
-                ReferenceY = refY,
-                RadialDistances = distances.ToArray(),
-                Fractions = fractions.ToArray(),
-                DataPoints = distances.Count
-            });
-        }
+        SaveBlock(fields, currentLabel, currentFieldDeg, refX, refY, distances, fractions);
+        if (fields.Count == 0)
+            throw new FormatException("Diffraction Encircled Energy text output contained no parseable data blocks.");
 
         return new DiffractionEncircledEnergyData
         {
@@ -212,32 +181,43 @@ public class DiffractionEncircledEnergyTool
         };
     }
 
-    private static double ParseFieldValue(string line)
+    private static void SaveBlock(List<DiffractionEncircledEnergyFieldData> fields, string label, double fieldValue,
+        double refX, double refY, List<double> distances, List<double> fractions)
     {
-        // "Field: 10.00 (deg)"
-        var parts = line.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
-        for (int i = 0; i < parts.Length; i++)
+        if (distances.Count == 0) return;
+        if (string.IsNullOrWhiteSpace(label) || fractions.Count != distances.Count)
+            throw new FormatException("Diffraction Encircled Energy block metadata/data dimensions are inconsistent.");
+        fields.Add(new DiffractionEncircledEnergyFieldData
         {
-            if (double.TryParse(parts[i], NumberStyles.Float, CultureInfo.InvariantCulture, out double val))
-                return val;
-        }
-        return 0;
+            Label = label,
+            FieldValueDeg = fieldValue,
+            ReferenceX = refX,
+            ReferenceY = refY,
+            RadialDistances = distances.ToArray(),
+            Fractions = fractions.ToArray(),
+            DataPoints = distances.Count
+        });
+    }
+
+    private static double ParseRequiredFieldValue(string line)
+    {
+        var parts = line.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
+        foreach (var part in parts)
+            if (double.TryParse(part, NumberStyles.Float, CultureInfo.InvariantCulture, out double val)) return val;
+        throw new FormatException($"Could not parse encircled-energy field value from '{line}'.");
     }
 
     private static void ParseReferenceCoordinates(string line, out double x, out double y)
     {
-        x = 0;
-        y = 0;
-        // "Reference Coordinates: X =    5.203E-06 Y =    5.203E-06"
         var upper = line.ToUpperInvariant();
-        int xIdx = upper.IndexOf("X =");
-        int yIdx = upper.IndexOf("Y =");
-        if (xIdx >= 0 && yIdx >= 0)
-        {
-            var xPart = line.Substring(xIdx + 3, yIdx - xIdx - 3).Trim();
-            var yPart = line.Substring(yIdx + 3).Trim();
-            double.TryParse(xPart, NumberStyles.Float, CultureInfo.InvariantCulture, out x);
-            double.TryParse(yPart, NumberStyles.Float, CultureInfo.InvariantCulture, out y);
-        }
+        int xIdx = upper.IndexOf("X =", StringComparison.Ordinal);
+        int yIdx = upper.IndexOf("Y =", StringComparison.Ordinal);
+        if (xIdx < 0 || yIdx < 0 || yIdx <= xIdx)
+            throw new FormatException($"Could not locate reference coordinates in '{line}'.");
+        var xPart = line.Substring(xIdx + 3, yIdx - xIdx - 3).Trim();
+        var yPart = line.Substring(yIdx + 3).Trim();
+        if (!double.TryParse(xPart, NumberStyles.Float, CultureInfo.InvariantCulture, out x) ||
+            !double.TryParse(yPart, NumberStyles.Float, CultureInfo.InvariantCulture, out y))
+            throw new FormatException($"Could not parse reference coordinates in '{line}'.");
     }
 }
