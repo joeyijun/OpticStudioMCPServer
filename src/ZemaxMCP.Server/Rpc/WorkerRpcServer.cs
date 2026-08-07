@@ -7,7 +7,7 @@ using ZemaxMCP.Core.Session;
 using ZemaxMCP.Rpc;
 using ZemaxMCP.Server.Services.Jobs;
 using ZemaxMCP.Server.Tooling;
-using ZemaxMCP.Toolsets;
+using ZemaxMCP.ToolManifest;
 
 namespace ZemaxMCP.Server.Rpc;
 
@@ -86,12 +86,14 @@ internal sealed class WorkerRpcServer
             switch (message.Kind)
             {
                 case ZemaxRpcProtocol.GetToolCatalog:
+                    // Compatibility-only RPC v2 shim. The public Host serves
+                    // tools/list from StaticToolManifest and never calls this.
                     var catalogueRequest = message.Payload.Deserialize<ToolCatalogRequest>(_jsonOptions) ?? new ToolCatalogRequest();
                     await WriteResultAsync(writer, message.RequestId, message.OperationId,
                         new
                         {
-                            tools = _tools.Tools.Values
-                                .Where(tool => ToolsetCatalog.IsToolAllowed(catalogueRequest.Toolset, tool.Name))
+                            tools = StaticToolManifest.All
+                                .Where(tool => StaticToolManifest.IsAllowed(catalogueRequest.Toolset, tool.Name, catalogueRequest.ReadOnly))
                                 .Select(tool => new { name = tool.Name, description = tool.Description, inputSchema = tool.InputSchema })
                                 .ToList()
                         }).ConfigureAwait(false);
@@ -124,8 +126,8 @@ internal sealed class WorkerRpcServer
             ?? throw new InvalidOperationException("Tool invocation payload is missing.");
         if (string.IsNullOrWhiteSpace(invocation.Command) || !_tools.Tools.ContainsKey(invocation.Command))
             throw new InvalidOperationException("Unknown OpticStudio tool: " + invocation.Command);
-        if (!ToolsetCatalog.IsToolAllowed(invocation.Toolset, invocation.Command))
-            throw new InvalidOperationException("The selected toolset does not permit " + invocation.Command + ".");
+        if (!StaticToolManifest.IsAllowed(invocation.Toolset, invocation.Command, invocation.ReadOnly))
+            throw new InvalidOperationException("The selected toolset/read-only policy does not permit " + invocation.Command + ".");
 
         using var operation = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
         if (!_operations.TryAdd(message.OperationId, operation))
