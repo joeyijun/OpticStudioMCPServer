@@ -134,19 +134,21 @@ public sealed class WorkerToolRegistry
         if (type.IsEnum)
             return new Dictionary<string, object?> { ["type"] = "string", ["enum"] = Enum.GetNames(type) };
 
+        // Dictionaries also implement IEnumerable<KeyValuePair<,>>, so detect
+        // them before the generic enumerable path.
+        if (IsDictionary(type, out var valueType))
+            return new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["additionalProperties"] = BuildTypeSchema(valueType!, stack)
+            };
+
         var elementType = GetEnumerableElementType(type);
         if (elementType != null)
             return new Dictionary<string, object?>
             {
                 ["type"] = "array",
                 ["items"] = BuildTypeSchema(elementType, stack)
-            };
-
-        if (IsDictionary(type, out var valueType))
-            return new Dictionary<string, object?>
-            {
-                ["type"] = "object",
-                ["additionalProperties"] = BuildTypeSchema(valueType!, stack)
             };
 
         // Avoid infinite recursion for self-referential model types. The binder
