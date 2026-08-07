@@ -187,8 +187,6 @@ Clients should use `tools/list` as the authoritative schema source for the insta
 | `zemax_quick_focus` | Run Quick Focus with a selectable criterion and bounded timeout. |
 | `zemax_scale_lens` | Scale a complete sequential lens by a positive factor or convert its physical units. |
 
-The server also provides MCP resources for the current system, merit function, and operand documentation, plus prompt templates for design, optimisation, analysis, and design troubleshooting.
-
 ## Fork and attribution
 
 This repository is a fork of the MIT-licensed **OpticStudio MCP Server** by Javier A Ruiz. This fork adds the packaged Windows launcher, GUI installer, official HTTP MCP Host, trusted-LAN workflow, live status dashboard, graphical AI-client configuration, contract/recovery hardening, and additional acceptance tools.
