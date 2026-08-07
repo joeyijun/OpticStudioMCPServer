@@ -191,7 +191,15 @@ internal static class Program
                     throw new InvalidOperationException("tools/list started the Worker; static Host discovery is not independent of ZOS-API.");
             }
 
-            using var echo = await Send2026ToolCallAsync(client, endpoint, 2, "zemax_status", "client-a").ConfigureAwait(false);
+            using var blocked = await Send2026ToolCallAsync(client, endpoint, 2, "zemax_open_file", "client-a").ConfigureAwait(false);
+            var blockedBody = await ReadFirstMcpPayloadAsync(blocked).ConfigureAwait(false);
+            if (!blockedBody.Contains("does not permit", StringComparison.OrdinalIgnoreCase) ||
+                !blockedBody.Contains("isError", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("A direct tools/call bypassed the read-only static manifest policy: " + blockedBody);
+            if (File.Exists(workerLog))
+                throw new InvalidOperationException("A policy-rejected tools/call started the Worker before Host authorization completed.");
+
+            using var echo = await Send2026ToolCallAsync(client, endpoint, 3, "zemax_status", "client-a").ConfigureAwait(false);
             var echoBody = await ReadFirstMcpPayloadAsync(echo).ConfigureAwait(false);
             if (!echo.IsSuccessStatusCode || !echoBody.Contains("echo-ok", StringComparison.Ordinal) || !File.Exists(workerLog))
                 throw new InvalidOperationException("2026 MCP tools/call did not lazy-start and traverse Host, control lease, and Fake Worker.");
@@ -203,10 +211,10 @@ internal static class Program
             if (!health.IsSuccessStatusCode || !healthBody.Contains("\"licenseStatus\":\"fake-license\"", StringComparison.Ordinal))
                 throw new InvalidOperationException("Structured Worker health did not preserve the Worker license result.");
 
-            using var heldResponse = await Send2026ToolCallAsync(client, endpoint, 3, "zemax_get_system", "client-a").ConfigureAwait(false);
+            using var heldResponse = await Send2026ToolCallAsync(client, endpoint, 4, "zemax_get_system", "client-a").ConfigureAwait(false);
             if (!heldResponse.IsSuccessStatusCode) throw new InvalidOperationException("The first client could not retain the control lease across tool names.");
             await Task.Delay(150).ConfigureAwait(false);
-            using var rejectedLease = await Send2026ToolCallAsync(client, endpoint, 4, "zemax_status", "client-b").ConfigureAwait(false);
+            using var rejectedLease = await Send2026ToolCallAsync(client, endpoint, 5, "zemax_status", "client-b").ConfigureAwait(false);
             var rejectedLeaseBody = await ReadFirstMcpPayloadAsync(rejectedLease).ConfigureAwait(false);
             if (!rejectedLeaseBody.Contains("currently leased", StringComparison.OrdinalIgnoreCase) &&
                 !rejectedLeaseBody.Contains("isError", StringComparison.OrdinalIgnoreCase))
