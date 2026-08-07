@@ -6,10 +6,10 @@ OpticStudio's ZOS-API is not a frozen ABI. It has existed since OpticStudio 15, 
 
 The release ZIP does not redistribute `ZOSAPI.dll`, `ZOSAPI_Interfaces.dll`, or `ZOSAPI_NetHelper.dll`. The net48 Worker is compiled against one installed OpticStudio **build baseline**, while the user-selected OpticStudio installation supplies the proprietary assemblies at runtime.
 
-A release package now records its compile-time assembly Product/File/Assembly versions in `ZOSAPI_BUILD_INFO.txt`. `BootstrapProgram` loads the selected installation's ZOS-API assemblies and compares their normalized versions **before** loading `ServerApplication`, which contains compile-time ZOS-API type references.
+A release package now records the compile-time `OpticStudio.exe` Product/File version plus ZOS-API Product/File/Assembly versions in `ZOSAPI_BUILD_INFO.txt`. `OpticStudio.exe` is the primary product-release anchor because managed assembly identities can remain comparatively stable across product releases. `BootstrapProgram` loads the selected installation's ZOS-API assemblies and compares the product/API baseline **before** loading `ServerApplication`, which contains compile-time ZOS-API type references.
 
-- Runtime API equal to or newer than the build baseline: startup is allowed. This establishes the expected binary/API direction, but licensed functional acceptance is still required.
-- Runtime API older than the build baseline: Worker startup is rejected with an explicit compatibility error. This prevents a newer-compiled Worker from failing later with `MissingMethodException`, `TypeLoadException`, or a partially executed operation.
+- Runtime product/API equal to or newer than the build baseline: startup is allowed. This establishes the expected binary/API direction, but licensed functional acceptance is still required.
+- Runtime product/API older than the build baseline: Worker startup is rejected with an explicit compatibility error. This prevents a newer-compiled Worker from failing later with `MissingMethodException`, `TypeLoadException`, or a partially executed operation.
 - Developer build with no baseline marker: startup remains possible, but the Worker reports that cross-version compatibility was not preflighted.
 
 Version parsing normalizes both legacy Zemax forms such as `21.3.2` and Ansys release forms such as `2024 R2.01` / `2026 R1` onto the same comparable scale.
@@ -51,10 +51,12 @@ The following is the repository/API assessment before licensed multi-version acc
 | 2026 | Static reference reviewed | Current ZOS-API documentation used for exact signatures; licensed runtime acceptance still pending. |
 | 2024 | Compatibility target | No known architectural blocker; must pass the real 2024 DLL compile matrix and live smoke test before being claimed as verified. |
 | 2023 | Compatibility target | Same as 2024. Explicit x64 Worker avoids the legacy NetHelper bitness/registry issue. |
-| 2021 R3 / 21.3+ | Compatibility target | `.ZOS` exists from 21.3 onward, but safety code no longer depends on it. |
-| 2021 R1/R2 / 21.1-21.2 | Compatibility target, not yet verified | `.ZOS` does not exist. Safety snapshots and unsaved multistart checkpoints now deliberately use `.ZMX`, which remains supported in newer versions. The complete Worker still must compile against the actual 21.1/21.2 ZOS-API DLLs before this can be advertised as verified support. |
+| 2021 R3 / 21.3+ | Compatibility target | `.ZOS` exists from 21.3 onward, but safety code no longer depends on it. Enhanced Ray Aiming was still experimental; later-only settings are capability-detected. |
+| 2021 R1/R2 / 21.1-21.2 | Compatibility target, not yet verified | `.ZOS` does not exist. Safety snapshots and unsaved multistart checkpoints use `.ZMX`. Ray-aiming settings added during the 21.x/22.1 Enhanced Ray Aiming transition are late-bound and return `null` plus `UnsupportedSettings` when absent. The complete Worker still must compile against the actual 21.1/21.2 ZOS-API DLLs before this can be advertised as verified support. |
 
 Important reviewed APIs are older than 2021: the sequential Off-Axis Conic Freeform appeared in OpticStudio 20.2, POP was added to ZOS-API in 20.3, `ISEQOptimizationWizard2` was already the recommended wizard interface before 2021, and `IMCERow.GetOperandCell(configuration)` appears in Zemax examples from 2019. These specific Stage E/F changes therefore do not by themselves force a 2023/2024/2026 minimum.
+
+One concrete post-2021 surface was found during this audit: Enhanced Ray Aiming became a formal feature in OpticStudio 22.1, while Advanced Convergence, Fallback Search, and Number-of-Steps evolved through the 2021 feature experiments. `zemax_get_ray_aiming_settings` therefore no longer directly binds those optional members at compile time. It capability-detects `UseEnhancedRayAiming`, `UseAdvancedConvergence`, `UseFallBackSearchDuringCacheSetup`, and `NumStepsCacheSetup`; unavailable members are represented as `null` and listed explicitly instead of being fabricated as `false`/`0`.
 
 ## File-format compatibility
 
