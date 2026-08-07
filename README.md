@@ -2,13 +2,14 @@
 - **Hardened Host / Worker isolation** — MCP ends at the Host. The `net48` Worker accepts only private RPC v3, keeps STA/ZOS-API state, and never exposes a network transport. The Host verifies Worker PID, per-launch secret, RPC version, and the static manifest SHA-256 fingerprint before ZOS-API initialization or any OpticStudio COM operation.
 - **Transport-independent control lease** — modern MCP requests can be stateless while OpticStudio remains deliberately single-owner, single-STA, and serialized. Per-instance identity prevents supported same-machine clients from collapsing into one owner.
 - **Authenticated LAN use** — every launcher-managed request uses a random Bearer token. LAN listening is refused without a token, and token rotation is one click.
-- **Lens-change safety** — one explicit metadata catalogue drives both the MCP risk display and ZOS-API protection. Read-only mode blocks high-impact operations; in read/write mode, every recognised mutation first saves a timestamped copy of the current lens, while unknown execution commands fail closed as high impact.
+- **Lens-change safety** — one explicit metadata catalogue drives both the MCP risk display and ZOS-API protection. Read-only mode blocks high-impact operations; in read/write mode, every recognised mutation first saves a timestamped `.zmx` copy of the current lens. ZMX is deliberately used as the cross-version safety format because `.ZOS` was not introduced until OpticStudio 21.3; unknown execution commands fail closed as high impact.
 - **Structured progress/events** — Worker job and snapshot callbacks use a serialized event queue. The Host dispatches them independently from result processing, retains recent state for diagnostics, and forwards matching operation progress through MCP when a request supplied a progress token.
 - **Verified, clean updates** — release metadata is RSA-signed, the ZIP size and SHA-256 are checked before extraction, and the updater replaces superseded program files while retaining logs and snapshots; it restores the previous installation if replacement fails.
 - **Dedicated ZOS-API thread** — the Worker serializes every connection and tool operation on one long-lived STA thread to respect the COM threading model and avoid cross-thread session access.
 - **Long-job control** — POP, global search, and multistart optimization can return immediately with a job id. Use `zemax_job_status`, `zemax_job_list`, and `zemax_job_cancel` for queue position, live progress, result retrieval, and cooperative cancellation; the launcher also shows the active tool/job and elapsed time.
 - **Per-client live dashboard** — colour-coded cards distinguish installation, configuration, historical activity, and a real request made within the last five minutes. The launcher health check is excluded from AI activity.
 - **Multi-version OpticStudio detection** — detects classic Zemax and current `ANSYS Inc\v*` layouts from environment variables, both registry views, uninstall entries, and known Program Files locations. The launcher validates all three ZOS-API assemblies before offering a version.
+- **Cross-version ZOS-API release policy** — the Worker is explicitly x64 for legacy NetHelper compatibility. Release packages are compiled against an explicit oldest-supported OpticStudio/ZOS-API baseline and record that product/API version in `ZOSAPI_BUILD_INFO.txt`. Startup rejects a selected OpticStudio older than the compile baseline before loading Worker code that contains ZOS-API type references. Use `scripts/verify-zosapi-compatibility.ps1` to compile the complete Worker against every actual OpticStudio version that a release claims to support.
 - **Safe public package** — the ZIP does not redistribute proprietary ZOS-API DLLs. It uses the licensed OpticStudio installation at runtime on the Zemax computer.
 
 ## Reliability and protocol guarantees
@@ -31,11 +32,27 @@ The static `ZemaxMCP.ToolManifest` is the common contract authority for Host and
 
 The separate OpticStudio control lease expires after fifteen minutes without activity unless an operation is active. Identity resolution prefers a dedicated authenticated client profile, then request-scoped `io.zemaxmcp/clientInstanceId`, then `X-Zemax-MCP-Client-Instance`, then a hashed legacy `Mcp-Session-Id`, and finally `clientInfo.name + clientInfo.version + remote IP`. MCP routing headers such as `Mcp-Name` are never treated as client identity. The packaged Claude/stdin proxy emits a fresh instance identifier for every proxy process.
 
+## OpticStudio / ZOS-API version compatibility
+
+Current Ansys ZOS-API documentation is used to verify the exact contract of modern interfaces, but a release does **not** infer old-version compatibility from the newest documentation. ZOS-API functionality has expanded over time, so source/API compatibility for an older release must be proved against that release's real DLLs.
+
+The release direction is therefore explicit:
+
+1. Run `scripts/verify-zosapi-compatibility.ps1` against every installed OpticStudio family that the release intends to support. This only compiles the Worker against those DLLs and does not start OpticStudio or consume a license.
+2. Build the release Worker against the **oldest** version that passed the compile matrix by setting `ZEMAX_API_BASELINE_ROOT`.
+3. The package records the baseline `OpticStudio.exe` and ZOS-API versions in `ZOSAPI_BUILD_INFO.txt`.
+4. At Worker startup, the selected OpticStudio product/API versions are compared with that baseline **before** `ServerApplication` is loaded. An older runtime is rejected explicitly instead of being allowed to fail later with `MissingMethodException`/`TypeLoadException`.
+5. Finally run licensed live acceptance on each version family that will be advertised as supported.
+
+Known legacy differences are handled deliberately. Automatic safety snapshots and unsaved multistart checkpoints use `.zmx`, because `.ZOS` did not exist before OpticStudio 21.3. Enhanced Ray Aiming options that evolved during 2021 and became formal in 22.1 are capability-detected; early versions return `null` and `UnsupportedSettings` for unavailable optional fields rather than fabricating values or raising the minimum API for the entire Worker.
+
+See `docs/ZOSAPI_COMPATIBILITY.md` for the current 2021/2023/2024/2026 compatibility matrix and release policy.
+
 ## Release validation
 
-Hosted CI validates the public/static contract, safety metadata, Host/private-RPC boundary, recovery paths, desktop packaging, updater rollback, and signed-update tamper rejection. It also runs functional safety guards that keep global ZOS-API initialization in Worker startup and prohibit ReadOnly analysis tools from structurally modifying the user's Merit Function Editor.
+Hosted CI validates the public/static contract, safety metadata, Host/private-RPC boundary, recovery paths, desktop packaging, updater rollback, signed-update tamper rejection, and the cross-version ZOS-API policy guards. It also runs functional safety guards that keep global ZOS-API initialization in Worker startup and prohibit ReadOnly analysis tools from structurally modifying the user's Merit Function Editor.
 
-A licensed OpticStudio installation is still required for release acceptance. `scripts/verify-live-mcp.ps1` uses MCP `2026-07-28` stateless requests as its primary path, verifies Host/Worker RPC and manifest agreement, executes a curated live read-only smoke set, and can verify mutation/snapshot safety. `docs/RELEASE_VALIDATION.md` records the staged 126-tool review and the exact live release gate. A green hosted workflow is therefore necessary but is not claimed as proof that every ZOS-API operation has been exercised against a real OpticStudio build.
+A licensed OpticStudio installation is still required for release acceptance. `scripts/verify-live-mcp.ps1` uses MCP `2026-07-28` stateless requests as its primary path, verifies Host/Worker RPC and manifest agreement, executes a curated live read-only smoke set, and can verify mutation/snapshot safety. `docs/RELEASE_VALIDATION.md` records the staged 126-tool review, old-version compile matrix, and exact live release gate. A green hosted workflow is therefore necessary but is not claimed as proof that every ZOS-API operation has been exercised against a real OpticStudio build.
 
 ## Connection modes
 
@@ -61,7 +78,7 @@ For an unusual portable layout, set `ZEMAX_ROOT` to the program directory and op
 Use **Configure AI clients** in the launcher. Existing unrelated MCP entries are preserved and a backup is kept when an existing configuration is replaced. Supported HTTP clients receive both the endpoint and its Bearer header; Claude's packaged proxy receives the token without putting it in the server URL. If a token is rotated, reconfigure each client so its saved credential matches.
 
 | Client | Configuration used by the launcher | Connection confirmation |
-|---|---|---|
+|---|---|
 | Codex | `$CODEX_HOME/config.toml`, or `~/.codex/config.toml` | The client card turns green after an actual request. |
 | Claude Desktop | `%APPDATA%/Claude/claude_desktop_config.json`; the packaged local stdio proxy reaches the HTTP/LAN endpoint and provides per-process client identity | The client card turns green after an actual request. |
 | Cursor | `~/.cursor/mcp.json` | The client card turns green after an actual request. |
