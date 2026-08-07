@@ -29,9 +29,10 @@ $pop = Get-Content -LiteralPath (Join-Path $analysisRoot "PopTool.cs") -Raw
 if ($pop -notmatch 'RestoreTemporaryResampling' -or
     $pop -notmatch 'analysis\.Terminate\(\)' -or
     $pop -notmatch 'results\.GetDataGrid\(0\)' -or
+    $pop -notmatch 'AnalysisBmpHelper\.TryExportBmp\(results, bmpTempPath, cancellationToken\)' -or
     $pop -notmatch 'overwriteOutputFiles' -or
     $pop -match '\bdynamic\b') {
-    throw "zemax_pop must retain typed result retrieval, cancellable analysis termination, temporary LDE-state restoration, and explicit output overwrite policy."
+    throw "zemax_pop must retain typed result retrieval, cancellable analysis/BMP execution, temporary LDE-state restoration, and explicit output overwrite policy."
 }
 
 $detector = Get-Content -LiteralPath (Join-Path $nscRoot "GetNscDetectorTool.cs") -Raw
