@@ -78,3 +78,4 @@ Write-Host "Verified $discovered Worker tool classes and $($toolNames.Count) uni
 & (Join-Path $PSScriptRoot "verify-functional-safety.ps1") -RepositoryRoot $root
 & (Join-Path $PSScriptRoot "verify-optimization-contracts.ps1") -RepositoryRoot $root
 & (Join-Path $PSScriptRoot "verify-specialized-contracts.ps1") -RepositoryRoot $root
+& (Join-Path $PSScriptRoot "verify-zosapi-version-policy.ps1") -RepositoryRoot $root
