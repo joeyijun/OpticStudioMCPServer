@@ -30,7 +30,7 @@ public class MultistartOptimizeTool
         string? JobId = null);
 
     [ZemaxTool(Name = "zemax_multistart_optimize")]
-    [Description("Start non-blocking custom multistart optimization. Cancellation propagates through variable/material discovery and every LM/Jacobian evaluation; cancellation restores the best accepted design. Checkpoint saves use CopySystem so the active lens file identity is not changed.")]
+    [Description("Start non-blocking custom multistart optimization. Cancellation propagates through variable/material discovery and every LM/Jacobian evaluation; cancellation restores the best accepted design. Checkpoint saves use CopySystem so the active lens file identity is not changed. Unsaved designs use ZMX checkpoints for compatibility with OpticStudio releases before 21.3.")]
     public MultistartOptimizeResult Execute(
         [Description("Number of random restart trials; must be > 0.")] int maxTrials = 100,
         [Description("LM iterations per trial; must be > 0.")] int lmIterationsPerTrial = 50,
@@ -62,7 +62,11 @@ public class MultistartOptimizeTool
             bool skipInitialLm = resume;
             if (!skipInitialLm) _multistartState.Reset();
 
-            string saveExtension = ".zos";
+            // ZOS was introduced in OpticStudio 21.3. For an unsaved design use
+            // ZMX, which remains supported by modern OpticStudio and also works
+            // with earlier 2021 releases. An already-saved design keeps its own
+            // .zmx/.zos format for checkpoints.
+            string saveExtension = ".zmx";
             var currentFile = _session.CurrentFilePath;
             if (!string.IsNullOrEmpty(currentFile))
             {
