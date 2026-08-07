@@ -166,7 +166,8 @@ public sealed class WorkerToolRegistry
             {
                 foreach (var parameter in constructor.GetParameters())
                 {
-                    var name = parameter.Name ?? throw new InvalidOperationException("A model constructor parameter has no name.");
+                    var rawName = parameter.Name ?? throw new InvalidOperationException("A model constructor parameter has no name.");
+                    var name = JsonNamingPolicy.CamelCase.ConvertName(rawName);
                     var schema = BuildTypeSchema(parameter.ParameterType, stack);
                     var description = parameter.GetCustomAttribute<DescriptionAttribute>()?.Description;
                     if (!string.IsNullOrWhiteSpace(description)) schema["description"] = description;
