@@ -8,6 +8,8 @@ $hostOptions = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\Modern
 $rpcClient = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\WorkerRpcClient.cs")
 $workerSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Program.cs")
 $workerRpc = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Rpc\WorkerRpcServer.cs")
+$workerProject = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\ZemaxMCP.Server.csproj")
+$workerTools = Get-ChildItem (Join-Path $root "src\ZemaxMCP.Server\Tools") -Recurse -Filter *.cs | ForEach-Object { Get-Content -Raw $_.FullName } | Out-String
 $privateRpcTest = Get-Content -Raw (Join-Path $root "tests\ZemaxMCP.PrivateRpcTests\Program.cs")
 $packages = Get-Content -Raw (Join-Path $root "Directory.Packages.props")
 
@@ -22,12 +24,16 @@ if ($hostSource -notmatch 'MapMcp\(' -or $hostSource -notmatch 'WithHttpTranspor
     $hostSource -match 'HttpListener|JsonRpcRequest') {
   throw "The Host must use the official ASP.NET Core MCP transport rather than a hand-written HTTP/JSON-RPC dispatcher."
 }
-if ($workerSource -match 'WithStdioServerTransport|WithStreamServerTransport|host\.RunAsync\(') {
+if ($workerSource -match 'WithStdioServerTransport|WithStreamServerTransport|AddMcpServer|host\.RunAsync\(' -or
+    $workerRpc -match 'ModelContextProtocol|McpServerTool|RequestContext' -or
+    $workerProject -match 'PackageReference Include="ModelContextProtocol"' -or
+    $workerTools -match 'ModelContextProtocol|McpServerTool') {
   throw "The Worker must not own an MCP transport."
 }
 if ($workerRpc -notmatch 'ZemaxRpcProtocol\.InvokeTool' -or $workerRpc -notmatch 'CancellationTokenSource' -or
+    $workerRpc -notmatch 'WorkerToolRegistry' -or
     $workerRpc -notmatch 'SemaphoreSlim _executionGate') {
-  throw "The Worker RPC server must provide typed tool invocation, cancellation, and a single execution boundary."
+  throw "The Worker RPC server must provide protocol-neutral tool invocation, cancellation, and a single execution boundary."
 }
 if ($rpcClient -notmatch 'PipeSecurity' -or $rpcClient -notmatch 'ZEMAX_MCP_PIPE_SECRET' -or
     $rpcClient -notmatch 'CancelOperation') {

@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Configuration;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetCurrentConfigurationTool
 {
     private readonly IZemaxSession _session;
@@ -18,7 +18,7 @@ public class SetCurrentConfigurationTool
         int NumberOfConfigurations
     );
 
-    [McpServerTool(Name = "zemax_set_current_configuration")]
+    [ZemaxTool(Name = "zemax_set_current_configuration")]
     [Description("Set the current active configuration")]
     public async Task<SetCurrentConfigurationResult> ExecuteAsync(
         [Description("Configuration number to set as current (1-indexed)")] int configurationNumber)

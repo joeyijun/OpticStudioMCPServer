@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZOSAPI;
 
 namespace ZemaxMCP.Server.Tools.NonSequential;
 
-[McpServerToolType]
+[ZemaxToolType]
 public sealed class GetNscDetectorTool
 {
     private readonly IZemaxSession _session;
@@ -23,7 +23,7 @@ public sealed class GetNscDetectorTool
         uint TotalPixels,
         string? DisplayMode);
 
-    [McpServerTool(Name = "zemax_get_nsc_detector")]
+    [ZemaxTool(Name = "zemax_get_nsc_detector")]
     [Description("Inspect an NSC detector's dimensions and display mode without reading or changing detector data. Requires a non-sequential system.")]
     public async Task<Result> ExecuteAsync(
         [Description("NSC detector object number (1-indexed)")] int objectNumber)

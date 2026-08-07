@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SpotDiagramTool
 {
     private readonly IZemaxSession _session;
@@ -15,7 +15,7 @@ public class SpotDiagramTool
         _session = session;
     }
 
-    [McpServerTool(Name = "zemax_spot_diagram")]
+    [ZemaxTool(Name = "zemax_spot_diagram")]
     [Description("Get spot size analysis using RMS spot operands")]
     public async Task<SpotDiagramData> ExecuteAsync(
         [Description("Field number (1-indexed)")] int field = 1,

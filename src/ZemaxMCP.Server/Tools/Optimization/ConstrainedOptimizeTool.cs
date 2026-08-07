@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Services.ConstrainedOptimization;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class ConstrainedOptimizeTool
 {
     private readonly IZemaxSession _session;
@@ -27,7 +27,7 @@ public class ConstrainedOptimizeTool
         string Message
     );
 
-    [McpServerTool(Name = "zemax_constrained_optimize")]
+    [ZemaxTool(Name = "zemax_constrained_optimize")]
     [Description("Custom MCP-implemented bound-constrained Levenberg-Marquardt optimizer with Broyden rank-1 Jacobian updates. The LM algorithm runs entirely in the MCP server, using ZOSAPI only to get/set variable values and evaluate the merit function. Set variable constraints first with zemax_set_variable_constraints. NOT a built-in Zemax optimizer.")]
     public async Task<ConstrainedOptimizeResult> ExecuteAsync(
         [Description("Maximum iterations (default 200)")] int maxIterations = 200,

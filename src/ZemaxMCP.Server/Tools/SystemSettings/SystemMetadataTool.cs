@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.SystemSettings;
 
-[McpServerToolType]
+[ZemaxToolType]
 public sealed class SystemMetadataTool
 {
     private readonly IZemaxSession _session;
@@ -12,11 +12,11 @@ public sealed class SystemMetadataTool
 
     public record MetadataResult(bool Success, string? Error, string Title, string Author, string Notes, bool NeedsSave);
 
-    [McpServerTool(Name = "zemax_get_system_metadata")]
+    [ZemaxTool(Name = "zemax_get_system_metadata")]
     [Description("Read the optical system title, author, notes, and unsaved-change state.")]
     public Task<MetadataResult> GetAsync() => ExecuteAsync("GetSystemMetadata", null, null, null);
 
-    [McpServerTool(Name = "zemax_set_system_metadata")]
+    [ZemaxTool(Name = "zemax_set_system_metadata")]
     [Description("Set one or more optical system metadata fields. Omitted fields are preserved; the file is not saved automatically.")]
     public Task<MetadataResult> SetAsync(
         [Description("New system title; omit to preserve it")] string? title = null,

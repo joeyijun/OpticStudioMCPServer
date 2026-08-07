@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public sealed class VignettingTool
 {
     private readonly IZemaxSession _session;
@@ -14,15 +14,15 @@ public sealed class VignettingTool
     public record FieldVignetting(int FieldNumber, double X, double Y, double VDX, double VDY, double VCX, double VCY, double TAN);
     public record VignettingResult(bool Success, string? Error, string Operation, string Normalization, IReadOnlyList<FieldVignetting> Fields, bool NeedsSave);
 
-    [McpServerTool(Name = "zemax_get_vignetting")]
+    [ZemaxTool(Name = "zemax_get_vignetting")]
     [Description("Read VDX, VDY, VCX, VCY, and TAN vignetting factors for every sequential field.")]
     public Task<VignettingResult> GetAsync() => ExecuteAsync("read");
 
-    [McpServerTool(Name = "zemax_set_vignetting")]
+    [ZemaxTool(Name = "zemax_set_vignetting")]
     [Description("Ask OpticStudio to calculate and set vignetting factors for all sequential fields. The file is not saved automatically.")]
     public Task<VignettingResult> SetAsync() => ExecuteAsync("calculate");
 
-    [McpServerTool(Name = "zemax_clear_vignetting")]
+    [ZemaxTool(Name = "zemax_clear_vignetting")]
     [Description("Clear all sequential field vignetting factors. The file is not saved automatically.")]
     public Task<VignettingResult> ClearAsync() => ExecuteAsync("clear");
 

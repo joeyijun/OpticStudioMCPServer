@@ -1,12 +1,12 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 using ZOSAPI.Editors.LDE;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GetAsphericSurfaceTool
 {
     private readonly IZemaxSession _session;
@@ -38,7 +38,7 @@ public class GetAsphericSurfaceTool
         List<AsphericCoefficient> Coefficients
     );
 
-    [McpServerTool(Name = "zemax_get_aspheric_surface")]
+    [ZemaxTool(Name = "zemax_get_aspheric_surface")]
     [Description("Get detailed data for an aspheric surface including all Even Asphere coefficients (α₁ through α₈). Works on any surface - returns IsAspheric=false for non-aspheric surfaces.")]
     public async Task<AsphericSurfaceData> ExecuteAsync(
         [Description("Surface number to read (0 for object, -1 for image)")] int surfaceNumber)

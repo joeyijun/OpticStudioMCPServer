@@ -1,6 +1,6 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZOSAPI.Analysis;
 using ZOSAPI.Analysis.Settings;
@@ -11,7 +11,7 @@ namespace ZemaxMCP.Server.Tools.Analysis;
 // 说明:接口段从历史会话记录恢复(逐字复刻);设置应用段(原记录在 lambda 起始处截断)
 // 按反射得到的 IAS_HuygensPsf 权威成员名强类型重建;结果提取段按 main 现有 PopTool 写法重建。
 // 运行时数值语义待 OpticStudio ZOSAPI 连接可用后核验。
-[McpServerToolType]
+[ZemaxToolType]
 public class HuygensPsfTool
 {
     private const int InlineGridCellLimit = 65536;
@@ -32,7 +32,7 @@ public class HuygensPsfTool
         string? TextPath = null,
         string? GridPath = null);
 
-    [McpServerTool(Name = "zemax_huygens_psf")]
+    [ZemaxTool(Name = "zemax_huygens_psf")]
     [Description(
         "Run Huygens Point Spread Function analysis. More accurate than FFT PSF near caustics or "
         + "in highly aberrated systems (uses physical wavelet superposition rather than FFT). "
@@ -181,9 +181,9 @@ public class HuygensPsfTool
                     { strehl = v; break; }
             }
             else if (field == null && lower.StartsWith("field") && line.Contains(':'))
-                field = line[(line.IndexOf(':') + 1)..].Trim();
+                field = line.Substring(line.IndexOf(':') + 1).Trim();
             else if (wave == null && (lower.StartsWith("wave") || lower.StartsWith("wavelength")) && line.Contains(':'))
-                wave = line[(line.IndexOf(':') + 1)..].Trim();
+                wave = line.Substring(line.IndexOf(':') + 1).Trim();
         }
         return (strehl, field, wave);
     }

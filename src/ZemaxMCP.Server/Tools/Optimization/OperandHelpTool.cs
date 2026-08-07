@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Documentation;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class OperandHelpTool
 {
     private readonly OperandDatabase _operandDb;
@@ -23,7 +23,7 @@ public class OperandHelpTool
         List<string>? RelatedOperands
     );
 
-    [McpServerTool(Name = "zemax_operand_help")]
+    [ZemaxTool(Name = "zemax_operand_help")]
     [Description("Get detailed help for a specific optimization operand")]
     public Task<OperandHelpResult> ExecuteAsync(
         [Description("Operand type (e.g., EFFL, MTFT, RSCE)")] string operandType)

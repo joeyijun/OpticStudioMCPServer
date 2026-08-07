@@ -1,19 +1,19 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 using ZOSAPI.Tools.RayTrace;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class RayTraceTool
 {
     private readonly IZemaxSession _session;
 
     public RayTraceTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_ray_trace")]
+    [ZemaxTool(Name = "zemax_ray_trace")]
     [Description("Trace a ray through the optical system using batch ray tracing")]
     public async Task<RayTraceResult> ExecuteAsync(
         [Description("Normalized field x coordinate (-1 to 1)")] double hx = 0,

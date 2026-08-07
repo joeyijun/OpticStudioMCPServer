@@ -1,19 +1,19 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class LateralColorTool
 {
     private readonly IZemaxSession _session;
 
     public LateralColorTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_lateral_color")]
+    [ZemaxTool(Name = "zemax_lateral_color")]
     [Description("Calculate lateral color (chromatic aberration in the image plane) as a function of field. Returns lateral color in µm for each relative field position using real ray tracing between the short and long wavelengths.")]
     public async Task<LateralColorData> ExecuteAsync()
     {

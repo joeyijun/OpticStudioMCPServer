@@ -1,19 +1,19 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class OpticalPathFanTool
 {
     private readonly IZemaxSession _session;
 
     public OpticalPathFanTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_opd_fan")]
+    [ZemaxTool(Name = "zemax_opd_fan")]
     [Description("Calculate optical path difference (OPD) fan for all fields and wavelengths. Returns tangential (OPD vs Py) and sagittal (OPD vs Px) fans for each field point. Units are waves.")]
     public async Task<RayFanData> ExecuteAsync()
     {

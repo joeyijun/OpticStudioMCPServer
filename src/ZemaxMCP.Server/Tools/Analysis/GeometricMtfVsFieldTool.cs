@@ -1,19 +1,19 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GeometricMtfVsFieldTool
 {
     private readonly IZemaxSession _session;
 
     public GeometricMtfVsFieldTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_geometric_mtf_vs_field")]
+    [ZemaxTool(Name = "zemax_geometric_mtf_vs_field")]
     [Description("Calculate polychromatic Geometric MTF as a function of Y field height for up to 6 spatial frequencies. Returns tangential and sagittal modulation versus relative field for each frequency. Uses ray-based (geometric) MTF calculation.")]
     public async Task<FftMtfVsFieldData> ExecuteAsync(
         [Description("Spatial frequency 1 in cycles/mm")] double frequency1 = 10,

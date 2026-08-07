@@ -1,12 +1,12 @@
 using System.ComponentModel;
 using System.Reflection;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZOSAPI.Analysis;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GeometricImageAnalysisTool
 {
     private readonly IZemaxSession _session;
@@ -26,7 +26,7 @@ public class GeometricImageAnalysisTool
         string? ImageFilePath = null,
         double[][]? IrradianceData = null);
 
-    [McpServerTool(Name = "zemax_geometric_image_analysis")]
+    [ZemaxTool(Name = "zemax_geometric_image_analysis")]
     [Description(
         "Run Geometric Image Analysis (IMA) on the current optical system. "
         + "Computes the geometric ray-based irradiance distribution at the image plane. "

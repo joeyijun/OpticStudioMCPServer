@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class ListSurfaceTypesTool
 {
     private readonly IZemaxSession _session;
@@ -17,7 +17,7 @@ public class ListSurfaceTypesTool
         string[]? AvailableTypes = null,
         string? Source = null);
 
-    [McpServerTool(Name = "zemax_list_surface_types")]
+    [ZemaxTool(Name = "zemax_list_surface_types")]
     [Description(
         "List all surface type names supported by the installed ZOSAPI version. "
         + "Returns the names of the ZOSAPI.Editors.LDE.SurfaceType enum, which is stable "

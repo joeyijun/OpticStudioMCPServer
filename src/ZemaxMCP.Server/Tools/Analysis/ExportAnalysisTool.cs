@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZOSAPI.Analysis;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class ExportAnalysisTool
 {
     private readonly IZemaxSession _session;
@@ -19,7 +19,7 @@ public class ExportAnalysisTool
         string? ImagePath = null,
         string? TextPath = null);
 
-    [McpServerTool(Name = "zemax_export_analysis")]
+    [ZemaxTool(Name = "zemax_export_analysis")]
     [Description(
         "Run any Zemax analysis and export the result as an image (BMP) and/or text file. "
         + "Supported types: 'StandardSpot', 'MatrixSpot', 'FftMtf', 'GeometricMtf', "

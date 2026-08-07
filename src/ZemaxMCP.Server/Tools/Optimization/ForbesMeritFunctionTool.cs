@@ -1,5 +1,5 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZOSAPI.Editors.MFE;
 
@@ -13,7 +13,7 @@ namespace ZemaxMCP.Server.Tools.Optimization;
 /// Reference: G.W. Forbes, "Optical system assessment for design: numerical ray tracing
 /// in the Gaussian pupil", J. Opt. Soc. Am. A, Vol. 5, No. 11, November 1988.
 /// </summary>
-[McpServerToolType]
+[ZemaxToolType]
 public class ForbesMeritFunctionTool
 {
     private readonly IZemaxSession _session;
@@ -32,7 +32,7 @@ public class ForbesMeritFunctionTool
         List<string> Summary
     );
 
-    [McpServerTool(Name = "zemax_forbes_merit_function")]
+    [ZemaxTool(Name = "zemax_forbes_merit_function")]
     [Description("Create merit function using Forbes 1988 Gaussian quadrature pupil sampling with explicit OPD operands. Generates OPDX/OPDC/OPDM operands with optimal (Px, Py) sampling points for all configurations, fields, and wavelengths.")]
     public async Task<ForbesMeritFunctionResult> ExecuteAsync(
         [Description("OPD operand type: OPDX (centroid, no tilt), OPDC (chief ray), or OPDM (max OPD)")]

@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Configuration;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class DeleteConfigurationOperandTool
 {
     private readonly IZemaxSession _session;
@@ -18,7 +18,7 @@ public class DeleteConfigurationOperandTool
         int NumberOfOperands
     );
 
-    [McpServerTool(Name = "zemax_delete_configuration_operand")]
+    [ZemaxTool(Name = "zemax_delete_configuration_operand")]
     [Description("Delete a configuration operand from the multi-configuration editor")]
     public async Task<DeleteConfigurationOperandResult> ExecuteAsync(
         [Description("Row number to delete (1-indexed)")] int row)

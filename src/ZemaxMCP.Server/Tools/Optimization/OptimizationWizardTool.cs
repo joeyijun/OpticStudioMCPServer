@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZOSAPI.Editors.MFE;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class OptimizationWizardTool
 {
     private readonly IZemaxSession _session;
@@ -24,7 +24,7 @@ public class OptimizationWizardTool
         List<string> OperandsSummary
     );
 
-    [McpServerTool(Name = "zemax_optimization_wizard")]
+    [ZemaxTool(Name = "zemax_optimization_wizard")]
     [Description("Automatically construct a merit function based on optimization criteria (similar to Zemax Optimization Wizard)")]
     public async Task<OptimizationWizardResult> ExecuteAsync(
         [Description("Optimization criterion: RMSSpotRadius, RMSSpotRadiusX, RMSSpotRadiusY, RMSWavefront, PeakToValley")]

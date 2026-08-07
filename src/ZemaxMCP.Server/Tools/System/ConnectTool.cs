@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.System;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class ConnectTool
 {
     private readonly IZemaxSession _session;
@@ -19,7 +19,7 @@ public class ConnectTool
         string? Mode
     );
 
-    [McpServerTool(Name = "zemax_connect")]
+    [ZemaxTool(Name = "zemax_connect")]
     [Description("Connect to Zemax OpticStudio. Modes: 'standalone' (default, launches headless instance) or 'extension' (connect to running OpticStudio with UI - requires Programming > Interactive Extension enabled in OpticStudio). A call switches modes or extension instance IDs when necessary.")]
     public async Task<ConnectResult> ExecuteAsync(
         [Description("Connection mode: 'standalone' (headless, no UI) or 'extension' (attach to running OpticStudio with UI). Default: standalone.")]
@@ -65,11 +65,11 @@ public class ConnectTool
         }
     }
 
-    [McpServerTool(Name = "zemax_status")]
+    [ZemaxTool(Name = "zemax_status")]
     [Description("Get the current OpticStudio connection status, including the actual connection mode.")]
     public Task<ConnectResult> GetStatusAsync() => Task.FromResult(Result(_session.IsConnected));
 
-    [McpServerTool(Name = "zemax_disconnect")]
+    [ZemaxTool(Name = "zemax_disconnect")]
     [Description("Disconnect from Zemax OpticStudio and close the application. Use this to cleanly close the session.")]
     public async Task<ConnectResult> DisconnectAsync()
     {
@@ -84,7 +84,7 @@ public class ConnectTool
         }
     }
 
-    [McpServerTool(Name = "zemax_restart")]
+    [ZemaxTool(Name = "zemax_restart")]
     [Description("Restart the Zemax OpticStudio connection using the configured default connection mode.")]
     public async Task<ConnectResult> RestartAsync()
     {

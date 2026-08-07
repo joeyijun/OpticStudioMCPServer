@@ -1,5 +1,5 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZOSAPI.Editors;
 using ZOSAPI.Editors.LDE;
 using ZemaxMCP.Core.Models;
@@ -7,7 +7,7 @@ using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetSurfaceSolveTool
 {
     private readonly IZemaxSession _session;
@@ -20,7 +20,7 @@ public class SetSurfaceSolveTool
         SolveData? NewSolveData
     );
 
-    [McpServerTool(Name = "zemax_set_surface_solve")]
+    [ZemaxTool(Name = "zemax_set_surface_solve")]
     [Description("Set the solve type for a surface property (radius, thickness, conic, semiDiameter, material, or parameter)")]
     public async Task<SetSurfaceSolveResult> ExecuteAsync(
         [Description("Surface number")] int surfaceNumber,

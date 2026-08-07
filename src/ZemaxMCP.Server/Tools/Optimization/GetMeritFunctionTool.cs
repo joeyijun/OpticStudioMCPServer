@@ -1,13 +1,13 @@
 using System.ComponentModel;
 using Microsoft.Extensions.Logging;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GetMeritFunctionTool
 {
     private readonly IZemaxSession _session;
@@ -27,7 +27,7 @@ public class GetMeritFunctionTool
         List<Operand> Operands
     );
 
-    [McpServerTool(Name = "zemax_get_merit_function")]
+    [ZemaxTool(Name = "zemax_get_merit_function")]
     [Description("Retrieve the current merit function with all operands")]
     public async Task<GetMeritFunctionResult> ExecuteAsync(
         [Description("Include operand values (recalculates if needed)")] bool includeValues = true,

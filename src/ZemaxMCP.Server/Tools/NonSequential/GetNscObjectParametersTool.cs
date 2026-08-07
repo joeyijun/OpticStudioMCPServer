@@ -1,5 +1,5 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZOSAPI;
 using ZOSAPI.Editors;
@@ -7,7 +7,7 @@ using ZOSAPI.Editors.NCE;
 
 namespace ZemaxMCP.Server.Tools.NonSequential;
 
-[McpServerToolType]
+[ZemaxToolType]
 public sealed class GetNscObjectParametersTool
 {
     private const int MaximumParametersPerRequest = 100;
@@ -18,7 +18,7 @@ public sealed class GetNscObjectParametersTool
     public record ObjectParameter(int Number, string Name, string Value, string DataType, bool IsActive, bool IsReadOnly);
     public record Result(bool Success, string? Error, int ObjectNumber, string? ObjectType, int NumberOfAvailableParameters, IReadOnlyList<ObjectParameter> Parameters);
 
-    [McpServerTool(Name = "zemax_get_nsc_object_parameters")]
+    [ZemaxTool(Name = "zemax_get_nsc_object_parameters")]
     [Description("Read type-specific parameters of a non-sequential component (NSC) object. This is read-only and requires a non-sequential system.")]
     public async Task<Result> ExecuteAsync(
         [Description("NSC object number (1-indexed)")] int objectNumber,

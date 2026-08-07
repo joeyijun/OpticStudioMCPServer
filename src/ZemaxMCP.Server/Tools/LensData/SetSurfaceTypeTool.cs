@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetSurfaceTypeTool
 {
     private readonly IZemaxSession _session;
@@ -19,7 +19,7 @@ public class SetSurfaceTypeTool
         string? NewType = null,
         string[]? AvailableTypes = null);
 
-    [McpServerTool(Name = "zemax_set_surface_type")]
+    [ZemaxTool(Name = "zemax_set_surface_type")]
     [Description(
         "Change the surface type (e.g., Standard, CoordinateBreak, EvenAspheric, Toroidal, etc.). "
         + "Common types: 'Standard', 'CoordinateBreak', 'EvenAspheric', 'OddAspheric', "

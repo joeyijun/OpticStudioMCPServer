@@ -1,18 +1,18 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZOSAPI.Tools.RayTrace;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class ApertureThroughputTool
 {
     private readonly IZemaxSession _session;
     public ApertureThroughputTool(IZemaxSession session) => _session = session;
     public record VignetteCount(int Surface,int Count);
     public record Result(bool Success,string? Error=null,int SurfaceNumber=0,int GridSize=0,int TotalPupilRays=0,int ClearRays=0,int VignettedRays=0,int ErrorRays=0,double ClearFraction=0,double IntensityWeightedFraction=0,VignetteCount[]? VignetteBySurface=null);
-    [McpServerTool(Name="zemax_aperture_throughput")]
+    [ZemaxTool(Name="zemax_aperture_throughput")]
     [Description("Trace a circular normalized-pupil grid and report real aperture/obscuration throughput and vignette surface counts.")]
     public async Task<Result> ExecuteAsync(double hx=0,double hy=0,int wavelength=1,int surface=0,int gridSize=41)
     {

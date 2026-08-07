@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.SystemSettings;
 
-[McpServerToolType]
+[ZemaxToolType]
 public sealed class SystemExplorerStatusTool
 {
     private readonly IZemaxSession _session;
@@ -31,7 +31,7 @@ public sealed class SystemExplorerStatusTool
         double GlueDistanceInLensUnits, double MissedRayDrawDistanceInLensUnits, bool SimpleRaySplitting,
         bool RetraceSourceRaysUponFileOpen);
 
-    [McpServerTool(Name = "zemax_get_advanced_system_settings")]
+    [ZemaxTool(Name = "zemax_get_advanced_system_settings")]
     [Description("Read System Explorer advanced settings for OPD reference, paraxial rays, F-number computation, Huygens integration, threading, and session files.")]
     public async Task<AdvancedSettingsResult> GetAdvancedAsync()
     {
@@ -49,7 +49,7 @@ public sealed class SystemExplorerStatusTool
         catch (Exception ex) { return new AdvancedSettingsResult(false, ex.Message, "", "", "", "", false, false, false, false, false); }
     }
 
-    [McpServerTool(Name = "zemax_get_ray_aiming_settings")]
+    [ZemaxTool(Name = "zemax_get_ray_aiming_settings")]
     [Description("Read complete ray-aiming and pupil-shift settings, including cache and convergence options.")]
     public async Task<RayAimingSettingsResult> GetRayAimingAsync()
     {
@@ -69,7 +69,7 @@ public sealed class SystemExplorerStatusTool
         catch (Exception ex) { return new RayAimingSettingsResult(false, ex.Message, "", "", false, 0, 0, 0, 0, 0, false, false, 0, false, false, false, false); }
     }
 
-    [McpServerTool(Name = "zemax_get_material_catalog_settings")]
+    [ZemaxTool(Name = "zemax_get_material_catalog_settings")]
     [Description("Read material catalogs currently used by the optical system; optionally include all catalogs available to OpticStudio.")]
     public async Task<MaterialCatalogSettingsResult> GetMaterialCatalogsAsync(
         [Description("Include all available material catalogs; disabled by default to keep the response compact")] bool includeAvailable = false)
@@ -89,7 +89,7 @@ public sealed class SystemExplorerStatusTool
         catch (Exception ex) { return new MaterialCatalogSettingsResult(false, ex.Message, Array.Empty<string>(), Array.Empty<string>()); }
     }
 
-    [McpServerTool(Name = "zemax_get_nonsequential_system_settings")]
+    [ZemaxTool(Name = "zemax_get_nonsequential_system_settings")]
     [Description("Read non-sequential ray limits, intensity thresholds, glue/missed-ray distances, splitting, and source-file retrace settings. Intended for NSC systems.")]
     public async Task<NonSequentialSettingsResult> GetNonSequentialAsync()
     {

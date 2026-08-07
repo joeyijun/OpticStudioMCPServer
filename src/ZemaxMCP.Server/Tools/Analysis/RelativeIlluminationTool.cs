@@ -1,19 +1,19 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class RelativeIlluminationTool
 {
     private readonly IZemaxSession _session;
 
     public RelativeIlluminationTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_relative_illumination")]
+    [ZemaxTool(Name = "zemax_relative_illumination")]
     [Description("Calculate relative illumination as a function of field angle. Shows how image illumination falls off from the center to the edge of the field, including the effective F/# at each field point.")]
     public async Task<RelativeIlluminationData> ExecuteAsync()
     {

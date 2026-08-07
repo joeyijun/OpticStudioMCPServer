@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetNumberOfFieldsTool
 {
     private readonly IZemaxSession _session;
@@ -17,7 +17,7 @@ public class SetNumberOfFieldsTool
         int NumberOfFields
     );
 
-    [McpServerTool(Name = "zemax_set_number_of_fields")]
+    [ZemaxTool(Name = "zemax_set_number_of_fields")]
     [Description("Set the number of field points in the system")]
     public async Task<SetNumberOfFieldsResult> ExecuteAsync(
         [Description("Number of fields to set (1-100)")] int numberOfFields)

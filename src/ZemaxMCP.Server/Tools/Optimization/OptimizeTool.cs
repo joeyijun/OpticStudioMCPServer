@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZOSAPI.Tools.Optimization;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class OptimizeTool
 {
     private readonly IZemaxSession _session;
@@ -23,7 +23,7 @@ public class OptimizeTool
         string TerminationReason
     );
 
-    [McpServerTool(Name = "zemax_optimize")]
+    [ZemaxTool(Name = "zemax_optimize")]
     [Description("Run optimization on the current optical system")]
     public async Task<OptimizeResult> ExecuteAsync(
         [Description("Optimization algorithm: DLS or Orthogonal")] string algorithm = "DLS",

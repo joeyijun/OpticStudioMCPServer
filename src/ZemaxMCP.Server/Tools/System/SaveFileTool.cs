@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Services.ConstrainedOptimization;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.System;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SaveFileTool
 {
     private readonly IZemaxSession _session;
@@ -23,7 +23,7 @@ public class SaveFileTool
         string? FilePath
     );
 
-    [McpServerTool(Name = "zemax_save_file")]
+    [ZemaxTool(Name = "zemax_save_file")]
     [Description("Save the current lens system to file")]
     public async Task<SaveFileResult> ExecuteAsync(
         [Description("File path (optional, uses current file if not specified)")] string? filePath = null)

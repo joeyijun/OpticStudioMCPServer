@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.SystemSettings;
 
-[McpServerToolType]
+[ZemaxToolType]
 public sealed class PolarizationTool
 {
     private readonly IZemaxSession _session;
@@ -13,11 +13,11 @@ public sealed class PolarizationTool
 
     public record PolarizationResult(bool Success, string? Error, bool Unpolarized, double Jx, double Jy, double XPhaseDegrees, double YPhaseDegrees, string Method, bool ConvertThinFilmPhaseToRayEquivalent, bool NeedsSave);
 
-    [McpServerTool(Name = "zemax_get_polarization")]
+    [ZemaxTool(Name = "zemax_get_polarization")]
     [Description("Read the System Explorer polarization state, Jones amplitudes/phases, method, and thin-film phase option.")]
     public Task<PolarizationResult> GetAsync() => ChangeAsync(null, null, null, null, null, null, null, "GetPolarization");
 
-    [McpServerTool(Name = "zemax_set_polarization")]
+    [ZemaxTool(Name = "zemax_set_polarization")]
     [Description("Set one or more System Explorer polarization values. Omitted values are preserved.")]
     public Task<PolarizationResult> SetAsync(
         [Description("Use unpolarized light")] bool? unpolarized = null,

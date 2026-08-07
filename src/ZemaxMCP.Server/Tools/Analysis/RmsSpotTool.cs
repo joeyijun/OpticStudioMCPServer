@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class RmsSpotTool
 {
     private readonly IZemaxSession _session;
@@ -22,7 +22,7 @@ public class RmsSpotTool
         string Method
     );
 
-    [McpServerTool(Name = "zemax_rms_spot")]
+    [ZemaxTool(Name = "zemax_rms_spot")]
     [Description("Calculate RMS spot size for a field point")]
     public async Task<RmsSpotResult> ExecuteAsync(
         [Description("Normalized field x coordinate")] double hx = 0,

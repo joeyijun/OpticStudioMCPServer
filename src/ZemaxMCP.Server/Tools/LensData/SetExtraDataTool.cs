@@ -1,11 +1,11 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetExtraDataTool
 {
     private readonly IZemaxSession _session;
@@ -22,7 +22,7 @@ public class SetExtraDataTool
         string? AccessPath = null,
         ExtraDataEntry[]? Entries = null);
 
-    [McpServerTool(Name = "zemax_set_extra_data")]
+    [ZemaxTool(Name = "zemax_set_extra_data")]
     [Description(
         "Write cells in the Extra Data Editor (XDAT) for a surface. "
         + "Three modes: "

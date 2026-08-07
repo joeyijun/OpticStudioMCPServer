@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class RemoveOperandTool
 {
     private readonly IZemaxSession _session;
@@ -18,7 +18,7 @@ public class RemoveOperandTool
         int RemainingOperands
     );
 
-    [McpServerTool(Name = "zemax_remove_operand")]
+    [ZemaxTool(Name = "zemax_remove_operand")]
     [Description("Remove an operand from the merit function")]
     public async Task<RemoveOperandResult> ExecuteAsync(
         [Description("Row number to remove (1-indexed)")] int row)

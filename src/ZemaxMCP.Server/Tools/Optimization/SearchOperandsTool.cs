@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Documentation;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SearchOperandsTool
 {
     private readonly OperandSearchService _searchService;
@@ -24,7 +24,7 @@ public class SearchOperandsTool
         List<OperandMatch> Matches
     );
 
-    [McpServerTool(Name = "zemax_search_operands")]
+    [ZemaxTool(Name = "zemax_search_operands")]
     [Description("Search for optimization operands by name or description")]
     public Task<SearchOperandsResult> ExecuteAsync(
         [Description("Search query (e.g., 'spot size', 'MTF', 'thickness')")] string query,

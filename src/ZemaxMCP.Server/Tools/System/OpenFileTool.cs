@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Services.ConstrainedOptimization;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.System;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class OpenFileTool
 {
     private readonly IZemaxSession _session;
@@ -26,7 +26,7 @@ public class OpenFileTool
         int ConstraintsLoaded
     );
 
-    [McpServerTool(Name = "zemax_open_file")]
+    [ZemaxTool(Name = "zemax_open_file")]
     [Description("Open a Zemax lens file (.zmx or .zos)")]
     public async Task<OpenFileResult> ExecuteAsync(
         [Description("Full path to the lens file")] string filePath)

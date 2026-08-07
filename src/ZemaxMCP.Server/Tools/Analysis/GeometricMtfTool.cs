@@ -1,19 +1,19 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GeometricMtfTool
 {
     private readonly IZemaxSession _session;
 
     public GeometricMtfTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_geometric_mtf")]
+    [ZemaxTool(Name = "zemax_geometric_mtf")]
     [Description("Calculate Geometric (ray-based) MTF for ALL fields at once. Returns the full MTF curve (tangential and sagittal) for every field in the system, up to the specified maximum spatial frequency. Only one call is needed — do NOT call this tool multiple times for different fields.")]
     public async Task<MtfData> ExecuteAsync(
         [Description("Maximum spatial frequency in cycles/mm")] double maxFrequency = 100,

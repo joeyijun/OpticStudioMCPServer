@@ -1,12 +1,12 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetWavelengthsTool
 {
     private readonly IZemaxSession _session;
@@ -22,7 +22,7 @@ public class SetWavelengthsTool
         List<Wavelength> Wavelengths
     );
 
-    [McpServerTool(Name = "zemax_set_wavelengths")]
+    [ZemaxTool(Name = "zemax_set_wavelengths")]
     [Description("Set wavelength values. Automatically adds wavelengths if needed.")]
     public async Task<SetWavelengthsResult> ExecuteAsync(
         [Description("Array of wavelength definitions [{wavelength (um), weight}]")] List<WavelengthDefinition> wavelengths,

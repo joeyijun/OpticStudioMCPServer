@@ -1,12 +1,12 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZOSAPI.Editors.MCE;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Configuration;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GetConfigurationOperandsTool
 {
     private readonly IZemaxSession _session;
@@ -21,7 +21,7 @@ public class GetConfigurationOperandsTool
         List<ConfigurationOperand> Operands
     );
 
-    [McpServerTool(Name = "zemax_get_configuration_operands")]
+    [ZemaxTool(Name = "zemax_get_configuration_operands")]
     [Description("Get all configuration operands from the Multi-Configuration Editor with values across all configurations")]
     public async Task<GetConfigurationOperandsResult> ExecuteAsync(
         [Description("Starting operand row (1-indexed, default 1)")] int startRow = 1,

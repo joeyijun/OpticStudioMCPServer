@@ -1,12 +1,12 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetApertureTool
 {
     private readonly IZemaxSession _session;
@@ -20,7 +20,7 @@ public class SetApertureTool
         double ApertureValue
     );
 
-    [McpServerTool(Name = "zemax_set_aperture")]
+    [ZemaxTool(Name = "zemax_set_aperture")]
     [Description("Set the system aperture")]
     public async Task<SetApertureResult> ExecuteAsync(
         [Description("Aperture value (diameter, F/#, NA, etc.)")] double value,

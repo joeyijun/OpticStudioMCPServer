@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Services.GlassCatalog;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.GlassCatalog;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class ExportGlassCatalogTool
 {
     private readonly IZemaxSession _session;
@@ -20,7 +20,7 @@ public class ExportGlassCatalogTool
         List<string>? Duplicates
     );
 
-    [McpServerTool(Name = "zemax_export_glass_catalog")]
+    [ZemaxTool(Name = "zemax_export_glass_catalog")]
     [Description("Export filtered glasses to a new .agf catalog file in the Zemax Glasscat directory")]
     public Task<ExportResult> ExecuteAsync(
         [Description("Name for the new catalog (without .agf extension)")] string catalogName,

@@ -1,12 +1,12 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Services.ConstrainedOptimization;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Services.Jobs;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class MultistartOptimizeTool
 {
     private readonly IZemaxSession _session;
@@ -29,7 +29,7 @@ public class MultistartOptimizeTool
         string? JobId = null
     );
 
-    [McpServerTool(Name = "zemax_multistart_optimize")]
+    [ZemaxTool(Name = "zemax_multistart_optimize")]
     [Description("Start a non-blocking multistart optimization. Returns immediately — use zemax_multistart_status to poll progress and zemax_multistart_stop to cancel. Each trial: randomizes continuous variables within bounds, optionally substitutes glass, then runs a short LM optimization. Keeps the best result. Auto-saves on each improvement. Set variable constraints first with zemax_set_variable_constraints.")]
     public MultistartOptimizeResult Execute(
         [Description("Number of random restart trials (default 100)")] int maxTrials = 100,

@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZOSAPI;
 
 namespace ZemaxMCP.Server.Tools.NonSequential;
 
-[McpServerToolType]
+[ZemaxToolType]
 public sealed class GetNscObjectsTool
 {
     private const int MaximumObjectsPerRequest = 250;
@@ -32,7 +32,7 @@ public sealed class GetNscObjectsTool
 
     public record Result(bool Success, string? Error, int NumberOfObjects, IReadOnlyList<NscObject> Objects);
 
-    [McpServerTool(Name = "zemax_get_nsc_objects")]
+    [ZemaxTool(Name = "zemax_get_nsc_objects")]
     [Description("Read non-sequential component (NSC) objects and their positions. This is read-only and requires a non-sequential system.")]
     public async Task<Result> ExecuteAsync(
         [Description("First NSC object number (1-indexed)")] int startObject = 1,

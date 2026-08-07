@@ -1,19 +1,19 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class CardinalPointsTool
 {
     private readonly IZemaxSession _session;
 
     public CardinalPointsTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_cardinal_points")]
+    [ZemaxTool(Name = "zemax_cardinal_points")]
     [Description("Get cardinal points (focal lengths, principal planes, etc.) of the optical system")]
     public async Task<CardinalPoints> ExecuteAsync(
         [Description("Wavelength number")] int wavelength = 1)

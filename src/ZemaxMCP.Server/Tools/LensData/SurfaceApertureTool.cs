@@ -1,18 +1,18 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZOSAPI.Editors.LDE;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SurfaceApertureTool
 {
     private readonly IZemaxSession _session;
     public SurfaceApertureTool(IZemaxSession session) => _session = session;
     public record Result(bool Success, string? Error = null, int SurfaceNumber = 0, string? ApertureType = null, double? MinimumRadius = null, double? MaximumRadius = null, double? XDecenter = null, double? YDecenter = null);
 
-    [McpServerTool(Name = "zemax_set_surface_aperture")]
+    [ZemaxTool(Name = "zemax_set_surface_aperture")]
     [Description("Set a real sequential circular aperture or obscuration; unlike Semi-Diameter it terminates rays.")]
     public async Task<Result> SetAsync(int surfaceNumber, string apertureType, double minimumRadius = 0, double? maximumRadius = null, double xDecenter = 0, double yDecenter = 0)
     {
@@ -32,7 +32,7 @@ public class SurfaceApertureTool
         catch(Exception ex){return new Result(false,ex.Message,surfaceNumber);}
     }
 
-    [McpServerTool(Name = "zemax_get_surface_aperture")]
+    [ZemaxTool(Name = "zemax_get_surface_aperture")]
     [Description("Read the real sequential aperture or obscuration on a surface.")]
     public async Task<Result> GetAsync(int surfaceNumber)
     {

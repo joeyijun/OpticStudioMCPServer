@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.System;
 
-[McpServerToolType]
+[ZemaxToolType]
 public sealed class QuickFocusTool
 {
     private readonly IZemaxSession _session;
@@ -13,7 +13,7 @@ public sealed class QuickFocusTool
 
     public record QuickFocusResult(bool Success, string? Error, string RunStatus, string Criterion, bool UseCentroid, double ImageThicknessBefore, double ImageThicknessAfter, bool NeedsSave);
 
-    [McpServerTool(Name = "zemax_quick_focus")]
+    [ZemaxTool(Name = "zemax_quick_focus")]
     [Description("Run OpticStudio Quick Focus on a sequential system. This changes focus but does not save the file. The timeout applies when the installed OpticStudio exposes Quick Focus asynchronously.")]
     public async Task<QuickFocusResult> ExecuteAsync(
         [Description("Criterion: SpotSizeRadial, SpotSizeXOnly, SpotSizeYOnly, or RMSWavefront")] string criterion = "SpotSizeRadial",

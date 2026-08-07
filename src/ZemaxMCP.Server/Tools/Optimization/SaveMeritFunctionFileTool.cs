@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SaveMeritFunctionFileTool
 {
     private readonly IZemaxSession _session;
@@ -17,7 +17,7 @@ public class SaveMeritFunctionFileTool
         string? FilePath,
         int NumberOfOperands);
 
-    [McpServerTool(Name = "zemax_save_merit_function_file")]
+    [ZemaxTool(Name = "zemax_save_merit_function_file")]
     [Description("Save the current merit function to a file (.MF format)")]
     public async Task<SaveMeritFunctionFileResult> ExecuteAsync(
         [Description("Full path to save the merit function file (.MF extension)")] string filePath)

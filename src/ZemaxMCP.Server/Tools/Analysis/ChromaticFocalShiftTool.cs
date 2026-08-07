@@ -1,19 +1,19 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class ChromaticFocalShiftTool
 {
     private readonly IZemaxSession _session;
 
     public ChromaticFocalShiftTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_chromatic_focal_shift")]
+    [ZemaxTool(Name = "zemax_chromatic_focal_shift")]
     [Description("Calculate chromatic focal shift (longitudinal chromatic aberration) as a function of wavelength. Shows how the paraxial focus position shifts across the wavelength range. Returns wavelength vs focal shift data, plus the maximum focal shift range and diffraction-limited range.")]
     public async Task<ChromaticFocalShiftData> ExecuteAsync()
     {

@@ -1,6 +1,6 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZOSAPI.Analysis.Settings.Psf;
 
@@ -9,7 +9,7 @@ namespace ZemaxMCP.Server.Tools.Analysis;
 // 说明:本工具的接口/设置应用段从历史会话记录恢复(逐字复刻);结果提取段(读 PSF
 // 数据网格 + Strehl + 落盘)在原会话记录被截断,按 main 现有 PopTool 的写法重建。
 // 运行时数值语义待 OpticStudio ZOSAPI 连接可用后核验。
-[McpServerToolType]
+[ZemaxToolType]
 public class FftPsfTool
 {
     private const int InlineGridCellLimit = 65536;
@@ -30,7 +30,7 @@ public class FftPsfTool
         string? TextPath = null,
         string? GridPath = null);
 
-    [McpServerTool(Name = "zemax_fft_psf")]
+    [ZemaxTool(Name = "zemax_fft_psf")]
     [Description(
         "Run FFT Point Spread Function analysis with full settings control. Returns the PSF grid "
         + "(intensity or phase). SampleSize controls input pupil sampling; "
@@ -194,9 +194,9 @@ public class FftPsfTool
                     { strehl = v; break; }
             }
             else if (field == null && lower.StartsWith("field") && line.Contains(':'))
-                field = line[(line.IndexOf(':') + 1)..].Trim();
+                field = line.Substring(line.IndexOf(':') + 1).Trim();
             else if (wave == null && (lower.StartsWith("wave") || lower.StartsWith("wavelength")) && line.Contains(':'))
-                wave = line[(line.IndexOf(':') + 1)..].Trim();
+                wave = line.Substring(line.IndexOf(':') + 1).Trim();
         }
         return (strehl, field, wave);
     }

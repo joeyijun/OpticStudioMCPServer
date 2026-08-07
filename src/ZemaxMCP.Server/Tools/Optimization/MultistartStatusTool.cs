@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Services.ConstrainedOptimization;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class MultistartStatusTool
 {
     private readonly MultistartState _state;
@@ -32,7 +32,7 @@ public class MultistartStatusTool
         string Summary
     );
 
-    [McpServerTool(Name = "zemax_multistart_status")]
+    [ZemaxTool(Name = "zemax_multistart_status")]
     [Description("Check the progress of a running multistart optimization. Returns current trial, best merit, acceptance count, and running state. Does not block — safe to call while optimization is running.")]
     public MultistartStatusResult Execute()
     {

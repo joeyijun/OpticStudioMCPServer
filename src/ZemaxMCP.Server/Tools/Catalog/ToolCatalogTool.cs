@@ -1,6 +1,6 @@
 using System.ComponentModel;
 using System.Reflection;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Toolsets;
 
@@ -11,7 +11,7 @@ namespace ZemaxMCP.Server.Tools.Catalog;
 /// Tool names remain unchanged; the map is deliberately derived from attributes so it cannot
 /// silently drift when a new tool is registered.
 /// </summary>
-[McpServerToolType]
+[ZemaxToolType]
 public sealed class ToolCatalogTool
 {
     public sealed record ToolGroup(string Id, string Title, string Purpose, int ToolCount);
@@ -23,7 +23,7 @@ public sealed class ToolCatalogTool
         IReadOnlyList<ToolGroup> Groups,
         IReadOnlyList<ToolEntry> Tools);
 
-    [McpServerTool(Name = "zemax_tool_catalog")]
+    [ZemaxTool(Name = "zemax_tool_catalog")]
     [Description("List installed Zemax MCP tools by task group and safety level. Call this before a broad task to select the smallest suitable tool; set highImpactOnly to true to review operations that can modify lens data, files, or optimization state.")]
     public CatalogResult Execute(
         [Description("When true, return only high-impact operations that deserve an explicit confirmation.")] bool highImpactOnly = false)
@@ -65,7 +65,7 @@ internal static class ToolCatalog
             .GetTypes()
             .Where(type => type.Namespace != null && type.Namespace.StartsWith("ZemaxMCP.Server.Tools.", StringComparison.Ordinal))
             .SelectMany(type => type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
-                .Select(method => new { Type = type, Method = method, Attribute = method.GetCustomAttribute<McpServerToolAttribute>() }))
+                .Select(method => new { Type = type, Method = method, Attribute = method.GetCustomAttribute<ZemaxToolAttribute>() }))
             .Where(item => item.Attribute != null && !string.IsNullOrWhiteSpace(item.Attribute.Name))
             .Select(item => CreateEntry(item.Type, item.Method, item.Attribute!.Name!))
             .Where(entry => !highImpactOnly || entry.Risk == HighImpactRisk)

@@ -1,19 +1,19 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class RayFanTool
 {
     private readonly IZemaxSession _session;
 
     public RayFanTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_ray_fan")]
+    [ZemaxTool(Name = "zemax_ray_fan")]
     [Description("Calculate ray fan (transverse ray aberration) for all fields and wavelengths. Returns tangential (Y aberration vs Py) and sagittal (X aberration vs Px) fans for each field point. Units are micrometers by default.")]
     public async Task<RayFanData> ExecuteAsync()
     {

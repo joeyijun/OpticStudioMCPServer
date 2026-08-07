@@ -1,19 +1,19 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SeidelCoefficientsTool
 {
     private readonly IZemaxSession _session;
 
     public SeidelCoefficientsTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_seidel_coefficients")]
+    [ZemaxTool(Name = "zemax_seidel_coefficients")]
     [Description("Get Seidel (3rd order) aberration coefficients for each surface and the total system. Returns S1 (spherical), S2 (coma), S3 (astigmatism), S4 (field curvature), S5 (distortion), CL (axial chromatic), CT (lateral chromatic), plus wavefront summary.")]
     public async Task<SeidelCoefficientsData> ExecuteAsync(
         [Description("Wavelength number (0 for primary)")] int wavelength = 0)

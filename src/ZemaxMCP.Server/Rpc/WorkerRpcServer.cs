@@ -2,16 +2,11 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Text;
 using System.Text.Json;
-using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using ModelContextProtocol;
-using ModelContextProtocol.Protocol;
-using ModelContextProtocol.Server;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Rpc;
 using ZemaxMCP.Server.Services.Jobs;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Toolsets;
 
 namespace ZemaxMCP.Server.Rpc;
@@ -19,27 +14,20 @@ namespace ZemaxMCP.Server.Rpc;
 /// <summary>
 /// Private command server for the ZOS-API process. MCP terminates at the Host;
 /// this class accepts only ZemaxMCP.Rpc envelopes over a local named pipe.
-/// The existing tool annotations are used strictly as a binding catalogue while
-/// they are progressively converted to Worker-native command descriptors.
 /// </summary>
 internal sealed class WorkerRpcServer
 {
     private readonly IServiceProvider _services;
-    private readonly McpServerOptions _serverOptions;
-    private readonly McpServer _toolRuntime;
-    private readonly IReadOnlyDictionary<string, McpServerTool> _tools;
+    private readonly WorkerToolRegistry _tools;
     private readonly SemaphoreSlim _executionGate = new(1, 1);
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _operations = new(StringComparer.Ordinal);
-    private readonly JsonSerializerOptions _jsonOptions = McpJsonUtilities.DefaultOptions;
+    private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
 
     public WorkerRpcServer(IServiceProvider services)
     {
         _services = services;
-        _serverOptions = services.GetRequiredService<IOptions<McpServerOptions>>().Value;
-        _toolRuntime = McpServer.Create(new NullTransport(), _serverOptions,
-            services.GetRequiredService<ILoggerFactory>(), services);
-        _tools = _serverOptions.ToolCollection.ToDictionary(tool => tool.ProtocolTool.Name, StringComparer.Ordinal);
+        _tools = services.GetRequiredService<WorkerToolRegistry>();
     }
 
     public async Task RunAsync(Stream input, Stream output, CancellationToken cancellationToken)
@@ -100,11 +88,11 @@ internal sealed class WorkerRpcServer
                 case ZemaxRpcProtocol.GetToolCatalog:
                     var catalogueRequest = message.Payload.Deserialize<ToolCatalogRequest>(_jsonOptions) ?? new ToolCatalogRequest();
                     await WriteResultAsync(writer, message.RequestId, message.OperationId,
-                        new ListToolsResult
+                        new
                         {
-                            Tools = _tools.Values
-                                .Where(tool => ToolsetCatalog.IsToolAllowed(catalogueRequest.Toolset, tool.ProtocolTool.Name))
-                                .Select(tool => tool.ProtocolTool)
+                            tools = _tools.Tools.Values
+                                .Where(tool => ToolsetCatalog.IsToolAllowed(catalogueRequest.Toolset, tool.Name))
+                                .Select(tool => new { name = tool.Name, description = tool.Description, inputSchema = tool.InputSchema })
                                 .ToList()
                         }).ConfigureAwait(false);
                     return;
@@ -134,7 +122,7 @@ internal sealed class WorkerRpcServer
     {
         var invocation = message.Payload.Deserialize<ToolInvocationRequest>(_jsonOptions)
             ?? throw new InvalidOperationException("Tool invocation payload is missing.");
-        if (string.IsNullOrWhiteSpace(invocation.Command) || !_tools.TryGetValue(invocation.Command, out var tool))
+        if (string.IsNullOrWhiteSpace(invocation.Command) || !_tools.Tools.ContainsKey(invocation.Command))
             throw new InvalidOperationException("Unknown OpticStudio tool: " + invocation.Command);
         if (!ToolsetCatalog.IsToolAllowed(invocation.Toolset, invocation.Command))
             throw new InvalidOperationException("The selected toolset does not permit " + invocation.Command + ".");
@@ -147,15 +135,12 @@ internal sealed class WorkerRpcServer
             await _executionGate.WaitAsync(operation.Token).ConfigureAwait(false);
             try
             {
-                var arguments = invocation.Arguments.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
-                    ? new Dictionary<string, JsonElement>(StringComparer.Ordinal)
-                    : JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(invocation.Arguments.GetRawText(), _jsonOptions)
-                        ?? new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-                var parameters = new CallToolRequestParams { Name = invocation.Command, Arguments = arguments };
-                var context = new RequestContext<CallToolRequestParams>(_toolRuntime,
-                    new JsonRpcRequest { Method = "tools/call" }, parameters) { MatchedPrimitive = tool };
-                var result = await tool.InvokeAsync(context, operation.Token).ConfigureAwait(false);
-                await WriteResultAsync(writer, message.RequestId, message.OperationId, result).ConfigureAwait(false);
+                var result = await _tools.InvokeAsync(invocation.Command, invocation.Arguments, operation.Token).ConfigureAwait(false);
+                await WriteResultAsync(writer, message.RequestId, message.OperationId, new
+                {
+                    content = new[] { new { type = "text", text = JsonSerializer.Serialize(result, _jsonOptions) } },
+                    isError = false
+                }).ConfigureAwait(false);
             }
             finally { _executionGate.Release(); }
         }
@@ -239,14 +224,5 @@ internal sealed class WorkerRpcServer
         await _writeGate.WaitAsync().ConfigureAwait(false);
         try { await writer.WriteLineAsync(JsonSerializer.Serialize(message, _jsonOptions)).ConfigureAwait(false); }
         finally { _writeGate.Release(); }
-    }
-
-    private sealed class NullTransport : ITransport
-    {
-        private readonly Channel<JsonRpcMessage> _messages = Channel.CreateUnbounded<JsonRpcMessage>();
-        public string SessionId => "worker-rpc";
-        public ChannelReader<JsonRpcMessage> MessageReader => _messages.Reader;
-        public Task SendMessageAsync(JsonRpcMessage message, CancellationToken cancellationToken) => Task.CompletedTask;
-        public ValueTask DisposeAsync() => new ValueTask();
     }
 }

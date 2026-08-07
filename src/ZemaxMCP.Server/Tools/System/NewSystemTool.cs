@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.System;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class NewSystemTool
 {
     private readonly IZemaxSession _session;
@@ -17,7 +17,7 @@ public class NewSystemTool
         int NumberOfSurfaces
     );
 
-    [McpServerTool(Name = "zemax_new_system")]
+    [ZemaxTool(Name = "zemax_new_system")]
     [Description("Create a new blank optical system")]
     public async Task<NewSystemResult> ExecuteAsync()
     {

@@ -1,12 +1,12 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZOSAPI.Editors.MCE;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Configuration;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetConfigurationOperandValueTool
 {
     private readonly IZemaxSession _session;
@@ -19,7 +19,7 @@ public class SetConfigurationOperandValueTool
         ConfigurationValue? NewValue
     );
 
-    [McpServerTool(Name = "zemax_set_configuration_operand_value")]
+    [ZemaxTool(Name = "zemax_set_configuration_operand_value")]
     [Description("Set the value or pickup solve for a configuration operand")]
     public async Task<SetConfigurationOperandValueResult> ExecuteAsync(
         [Description("Operand row number (1-indexed)")] int operandRow,

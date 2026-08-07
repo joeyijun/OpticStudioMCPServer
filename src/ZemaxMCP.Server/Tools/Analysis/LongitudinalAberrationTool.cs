@@ -1,19 +1,19 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class LongitudinalAberrationTool
 {
     private readonly IZemaxSession _session;
 
     public LongitudinalAberrationTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_longitudinal_aberration")]
+    [ZemaxTool(Name = "zemax_longitudinal_aberration")]
     [Description("Calculate longitudinal aberration (focus shift) as a function of pupil position for each wavelength. Returns aberration in millimeters for each relative pupil coordinate at each system wavelength.")]
     public async Task<LongitudinalAberrationData> ExecuteAsync()
     {

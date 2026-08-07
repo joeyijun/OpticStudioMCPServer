@@ -1,6 +1,6 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 using ZOSAPI.Analysis;
@@ -8,14 +8,14 @@ using ZOSAPI.Analysis.Settings.Mtf;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class MtfAnalysisTool
 {
     private readonly IZemaxSession _session;
 
     public MtfAnalysisTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_fft_mtf")]
+    [ZemaxTool(Name = "zemax_fft_mtf")]
     [Description("Calculate FFT MTF (Modulation Transfer Function) for ALL fields at once. Returns the full MTF curve (tangential and sagittal) for every field in the system plus the diffraction limit, up to the specified maximum spatial frequency. Only one call is needed — do NOT call this tool multiple times for different fields.")]
     public async Task<MtfData> ExecuteAsync(
         [Description("Maximum spatial frequency in cycles/mm")] double frequency,

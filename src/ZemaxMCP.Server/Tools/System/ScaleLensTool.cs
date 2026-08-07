@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.System;
 
-[McpServerToolType]
+[ZemaxToolType]
 public sealed class ScaleLensTool
 {
     private readonly IZemaxSession _session;
@@ -13,7 +13,7 @@ public sealed class ScaleLensTool
 
     public record ScaleLensResult(bool Success, string? Error, string RunStatus, string PreviousUnits, string CurrentUnits, double? Factor, int FirstComponent, int LastComponent, bool NeedsSave);
 
-    [McpServerTool(Name = "zemax_scale_lens")]
+    [ZemaxTool(Name = "zemax_scale_lens")]
     [Description("Run OpticStudio Scale Lens by a positive factor or convert the complete sequential lens to Millimeters, Centimeters, Inches, or Meters. Provide exactly one of factor or targetUnits. The file is not saved automatically; the timeout applies to asynchronous implementations.")]
     public async Task<ScaleLensResult> ExecuteAsync(
         [Description("Positive geometric scale factor; mutually exclusive with targetUnits")] double? factor = null,

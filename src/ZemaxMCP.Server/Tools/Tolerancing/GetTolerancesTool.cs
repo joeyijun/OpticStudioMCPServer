@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Tolerancing;
 
-[McpServerToolType]
+[ZemaxToolType]
 public sealed class GetTolerancesTool
 {
     private const int MaximumOperandsPerRequest = 250;
@@ -31,7 +31,7 @@ public sealed class GetTolerancesTool
 
     public record Result(bool Success, string? Error, int NumberOfOperands, IReadOnlyList<ToleranceOperand> Operands);
 
-    [McpServerTool(Name = "zemax_get_tolerances")]
+    [ZemaxTool(Name = "zemax_get_tolerances")]
     [Description("Read the Tolerance Data Editor (TDE) operands for the current system. This tool is read-only and works with sequential and non-sequential systems.")]
     public async Task<Result> ExecuteAsync(
         [Description("First TDE operand row (1-indexed)")] int startRow = 1,

@@ -1,12 +1,12 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Services.ConstrainedOptimization;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GetVariablesTool
 {
     private readonly IZemaxSession _session;
@@ -40,7 +40,7 @@ public class GetVariablesTool
         VariableInfo[] Variables
     );
 
-    [McpServerTool(Name = "zemax_get_variables")]
+    [ZemaxTool(Name = "zemax_get_variables")]
     [Description("Scan the current optical system for all variables (Variable solves) and return them with their current constraint settings. Use this before zemax_set_variable_constraints to identify variable numbers.")]
     public async Task<GetVariablesResult> ExecuteAsync()
     {

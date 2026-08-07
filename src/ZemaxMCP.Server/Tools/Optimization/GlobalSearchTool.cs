@@ -1,12 +1,12 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZOSAPI.Tools.Optimization;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Services.Jobs;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GlobalSearchTool
 {
     private readonly IZemaxSession _session;
@@ -37,7 +37,7 @@ public class GlobalSearchTool
         double MeritFunction
     );
 
-    [McpServerTool(Name = "zemax_global_search")]
+    [ZemaxTool(Name = "zemax_global_search")]
     [Description("Run global optimization on the current optical system. Supports glass substitution when surfaces have MaterialSubstitute solve set.")]
     public async Task<GlobalSearchResult> ExecuteAsync(
         [Description("Optimization algorithm: DLS or Orthogonal")] string algorithm = "DLS",

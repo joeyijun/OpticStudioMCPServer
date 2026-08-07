@@ -1,6 +1,6 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Services.Jobs;
 using ZOSAPI.Analysis;
@@ -8,7 +8,7 @@ using ZOSAPI.Analysis.PhysicalOptics;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class PopTool
 {
     private readonly IZemaxSession _session;
@@ -50,7 +50,7 @@ public class PopTool
     // Inline threshold: 256x256 = 65536 cells ~ 2 MB JSON. Larger grids must write to disk.
     private const int InlineGridCellLimit = 65536;
 
-    [McpServerTool(Name = "zemax_pop")]
+    [ZemaxTool(Name = "zemax_pop")]
     [Description(
         "Run Physical Optics Propagation and return the intensity (or phase) grid. "
         + "Used for wavefront sensor donut simulation: add Zernike phase via zemax_set_extra_data, then run POP. "

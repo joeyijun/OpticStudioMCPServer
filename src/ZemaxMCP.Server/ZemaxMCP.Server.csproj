@@ -11,7 +11,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="ModelContextProtocol" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" />
@@ -25,6 +24,12 @@
     <ProjectReference Include="..\ZemaxMCP.Core\ZemaxMCP.Core.csproj" />
     <ProjectReference Include="..\ZemaxMCP.Documentation\ZemaxMCP.Documentation.csproj" />
     <ProjectReference Include="..\ZemaxMCP.Rpc\ZemaxMCP.Rpc.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- MCP prompts/resources belong to the public Host. They are excluded
+         from the protocol-neutral ZOS-API Worker during this migration. -->
+    <Compile Remove="Prompts\**\*.cs;Resources\**\*.cs" />
   </ItemGroup>
 
   <ItemGroup>

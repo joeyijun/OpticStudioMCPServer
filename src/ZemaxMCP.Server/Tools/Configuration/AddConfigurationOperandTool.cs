@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Configuration;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class AddConfigurationOperandTool
 {
     private readonly IZemaxSession _session;
@@ -19,7 +19,7 @@ public class AddConfigurationOperandTool
         int NumberOfOperands
     );
 
-    [McpServerTool(Name = "zemax_add_configuration_operand")]
+    [ZemaxTool(Name = "zemax_add_configuration_operand")]
     [Description("Add a configuration operand to the multi-configuration editor")]
     public async Task<AddConfigurationOperandResult> ExecuteAsync(
         [Description("Operand type (e.g., THIC, CURV, CONI, PRAM, MOFF)")] string operandType,

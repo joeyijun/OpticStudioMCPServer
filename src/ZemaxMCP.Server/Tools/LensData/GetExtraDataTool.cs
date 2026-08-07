@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GetExtraDataTool
 {
     private readonly IZemaxSession _session;
@@ -21,7 +21,7 @@ public class GetExtraDataTool
         string? AccessPath = null,
         ExtraDataEntry[]? Entries = null);
 
-    [McpServerTool(Name = "zemax_get_extra_data")]
+    [ZemaxTool(Name = "zemax_get_extra_data")]
     [Description(
         "Read cells from the Extra Data Editor (XDAT) for a surface. "
         + "XDAT stores per-surface-type data like Zernike coefficients, Max Term, "

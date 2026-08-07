@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.SystemSettings;
 
-[McpServerToolType]
+[ZemaxToolType]
 public sealed class EnvironmentTool
 {
     private readonly IZemaxSession _session;
@@ -13,11 +13,11 @@ public sealed class EnvironmentTool
 
     public record EnvironmentResult(bool Success, string? Error, double TemperatureCelsius, double PressureAtmospheres, bool AdjustIndexToEnvironment, bool NeedsSave);
 
-    [McpServerTool(Name = "zemax_get_environment")]
+    [ZemaxTool(Name = "zemax_get_environment")]
     [Description("Read system temperature, pressure, and whether refractive-index data is adjusted to the environment.")]
     public Task<EnvironmentResult> GetAsync() => ChangeAsync(null, null, null, "GetEnvironment");
 
-    [McpServerTool(Name = "zemax_set_environment")]
+    [ZemaxTool(Name = "zemax_set_environment")]
     [Description("Set system temperature (°C), pressure (atm), and/or refractive-index environment adjustment. Omitted values are preserved.")]
     public Task<EnvironmentResult> SetAsync(
         [Description("System temperature in degrees Celsius")] double? temperatureCelsius = null,

@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Services.GlassCatalog;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.GlassCatalog;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GetGlassesTool
 {
     private readonly IZemaxSession _session;
@@ -30,7 +30,7 @@ public class GetGlassesTool
 
     public record GetGlassesResult(bool Success, string? Error, int TotalCount, List<GlassInfo>? Glasses);
 
-    [McpServerTool(Name = "zemax_get_glasses")]
+    [ZemaxTool(Name = "zemax_get_glasses")]
     [Description("List glasses in a catalog with properties (Nd, Vd, dPgF, status, cost, TCE, etc.)")]
     public Task<GetGlassesResult> ExecuteAsync(
         [Description("Catalog name(s), comma-separated (e.g., 'SCHOTT' or 'SCHOTT,OHARA')")] string catalogs)

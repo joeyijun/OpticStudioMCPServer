@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZOSAPI.Editors.LDE;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetSurfaceParameterTool
 {
     private readonly IZemaxSession _session;
@@ -21,7 +21,7 @@ public class SetSurfaceParameterTool
         string? SurfaceType = null,
         ParameterEntry[]? Parameters = null);
 
-    [McpServerTool(Name = "zemax_set_surface_parameter")]
+    [ZemaxTool(Name = "zemax_set_surface_parameter")]
     [Description(
         "Get or set surface-type-specific parameters (PARM values). "
         + "For CoordinateBreak: PARM 1=Decenter X (mm), 2=Decenter Y (mm), "

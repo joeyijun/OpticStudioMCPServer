@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Configuration;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetNumberOfConfigurationsTool
 {
     private readonly IZemaxSession _session;
@@ -17,7 +17,7 @@ public class SetNumberOfConfigurationsTool
         int NumberOfConfigurations
     );
 
-    [McpServerTool(Name = "zemax_set_number_of_configurations")]
+    [ZemaxTool(Name = "zemax_set_number_of_configurations")]
     [Description("Set the number of configurations in the multi-configuration editor")]
     public async Task<SetNumberOfConfigurationsResult> ExecuteAsync(
         [Description("Number of configurations to set")] int numberOfConfigurations)

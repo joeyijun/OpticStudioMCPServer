@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetSurfaceTool
 {
     private readonly IZemaxSession _session;
@@ -19,7 +19,7 @@ public class SetSurfaceTool
         List<string>? Warnings = null
     );
 
-    [McpServerTool(Name = "zemax_set_surface")]
+    [ZemaxTool(Name = "zemax_set_surface")]
     [Description("Modify properties of a surface in the lens data editor")]
     public async Task<SetSurfaceResult> ExecuteAsync(
         [Description("Surface number to modify")] int surfaceNumber,

@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Configuration;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GetConfigurationTool
 {
     private readonly IZemaxSession _session;
@@ -18,7 +18,7 @@ public class GetConfigurationTool
         int CurrentConfiguration
     );
 
-    [McpServerTool(Name = "zemax_get_configuration")]
+    [ZemaxTool(Name = "zemax_get_configuration")]
     [Description("Get the number of configurations and current configuration")]
     public async Task<GetConfigurationResult> ExecuteAsync()
     {

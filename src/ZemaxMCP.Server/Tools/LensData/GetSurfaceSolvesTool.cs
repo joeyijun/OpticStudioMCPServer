@@ -1,5 +1,5 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZOSAPI.Editors;
 using ZOSAPI.Editors.LDE;
 using ZemaxMCP.Core.Models;
@@ -7,7 +7,7 @@ using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GetSurfaceSolvesTool
 {
     private readonly IZemaxSession _session;
@@ -20,7 +20,7 @@ public class GetSurfaceSolvesTool
         SurfaceSolveInfo? SolveInfo
     );
 
-    [McpServerTool(Name = "zemax_get_surface_solves")]
+    [ZemaxTool(Name = "zemax_get_surface_solves")]
     [Description("Get solve/variable/pickup status for all properties of a surface")]
     public async Task<GetSurfaceSolvesResult> ExecuteAsync(
         [Description("Surface number")] int surfaceNumber)

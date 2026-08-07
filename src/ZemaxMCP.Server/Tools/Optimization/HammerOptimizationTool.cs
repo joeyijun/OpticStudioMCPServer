@@ -1,12 +1,12 @@
 using System.ComponentModel;
 using System.Diagnostics;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZOSAPI.Tools.Optimization;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class HammerOptimizationTool
 {
     private readonly IZemaxSession _session;
@@ -26,7 +26,7 @@ public class HammerOptimizationTool
         string TerminationReason
     );
 
-    [McpServerTool(Name = "zemax_hammer")]
+    [ZemaxTool(Name = "zemax_hammer")]
     [Description("Run Hammer optimization on the current optical system. Hammer continuously optimizes and supports glass substitution when surfaces have MaterialSubstitute solve set.")]
     public async Task<HammerResult> ExecuteAsync(
         [Description("Optimization algorithm: DLS or Orthogonal")] string algorithm = "DLS",

@@ -1,19 +1,19 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class DiffractionEncircledEnergyTool
 {
     private readonly IZemaxSession _session;
 
     public DiffractionEncircledEnergyTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_diffraction_encircled_energy")]
+    [ZemaxTool(Name = "zemax_diffraction_encircled_energy")]
     [Description("Calculate FFT diffraction encircled energy as a function of radial distance from the reference point. Returns the fraction of total energy enclosed within a given radius for each field point, plus the diffraction limit curve. Useful for evaluating image quality and comparing to the Airy disk.")]
     public async Task<DiffractionEncircledEnergyData> ExecuteAsync(
         [Description("Sampling (1-6, higher = more accurate). 1=32x32, 2=64x64, 3=128x128, 4=256x256, 5=512x512, 6=1024x1024")] int sampling = 3,

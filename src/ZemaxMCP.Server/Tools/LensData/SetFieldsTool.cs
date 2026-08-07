@@ -1,12 +1,12 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetFieldsTool
 {
     private readonly IZemaxSession _session;
@@ -22,7 +22,7 @@ public class SetFieldsTool
         List<Field> Fields
     );
 
-    [McpServerTool(Name = "zemax_set_fields")]
+    [ZemaxTool(Name = "zemax_set_fields")]
     [Description("Set field point values. Automatically adds fields if needed.")]
     public async Task<SetFieldsResult> ExecuteAsync(
         [Description("Array of field definitions [{x, y, weight}]")] List<FieldDefinition> fields,

@@ -85,7 +85,6 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
 
     public async Task<ListToolsResult> ListToolsAsync(CancellationToken cancellationToken)
     {
-        await WaitForCancelledOperationRecoveryAsync(cancellationToken).ConfigureAwait(false);
         await StartAsync(cancellationToken).ConfigureAwait(false);
         return await SendAsync<ListToolsResult>(ZemaxRpcProtocol.GetToolCatalog,
             new ToolCatalogRequest { Toolset = _options.Toolset, ReadOnly = _options.ReadOnly }, Guid.NewGuid().ToString("N"), cancellationToken).ConfigureAwait(false);
@@ -106,14 +105,14 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
                 ReadOnly = _options.ReadOnly,
                 Toolset = _options.Toolset
             };
-            return await SendAsync<CallToolResult>(ZemaxRpcProtocol.InvokeTool, invocation, operationId, cancellationToken).ConfigureAwait(false);
+            return await SendAsync<CallToolResult>(ZemaxRpcProtocol.InvokeTool, invocation, operationId, cancellationToken,
+                ownsGenerationRecovery: true).ConfigureAwait(false);
         }
         finally { _executionGate.Release(); }
     }
 
     public async Task<WorkerStatus> GetStatusAsync(CancellationToken cancellationToken)
     {
-        await WaitForCancelledOperationRecoveryAsync(cancellationToken).ConfigureAwait(false);
         await StartAsync(cancellationToken).ConfigureAwait(false);
         return await SendAsync<WorkerStatus>(ZemaxRpcProtocol.GetStatus, new { }, Guid.NewGuid().ToString("N"), cancellationToken).ConfigureAwait(false);
     }
@@ -139,7 +138,8 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         _startupGate.Dispose();
     }
 
-    private async Task<T> SendAsync<T>(string kind, object payload, string operationId, CancellationToken cancellationToken)
+    private async Task<T> SendAsync<T>(string kind, object payload, string operationId, CancellationToken cancellationToken,
+        bool ownsGenerationRecovery = false)
     {
         var writer = GetWriter() ?? throw new InvalidOperationException("Worker is not running.");
         var requestId = Guid.NewGuid().ToString("N");
@@ -168,7 +168,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
             }
             return response.Payload.Deserialize<T>(_jsonOptions) ?? throw new InvalidOperationException("Worker returned an empty response.");
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested && written)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested && written && ownsGenerationRecovery)
         {
             backgroundRecoveryOwnsPending = true;
             BeginCancelledOperationRecovery(completion.Task, requestId, operationId, writer);

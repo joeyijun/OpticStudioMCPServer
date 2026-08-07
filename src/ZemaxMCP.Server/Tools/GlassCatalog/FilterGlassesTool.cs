@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Services.GlassCatalog;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.GlassCatalog;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class FilterGlassesTool
 {
     private readonly IZemaxSession _session;
@@ -33,7 +33,7 @@ public class FilterGlassesTool
         List<FilteredGlassInfo>? Glasses
     );
 
-    [McpServerTool(Name = "zemax_filter_glasses")]
+    [ZemaxTool(Name = "zemax_filter_glasses")]
     [Description("Filter glasses from catalogs using criteria (preferred status, distance radius, cost, Nd/Vd/dPgF range, TCE range, wavelength coverage, melt frequency). Parameters are only active when provided (non-null).")]
     public Task<FilterGlassesResult> ExecuteAsync(
         [Description("Catalog name(s), comma-separated (e.g., 'SCHOTT,OHARA')")] string catalogs,

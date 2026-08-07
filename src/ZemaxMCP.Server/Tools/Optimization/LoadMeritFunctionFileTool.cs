@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class LoadMeritFunctionFileTool
 {
     private readonly IZemaxSession _session;
@@ -18,7 +18,7 @@ public class LoadMeritFunctionFileTool
         int NumberOfOperands,
         double? InitialMerit);
 
-    [McpServerTool(Name = "zemax_load_merit_function_file")]
+    [ZemaxTool(Name = "zemax_load_merit_function_file")]
     [Description("Load a merit function from a file (.MF format)")]
     public async Task<LoadMeritFunctionFileResult> ExecuteAsync(
         [Description("Full path to the merit function file to load")] string filePath)

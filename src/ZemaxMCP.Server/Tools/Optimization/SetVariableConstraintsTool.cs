@@ -1,13 +1,13 @@
 using System.ComponentModel;
 using System.Text.Json;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Services.ConstrainedOptimization;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetVariableConstraintsTool
 {
     private readonly IZemaxSession _session;
@@ -32,7 +32,7 @@ public class SetVariableConstraintsTool
         int ConstraintsSet
     );
 
-    [McpServerTool(Name = "zemax_set_variable_constraints")]
+    [ZemaxTool(Name = "zemax_set_variable_constraints")]
     [Description("Set min/max bounds on one or more variables for constrained optimization. Variables are identified by variable number from zemax_get_variables. Constraints are stored in memory for the session.")]
     public async Task<SetConstraintsResult> ExecuteAsync(
         [Description("JSON array of constraints: [{\"VariableNumber\": 1, \"Constraint\": \"MinAndMax\", \"Min\": -10, \"Max\": 10}]. Constraint values: Unconstrained, MinAndMax, MinOnly, MaxOnly")] string constraints)

@@ -1,19 +1,19 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class FieldCurvatureDistortionTool
 {
     private readonly IZemaxSession _session;
 
     public FieldCurvatureDistortionTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_field_curvature_distortion")]
+    [ZemaxTool(Name = "zemax_field_curvature_distortion")]
     [Description("Calculate field curvature (tangential and sagittal focus shift) and distortion as a function of field angle for each system wavelength. Returns focus shift in mm and distortion in percent.")]
     public async Task<FieldCurvatureDistortionData> ExecuteAsync(
         [Description("Distortion type: 'f_tan_theta' (default) or 'f_theta'")] string distortionType = "f_tan_theta")

@@ -1,6 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using ModelContextProtocol.Server;
 using Serilog;
 using System.Reflection;
 using System.IO.Pipes;
@@ -111,146 +110,10 @@ internal static class ServerApplication
                     throw new InvalidOperationException("The private Worker pipe handshake was rejected by the Host.");
             }
 
-            // MCP is terminated by the .NET Host. The Worker retains the
-            // existing attribute-driven binding catalogue during migration,
-            // but exposes it only through the private typed RPC server below.
-            var mcpServer = builder.Services.AddMcpServer(options =>
-            {
-                options.ServerInfo = new()
-                {
-                    Name = "zemax-mcp",
-                    Version = typeof(ServerApplication).Assembly.GetName().Version?.ToString(3) ?? "unknown"
-                };
-            });
-            mcpServer
-            .WithTools<ZemaxMCP.Server.Tools.Catalog.ToolCatalogTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Jobs.McpJobTools>()
-            // Analysis Tools
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.SpotDiagramTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.MtfAnalysisTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.GeometricMtfTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.RayTraceTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.RmsSpotTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.CardinalPointsTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.SeidelCoefficientsTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.LateralColorTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.LongitudinalAberrationTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.ChromaticFocalShiftTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.FieldCurvatureDistortionTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.RayFanTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.OpticalPathFanTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.PupilAberrationFanTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.FftMtfVsFieldTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.DiffractionEncircledEnergyTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.GeometricEncircledEnergyTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.GeometricMtfVsFieldTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.RelativeIlluminationTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.ExportAnalysisTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.GeometricImageAnalysisTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.PopTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.RayTraceExtendedTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.ApertureThroughputTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.FftPsfTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Analysis.HuygensPsfTool>()
-            // Optimization Tools
-            .WithTools<ZemaxMCP.Server.Tools.Optimization.GetMeritFunctionTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Optimization.AddOperandTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Optimization.RemoveOperandTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Optimization.OptimizeTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Optimization.OperandHelpTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Optimization.SearchOperandsTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Optimization.OptimizationWizardTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Optimization.HammerOptimizationTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Optimization.GlobalSearchTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Optimization.SaveMeritFunctionFileTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Optimization.LoadMeritFunctionFileTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Optimization.ForbesMeritFunctionTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Optimization.GetVariablesTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Optimization.SetVariableConstraintsTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Optimization.ConstrainedOptimizeTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Optimization.MultistartOptimizeTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Optimization.MultistartStatusTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Optimization.MultistartStopTool>()
-            // Lens Data Tools
-            .WithTools<ZemaxMCP.Server.Tools.LensData.GetSystemDataTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.GetSurfaceTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.SetSurfaceTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.AddSurfaceTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.SetFieldsTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.SetWavelengthsTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.SetNumberOfFieldsTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.SetNumberOfWavelengthsTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.SetApertureTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.GetSurfaceSolvesTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.SetSurfaceSolveTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.GetAsphericSurfaceTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.SetAsphericSurfaceTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.SetSurfaceParameterTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.SetSurfaceTypeTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.RemoveSurfaceTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.ListSurfaceTypesTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.GetExtraDataTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.SetExtraDataTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.SurfaceApertureTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.OffAxisConicFreeformTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.GetGlobalMatrixTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.StopAndFirstOrderTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.VignettingTool>()
-            .WithTools<ZemaxMCP.Server.Tools.LensData.FieldWavelengthStatusTool>()
-            // Non-sequential and tolerancing tools
-            .WithTools<ZemaxMCP.Server.Tools.NonSequential.GetNscObjectsTool>()
-            .WithTools<ZemaxMCP.Server.Tools.NonSequential.GetNscDetectorTool>()
-            .WithTools<ZemaxMCP.Server.Tools.NonSequential.GetNscObjectParametersTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Tolerancing.GetTolerancesTool>()
-            // Configuration Tools
-            .WithTools<ZemaxMCP.Server.Tools.Configuration.GetConfigurationTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Configuration.SetNumberOfConfigurationsTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Configuration.SetCurrentConfigurationTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Configuration.AddConfigurationOperandTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Configuration.DeleteConfigurationOperandTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Configuration.GetConfigurationOperandsTool>()
-            .WithTools<ZemaxMCP.Server.Tools.Configuration.SetConfigurationOperandValueTool>()
-            // System Tools
-            .WithTools<ZemaxMCP.Server.Tools.System.OpenFileTool>()
-            .WithTools<ZemaxMCP.Server.Tools.System.SaveFileTool>()
-            .WithTools<ZemaxMCP.Server.Tools.System.NewSystemTool>()
-            .WithTools<ZemaxMCP.Server.Tools.System.ConnectTool>()
-            .WithTools<ZemaxMCP.Server.Tools.System.QuickFocusTool>()
-            .WithTools<ZemaxMCP.Server.Tools.System.ScaleLensTool>()
-            // System Settings Tools
-            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.GetRayAimingTool>()
-            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SetRayAimingTool>()
-            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.GetAfocalModeTool>()
-            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SetAfocalModeTool>()
-            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.GetApodizationTool>()
-            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SetApodizationTool>()
-            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.GetClearSemiDiameterMarginTool>()
-            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SetClearSemiDiameterMarginTool>()
-            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.GetMtfUnitsTool>()
-            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SetMtfUnitsTool>()
-            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SystemMetadataTool>()
-            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.EnvironmentTool>()
-            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.PolarizationTool>()
-            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.UnitsTool>()
-            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SystemFilesTool>()
-            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.ApertureSettingsTool>()
-            .WithTools<ZemaxMCP.Server.Tools.SystemSettings.SystemExplorerStatusTool>()
-            // Glass Catalog Tools
-            .WithTools<ZemaxMCP.Server.Tools.GlassCatalog.GetGlassCatalogsTool>()
-            .WithTools<ZemaxMCP.Server.Tools.GlassCatalog.GetGlassesTool>()
-            .WithTools<ZemaxMCP.Server.Tools.GlassCatalog.FilterGlassesTool>()
-            .WithTools<ZemaxMCP.Server.Tools.GlassCatalog.ExportGlassCatalogTool>()
-            // Resources
-            .WithResources<ZemaxMCP.Server.Resources.CurrentSystemResource>()
-            .WithResources<ZemaxMCP.Server.Resources.MeritFunctionResource>()
-            .WithResources<ZemaxMCP.Server.Resources.OperandDocumentationResource>()
-            // Prompts
-            .WithPrompts<ZemaxMCP.Server.Prompts.DesignPrompts>()
-            .WithPrompts<ZemaxMCP.Server.Prompts.OptimizationPrompts>()
-            .WithPrompts<ZemaxMCP.Server.Prompts.AnalysisPrompts>();
-
+            // MCP terminates at the Host. The Worker registers only its own
+            // protocol-neutral command registry and exposes it through RPC.
+            builder.Services.AddSingleton<ZemaxMCP.Server.Tooling.WorkerToolRegistry>();
             var host = builder.Build();
-
             // Log the command log file location
             var commandLog = host.Services.GetRequiredService<IZemaxCommandLog>();
             Log.Information("ZEMAX Command Log: {LogPath}", commandLog.LogFilePath);

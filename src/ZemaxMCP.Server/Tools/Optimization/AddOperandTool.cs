@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Documentation;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class AddOperandTool
 {
     private readonly IZemaxSession _session;
@@ -28,7 +28,7 @@ public class AddOperandTool
         string? OperandDescription
     );
 
-    [McpServerTool(Name = "zemax_add_operand")]
+    [ZemaxTool(Name = "zemax_add_operand")]
     [Description("Add an optimization operand to the merit function")]
     public async Task<AddOperandResult> ExecuteAsync(
         [Description("Operand type (e.g., EFFL, MTFT, RSCE)")] string operandType,

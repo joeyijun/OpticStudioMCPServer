@@ -1,19 +1,19 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class PupilAberrationFanTool
 {
     private readonly IZemaxSession _session;
 
     public PupilAberrationFanTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_pupil_aberration_fan")]
+    [ZemaxTool(Name = "zemax_pupil_aberration_fan")]
     [Description("Calculate entrance pupil aberration fan for all fields and wavelengths. Returns tangential and sagittal fans showing the deviation of the actual ray entrance pupil coordinates from ideal (paraxial) coordinates. Units are percent.")]
     public async Task<RayFanData> ExecuteAsync()
     {
