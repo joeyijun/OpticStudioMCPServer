@@ -19,43 +19,31 @@ public class SetCurrentConfigurationTool
     );
 
     [ZemaxTool(Name = "zemax_set_current_configuration")]
-    [Description("Set the current active configuration")]
+    [Description("Set the current active configuration and verify the value read back from the Multi-Configuration Editor.")]
     public async Task<SetCurrentConfigurationResult> ExecuteAsync(
-        [Description("Configuration number to set as current (1-indexed)")] int configurationNumber)
+        [Description("Configuration number to set as current (1-indexed)")] int configurationNumber,
+        CancellationToken cancellationToken = default)
     {
         if (configurationNumber < 1)
-        {
-            return new SetCurrentConfigurationResult(false, "Configuration number must be at least 1", 0, 0);
-        }
+            return new SetCurrentConfigurationResult(false, "Configuration number must be at least 1.", 0, 0);
 
         try
         {
-            var result = await _session.ExecuteAsync("SetCurrentConfiguration",
+            return await _session.ExecuteAsync("SetCurrentConfiguration",
                 new Dictionary<string, object?> { ["configurationNumber"] = configurationNumber },
                 system =>
-            {
-                var mce = system.MCE;
-
-                if (configurationNumber > mce.NumberOfConfigurations)
                 {
-                    return new SetCurrentConfigurationResult(
-                        Success: false,
-                        Error: $"Configuration {configurationNumber} does not exist. System has {mce.NumberOfConfigurations} configurations.",
-                        CurrentConfiguration: mce.CurrentConfiguration,
-                        NumberOfConfigurations: mce.NumberOfConfigurations
-                    );
-                }
+                    var mce = system.MCE;
+                    if (configurationNumber > mce.NumberOfConfigurations)
+                        throw new ArgumentOutOfRangeException(nameof(configurationNumber),
+                            $"Configuration {configurationNumber} does not exist. System has {mce.NumberOfConfigurations} configurations.");
+                    if (!mce.SetCurrentConfiguration(configurationNumber))
+                        throw new InvalidOperationException($"OpticStudio rejected configuration {configurationNumber} as the active configuration.");
+                    if (mce.CurrentConfiguration != configurationNumber)
+                        throw new InvalidOperationException($"OpticStudio reported current configuration {mce.CurrentConfiguration} after requesting {configurationNumber}.");
 
-                mce.SetCurrentConfiguration(configurationNumber);
-
-                return new SetCurrentConfigurationResult(
-                    Success: true,
-                    Error: null,
-                    CurrentConfiguration: mce.CurrentConfiguration,
-                    NumberOfConfigurations: mce.NumberOfConfigurations
-                );
-            });
-            return result;
+                    return new SetCurrentConfigurationResult(true, null, mce.CurrentConfiguration, mce.NumberOfConfigurations);
+                }, cancellationToken);
         }
         catch (Exception ex)
         {
