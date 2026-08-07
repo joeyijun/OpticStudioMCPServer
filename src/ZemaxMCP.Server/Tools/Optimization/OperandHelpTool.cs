@@ -24,24 +24,29 @@ public class OperandHelpTool
     );
 
     [ZemaxTool(Name = "zemax_operand_help")]
-    [Description("Get detailed help for a specific optimization operand")]
+    [Description("Get packaged documentation for one named optimization operand. This does not access OpticStudio.")]
     public Task<OperandHelpResult> ExecuteAsync(
-        [Description("Operand type (e.g., EFFL, MTFT, RSCE)")] string operandType)
+        [Description("Operand type (for example EFFL, MTFT, RSCE)")] string operandType)
     {
-        var operand = _operandDb.GetOperand(operandType);
+        if (string.IsNullOrWhiteSpace(operandType))
+        {
+            return Task.FromResult(new OperandHelpResult(
+                false, null, "operandType cannot be empty. Use zemax_search_operands to find valid operand types.",
+                null, null, null, null));
+        }
 
+        var normalized = operandType.Trim();
+        var operand = _operandDb.GetOperand(normalized);
         if (operand == null)
         {
             return Task.FromResult(new OperandHelpResult(
                 Found: false,
                 Name: null,
-                Description: $"Operand '{operandType}' not found. " +
-                    "Use zemax_search_operands to find valid operand types.",
+                Description: $"Operand '{normalized}' not found. Use zemax_search_operands to find valid operand types.",
                 Category: null,
                 Parameters: null,
                 Example: null,
-                RelatedOperands: null
-            ));
+                RelatedOperands: null));
         }
 
         return Task.FromResult(new OperandHelpResult(
@@ -52,7 +57,6 @@ public class OperandHelpTool
             Parameters: operand.Parameters.Select(p =>
                 new ParameterInfo(p.Name, p.Description, p.DefaultValue)).ToList(),
             Example: operand.Example,
-            RelatedOperands: operand.RelatedOperands
-        ));
+            RelatedOperands: operand.RelatedOperands));
     }
 }
