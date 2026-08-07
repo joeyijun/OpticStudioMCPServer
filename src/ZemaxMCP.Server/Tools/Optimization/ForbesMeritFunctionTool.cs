@@ -305,14 +305,15 @@ public class ForbesMeritFunctionTool
             maxFieldExtent = Math.Max(maxFieldExtent, Math.Sqrt(x * x + y * y));
             totalWeight += weight;
         }
-        if (totalWeight <= 0) totalWeight = raw.Count;
+        bool useEqualFieldWeights = totalWeight <= 0;
+        if (useEqualFieldWeights) totalWeight = raw.Count;
         if (maxFieldExtent <= 0) maxFieldExtent = 1.0;
 
         return raw.Select(item => new FieldInfo(
             item.Number,
             item.X / maxFieldExtent,
             item.Y / maxFieldExtent,
-            item.Weight > 0 ? item.Weight / totalWeight : (totalWeight == raw.Count ? 1.0 / raw.Count : 0.0))).ToList();
+            useEqualFieldWeights ? 1.0 / raw.Count : item.Weight / totalWeight)).ToList();
     }
 
     private static Dictionary<int, double> ReadWavelengthWeights(dynamic wavelengths, IReadOnlyList<int> wavelengthList, CancellationToken cancellationToken)
