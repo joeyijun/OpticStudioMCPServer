@@ -1,6 +1,6 @@
 using System.ComponentModel;
 using ZemaxMCP.Server.Tooling;
-using ZOSAPI.Editors.MCE;
+using ZOSAPI.Editors;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 
@@ -22,41 +22,58 @@ public class GetConfigurationOperandsTool
     );
 
     [ZemaxTool(Name = "zemax_get_configuration_operands")]
-    [Description("Get all configuration operands from the Multi-Configuration Editor with values across all configurations")]
+    [Description("Get MCE operands and values across configurations. Invalid requested row ranges are rejected instead of silently clamped.")]
     public async Task<GetConfigurationOperandsResult> ExecuteAsync(
         [Description("Starting operand row (1-indexed, default 1)")] int startRow = 1,
-        [Description("Ending operand row (0 for all)")] int endRow = 0)
+        [Description("Ending operand row (0 for all; otherwise 1-indexed and >= startRow)")] int endRow = 0,
+        CancellationToken cancellationToken = default)
     {
         try
         {
+            if (startRow < 1) throw new ArgumentOutOfRangeException(nameof(startRow), "startRow must be >= 1.");
+            if (endRow < 0) throw new ArgumentOutOfRangeException(nameof(endRow), "endRow must be 0 (all) or >= 1.");
+            if (endRow > 0 && endRow < startRow)
+                throw new ArgumentException("endRow must be 0 (all) or greater than or equal to startRow.");
+
             var parameters = new Dictionary<string, object?>
             {
                 ["startRow"] = startRow,
                 ["endRow"] = endRow
             };
 
-            var result = await _session.ExecuteAsync("GetConfigurationOperands", parameters, system =>
+            return await _session.ExecuteAsync("GetConfigurationOperands", parameters, system =>
             {
                 var mce = system.MCE;
-                var numOperands = mce.NumberOfOperands;
-                var numConfigs = mce.NumberOfConfigurations;
-
+                int numOperands = mce.NumberOfOperands;
+                int numConfigs = mce.NumberOfConfigurations;
                 var operands = new List<ConfigurationOperand>();
 
-                var start = Math.Max(1, startRow);
-                var end = endRow > 0 ? Math.Min(endRow, numOperands) : numOperands;
+                if (numOperands == 0)
+                    return new GetConfigurationOperandsResult(true, null, 0, numConfigs, operands);
+                if (startRow > numOperands)
+                    throw new ArgumentOutOfRangeException(nameof(startRow), $"startRow {startRow} exceeds the MCE operand count ({numOperands}).");
+                int end = endRow == 0 ? numOperands : endRow;
+                if (end > numOperands)
+                    throw new ArgumentOutOfRangeException(nameof(endRow), $"endRow {end} exceeds the MCE operand count ({numOperands}).");
 
-                for (int rowNum = start; rowNum <= end; rowNum++)
+                for (int rowNum = startRow; rowNum <= end; rowNum++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     var row = mce.GetOperandAt(rowNum);
-                    var values = new List<ConfigurationValue>();
+                    if (row == null || !row.IsValidRow)
+                        throw new InvalidOperationException($"MCE operand row {rowNum} is not valid.");
 
-                    // Get values for each configuration
+                    var values = new List<ConfigurationValue>();
                     for (int configNum = 1; configNum <= numConfigs; configNum++)
                     {
+                        if ((configNum & 31) == 0) cancellationToken.ThrowIfCancellationRequested();
                         var cell = row.GetOperandCell(configNum);
-                        var solveData = cell.GetSolveData();
+                        if (cell == null || !cell.IsActive)
+                            throw new InvalidOperationException($"MCE cell row {rowNum}, configuration {configNum} is not active.");
+                        if (cell.DataType != CellDataType.Double)
+                            throw new InvalidOperationException($"MCE cell row {rowNum}, configuration {configNum} has data type {cell.DataType}; the structured configuration-value contract currently supports numeric cells only.");
 
+                        var solveData = cell.GetSolveData();
                         var configValue = new ConfigurationValue
                         {
                             ConfigurationNumber = configNum,
@@ -64,29 +81,22 @@ public class GetConfigurationOperandsTool
                             SolveType = solveData.Type.ToString()
                         };
 
-                        // Try to get pickup info if applicable (using dynamic to handle API variations)
-                        if (solveData.Type == ZOSAPI.Editors.SolveType.ConfigPickup)
+                        if (solveData.Type == SolveType.ConfigPickup)
                         {
-                            try
+                            var pickup = solveData._S_ConfigPickup
+                                ?? throw new InvalidOperationException($"MCE ConfigPickup solve data was unavailable at row {rowNum}, configuration {configNum}.");
+                            configValue = configValue with
                             {
-                                dynamic dynSolveData = solveData;
-                                configValue = configValue with
-                                {
-                                    PickupConfig = (int?)dynSolveData.ConfigPickup_Configuration,
-                                    ScaleFactor = (double?)dynSolveData.ConfigPickup_ScaleFactor,
-                                    Offset = (double?)dynSolveData.ConfigPickup_Offset
-                                };
-                            }
-                            catch
-                            {
-                                // Pickup info not available in this API version
-                            }
+                                PickupConfig = pickup.Configuration,
+                                ScaleFactor = pickup.SupportsScale ? pickup.ScaleFactor : null,
+                                Offset = pickup.SupportsOffset ? pickup.Offset : null
+                            };
                         }
 
                         values.Add(configValue);
                     }
 
-                    var operand = new ConfigurationOperand
+                    operands.Add(new ConfigurationOperand
                     {
                         OperandNumber = rowNum,
                         OperandType = row.Type.ToString(),
@@ -94,21 +104,11 @@ public class GetConfigurationOperandsTool
                         Param2 = row.Param2,
                         Param3 = row.Param3,
                         Values = values
-                    };
-
-                    operands.Add(operand);
+                    });
                 }
 
-                return new GetConfigurationOperandsResult(
-                    Success: true,
-                    Error: null,
-                    NumberOfOperands: numOperands,
-                    NumberOfConfigurations: numConfigs,
-                    Operands: operands
-                );
-            });
-
-            return result;
+                return new GetConfigurationOperandsResult(true, null, numOperands, numConfigs, operands);
+            }, cancellationToken);
         }
         catch (Exception ex)
         {
