@@ -185,7 +185,6 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
                 Kind = kind,
                 RequestId = requestId,
                 OperationId = operationId,
-                ClientId = "mcp-host",
                 Payload = JsonSerializer.SerializeToElement(payload, _jsonOptions)
             };
             await WriteAsync(writer, message, cancellationToken,
