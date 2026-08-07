@@ -131,21 +131,23 @@ public class SetConfigurationOperandValueTool
                 }
                 else
                 {
+                    ValidateFixedValueMatchesCellType(cell.DataType, value, integerValue, stringValue);
                     if (!cell.MakeSolveFixed())
                         throw new InvalidOperationException("OpticStudio could not make the MCE cell fixed.");
+
                     switch (cell.DataType)
                     {
-                        case CellDataType.Double when value.HasValue:
-                            cell.DoubleValue = value.Value;
+                        case CellDataType.Double:
+                            cell.DoubleValue = value!.Value;
                             break;
-                        case CellDataType.Integer when integerValue.HasValue:
-                            cell.IntegerValue = integerValue.Value;
+                        case CellDataType.Integer:
+                            cell.IntegerValue = integerValue!.Value;
                             break;
-                        case CellDataType.String when stringValue is not null:
-                            cell.Value = stringValue;
+                        case CellDataType.String:
+                            cell.Value = stringValue!;
                             break;
                         default:
-                            throw new ArgumentException($"The supplied fixed-value parameter does not match the MCE cell data type {cell.DataType}.");
+                            throw new InvalidOperationException($"Unsupported MCE cell data type {cell.DataType}.");
                     }
                 }
 
@@ -156,6 +158,23 @@ public class SetConfigurationOperandValueTool
         {
             return new SetConfigurationOperandValueResult(false, ex.Message, null);
         }
+    }
+
+    private static void ValidateFixedValueMatchesCellType(
+        CellDataType dataType,
+        double? doubleValue,
+        int? integerValue,
+        string? stringValue)
+    {
+        bool matches = dataType switch
+        {
+            CellDataType.Double => doubleValue.HasValue && !integerValue.HasValue && stringValue is null,
+            CellDataType.Integer => integerValue.HasValue && !doubleValue.HasValue && stringValue is null,
+            CellDataType.String => stringValue is not null && !doubleValue.HasValue && !integerValue.HasValue,
+            _ => false
+        };
+        if (!matches)
+            throw new ArgumentException($"The supplied fixed-value parameter does not match the MCE cell data type {dataType}.");
     }
 
     private static ConfigurationCellValue ReadCell(int configurationNumber, IEditorCell cell)
