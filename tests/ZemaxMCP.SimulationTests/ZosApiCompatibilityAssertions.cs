@@ -7,9 +7,15 @@ internal static class ZosApiCompatibilityAssertions
     [ModuleInitializer]
     internal static void Run()
     {
-        var parsed = ZosApiRuntimeCompatibility.ParseComparableVersion("2026.1.2.3 build metadata");
-        if (parsed == null || parsed != new Version(2026, 1, 2, 3))
-            throw new InvalidOperationException("ZOS-API comparable version parsing regressed.");
+        var numericYear = ZosApiRuntimeCompatibility.ParseComparableVersion("2026.1.2.3 build metadata");
+        if (numericYear == null || numericYear != new Version(26, 1, 2, 3))
+            throw new InvalidOperationException("Four-digit Ansys ZOS-API version normalization regressed.");
+        var releaseName = ZosApiRuntimeCompatibility.ParseComparableVersion("Ansys Zemax OpticStudio 2024 R2.01");
+        if (releaseName == null || releaseName != new Version(24, 2, 1, 0))
+            throw new InvalidOperationException("Ansys R-release ZOS-API version normalization regressed.");
+        var legacy = ZosApiRuntimeCompatibility.ParseComparableVersion("21.3.2");
+        if (legacy == null || legacy != new Version(21, 3, 2, 0))
+            throw new InvalidOperationException("Legacy Zemax ZOS-API version parsing regressed.");
 
         var root = Path.Combine(Path.GetTempPath(), "ZemaxMCP-zos-compat-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
