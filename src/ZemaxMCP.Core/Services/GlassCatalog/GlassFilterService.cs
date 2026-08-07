@@ -30,14 +30,15 @@ public static class GlassFilterService
 {
     public static List<GlassEntry> Apply(IEnumerable<GlassEntry> glasses, GlassFilterCriteria criteria)
     {
-        ArgumentNullException.ThrowIfNull(glasses);
-        ArgumentNullException.ThrowIfNull(criteria);
+        if (glasses == null) throw new ArgumentNullException(nameof(glasses));
+        if (criteria == null) throw new ArgumentNullException(nameof(criteria));
         Validate(criteria);
         return glasses.Where(g => PassesAllFilters(g, criteria)).ToList();
     }
 
     public static void Validate(GlassFilterCriteria c)
     {
+        if (c == null) throw new ArgumentNullException(nameof(c));
         ValidateFinite(c.DistanceRadius, nameof(c.DistanceRadius));
         ValidateFinite(c.Wn, nameof(c.Wn));
         ValidateFinite(c.Wa, nameof(c.Wa));
@@ -64,7 +65,7 @@ public static class GlassFilterService
         ValidateRange(c.NdMin, c.NdMax, "Nd");
         ValidateRange(c.VdMin, c.VdMax, "Vd");
         ValidateRange(c.DPgFMin, c.DPgFMax, "dPgF");
-        ValidateRange(c.TCEMin, c.TCEMax, "TCE");
+        ValidateRange(c.TCEMin, c.TCMax, "TCE");
         if (c.MinWavelengthCoverage is <= 0)
             throw new ArgumentOutOfRangeException(nameof(c.MinWavelengthCoverage), "Minimum wavelength coverage must be > 0 µm.");
         if (c.MaxWavelengthCoverage is <= 0)
