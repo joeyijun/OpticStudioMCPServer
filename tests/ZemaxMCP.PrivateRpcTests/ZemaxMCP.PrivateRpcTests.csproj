@@ -9,6 +9,6 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="..\..\src\ZemaxMCP.HttpBridge\ZemaxMCP.HttpBridge.csproj" />
     <ProjectReference Include="..\..\src\ZemaxMCP.Rpc\ZemaxMCP.Rpc.csproj" />
-    <Compile Include="..\..\src\ZemaxMCP.Server\Tooling\ZemaxToolAttributes.cs" Link="WorkerToolRegistry.cs" />
+    <ProjectReference Include="..\..\src\ZemaxMCP.ToolManifest\ZemaxMCP.ToolManifest.csproj" />
   </ItemGroup>
 </Project>
