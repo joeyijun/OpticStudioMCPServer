@@ -125,6 +125,8 @@ For each public tool, review the following contract:
 - `zemax_fft_psf` rejects invalid named sampling/output/type settings rather than silently retaining defaults, validates field/wavelength/surface/image-delta values, checks result/grid validity, propagates cancellation, and reports version-sensitive optional-setting/text-export failures as warnings.
 - `zemax_huygens_psf` applies the same strict enum/range/result contract and warning behavior to Huygens PSF while preserving the typed `IAS_HuygensPsf` settings path.
 - `zemax_seidel_coefficients` validates the requested wavelength, requires a real analysis/results/text payload, propagates cancellation, and fails if no coefficient table can be parsed instead of returning a zero-filled successful result. Unparsable optional numeric header/table values are represented as `NaN` rather than fabricated zeroes.
+- `zemax_chromatic_focal_shift`, `zemax_longitudinal_aberration`, and `zemax_lateral_color` now require non-empty result text and a complete parsable curve/matrix before returning success; missing optional metadata is represented as unknown/`NaN` rather than fabricated zeroes, and cancellation reaches the session boundary.
+- `zemax_field_curvature_distortion` strictly accepts `f_tan_theta` or `f_theta`, requires typed analysis settings/results and at least one complete wavelength block, propagates cancellation, and stops reporting zero-filled success when the installed text format cannot be parsed.
 
 Stage C is not complete. Text-output parsers and PSF grid semantics are especially dependent on the installed OpticStudio/ZOS-API version and must be exercised on a licensed test machine before release.
 
