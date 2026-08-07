@@ -118,7 +118,7 @@ public static class Program
             if (initialize && line.Contains("\"name\":\"fail-init\""))
                 Send(writer, "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"error\":{\"code\":-32099,\"message\":\"simulated initialize failure\"}}");
             else Send(writer, initialize
-                ? "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"protocolVersion\":\"" + (line.Contains("2025-11-25") ? "2025-11-25" : "2025-03-26") + "\",\"serverInfo\":{\"name\":\"fake-mcp\",\"version\":\"1.0\"}}}"
+                ? "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"protocolVersion\":\"" + (line.Contains("2025-11-25") || line.Contains("\"name\":\"mismatched-protocol\"") ? "2025-11-25" : "2025-03-26") + "\",\"serverInfo\":{\"name\":\"fake-mcp\",\"version\":\"1.0\"}}}"
                 : "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{}}");
         }
     }

@@ -162,11 +162,10 @@ internal sealed class StdioMcpBridge : IDisposable
     private const string DefaultMcpProtocolVersion = "2025-03-26";
     private const string LegacyMcpProtocolVersion = "2025-11-25";
     private const string StatelessMcpProtocolVersion = "2026-07-28";
-    private static readonly HashSet<string> SupportedMcpProtocolVersions = new HashSet<string>(StringComparer.Ordinal)
+    private static readonly HashSet<string> SupportedLegacyMcpProtocolVersions = new HashSet<string>(StringComparer.Ordinal)
     {
         DefaultMcpProtocolVersion,
-        LegacyMcpProtocolVersion,
-        StatelessMcpProtocolVersion
+        LegacyMcpProtocolVersion
     };
     private static readonly TimeSpan ClientSessionIdleTimeout = TimeSpan.FromMinutes(15);
     // An initialize response is the only point at which a provisional session
@@ -649,8 +648,14 @@ internal sealed class StdioMcpBridge : IDisposable
             }
             var requestedSession = context.Request.Headers["Mcp-Session-Id"];
             string? responseSession = null;
+            string? requestedInitializeProtocolVersion = null;
             if (isInitialize)
             {
+                if (!TryGetRequestedLegacyProtocolVersion(json, out requestedInitializeProtocolVersion, out var protocolRejection))
+                {
+                    await TryWriteRpcErrorAsync(context, -32022, protocolRejection, HttpStatusCode.BadRequest, id).ConfigureAwait(false);
+                    return;
+                }
                 if (!TryBeginClientRegistration(json, now, out responseSession, out var rejection))
                 {
                     await WriteJsonAsync(context, new JObject
@@ -781,6 +786,19 @@ internal sealed class StdioMcpBridge : IDisposable
             }
             response = ToolsetPolicy.FilterToolsListResponse(_options.ToolsetProfile, method, response);
             var canCommitInitialization = provisionalSession != null && IsSuccessfulInitializeResponse(response);
+            var responseStatus = HttpStatusCode.OK;
+            string? negotiatedProtocolVersion = null;
+            if (canCommitInitialization &&
+                (!TryGetNegotiatedLegacyMcpProtocolVersion(response, out negotiatedProtocolVersion) ||
+                 !string.Equals(negotiatedProtocolVersion, requestedInitializeProtocolVersion, StringComparison.Ordinal)))
+            {
+                DiscardProvisionalClientRegistration(provisionalSession);
+                responseSession = null;
+                response = BuildRpcErrorResponse(id, -32022,
+                    "The MCP Worker did not negotiate the protocol version requested during initialize.");
+                canCommitInitialization = false;
+                responseStatus = HttpStatusCode.BadRequest;
+            }
             if (provisionalSession != null && !canCommitInitialization)
             {
                 DiscardProvisionalClientRegistration(provisionalSession);
@@ -792,7 +810,7 @@ internal sealed class StdioMcpBridge : IDisposable
             {
                 if (canCommitInitialization && Interlocked.Decrement(ref _remainingTestInitializeWriteFailures) >= 0)
                     throw new IOException("Injected initialize-response write failure for protocol regression verification.");
-                await WriteMcpJsonAsync(context, response, responseSession).ConfigureAwait(false);
+                await WriteMcpJsonAsync(context, response, responseSession, responseStatus).ConfigureAwait(false);
             }
 
             // Commit only after the complete HTTP initialize response (including
@@ -801,8 +819,7 @@ internal sealed class StdioMcpBridge : IDisposable
             // provisional entry back instead of leaving an orphan client slot.
             if (canCommitInitialization)
             {
-                var negotiatedProtocolVersion = GetNegotiatedMcpProtocolVersion(response);
-                if (!CommitClientRegistration(provisionalSession!, negotiatedProtocolVersion))
+                if (!CommitClientRegistration(provisionalSession!, negotiatedProtocolVersion!))
                     throw new InvalidOperationException("The provisional MCP initialize session disappeared before it could be committed.");
                 initializationCommitted = true;
             }
@@ -866,8 +883,17 @@ internal sealed class StdioMcpBridge : IDisposable
     private static bool IsStatelessProtocolRequest(HttpListenerContext context, JObject request)
     {
         var bodyVersion = request["params"]?["_meta"]?["io.modelcontextprotocol/protocolVersion"]?.ToString();
-        return string.Equals(context.Request.Headers["MCP-Protocol-Version"], StatelessMcpProtocolVersion, StringComparison.Ordinal) ||
-               string.Equals(bodyVersion, StatelessMcpProtocolVersion, StringComparison.Ordinal);
+        // A self-describing _meta block is unambiguously the stateless transport.
+        // Future protocol dates must reach its validator too, otherwise an unknown
+        // modern request would be incorrectly interpreted as a legacy session call.
+        return !string.IsNullOrWhiteSpace(bodyVersion) ||
+               IsModernProtocolVersion(context.Request.Headers["MCP-Protocol-Version"]);
+    }
+
+    private static bool IsModernProtocolVersion(string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version) || version!.Length < 4) return false;
+        return int.TryParse(version.Substring(0, 4), out var year) && year >= 2026;
     }
 
     /// <summary>
@@ -879,33 +905,34 @@ internal sealed class StdioMcpBridge : IDisposable
     {
         SseResponseStream? sse = null;
         string? operationId = null;
+        var responseId = request["id"];
         var operationReleased = false;
         var operationOwnershipTransferredToRecovery = false;
         try
         {
-            if (!TryValidateStatelessRequest(context, request, out var method, out var client, out var validationError))
+            if (!TryValidateStatelessRequest(context, request, out var method, out var client, out var validationCode, out var validationError))
             {
-                await TryWriteRpcErrorAsync(context, -32020, validationError, HttpStatusCode.BadRequest).ConfigureAwait(false);
+                await TryWriteRpcErrorAsync(context, validationCode, validationError, HttpStatusCode.BadRequest, responseId).ConfigureAwait(false);
                 return;
             }
             if (!AcceptsStatelessMcpResponse(context.Request.Headers["Accept"]))
             {
                 await TryWriteRpcErrorAsync(context, -32020,
-                    "2026-07-28 requests must accept both application/json and text/event-stream.", HttpStatusCode.BadRequest).ConfigureAwait(false);
+                    "2026-07-28 requests must accept both application/json and text/event-stream.", HttpStatusCode.BadRequest, responseId).ConfigureAwait(false);
                 return;
             }
 
-            var id = request["id"];
+            var id = responseId;
             if (id == null || id.Type == JTokenType.Null)
             {
                 await TryWriteRpcErrorAsync(context, -32600,
-                    "The 2026-07-28 Streamable HTTP transport accepts JSON-RPC requests, not client notifications or responses.", HttpStatusCode.BadRequest).ConfigureAwait(false);
+                    "The 2026-07-28 Streamable HTTP transport accepts JSON-RPC requests, not client notifications or responses.", HttpStatusCode.BadRequest, responseId).ConfigureAwait(false);
                 return;
             }
             if (method.Equals("initialize", StringComparison.OrdinalIgnoreCase))
             {
                 await TryWriteRpcErrorAsync(context, -32601,
-                    "initialize is a legacy MCP lifecycle method. Use server/discover or send a self-describing 2026-07-28 request.", HttpStatusCode.NotFound).ConfigureAwait(false);
+                    "initialize is a legacy MCP lifecycle method. Use server/discover or send a self-describing 2026-07-28 request.", HttpStatusCode.NotFound, responseId).ConfigureAwait(false);
                 return;
             }
 
@@ -920,12 +947,12 @@ internal sealed class StdioMcpBridge : IDisposable
                 !ToolsetPolicy.IsToolAllowed(_options.ToolsetProfile, request["params"]?["name"]?.ToString()))
             {
                 await TryWriteRpcErrorAsync(context, -32601,
-                    "This tool is not enabled by the selected Launcher run configuration.", HttpStatusCode.Forbidden).ConfigureAwait(false);
+                    "This tool is not enabled by the selected Launcher run configuration.", HttpStatusCode.Forbidden, responseId).ConfigureAwait(false);
                 return;
             }
             if (RequiresOpticStudioControlLease(method) && !TryAcquireOrTouchControlLease(clientId, client, now, out var leaseError))
             {
-                await TryWriteRpcErrorAsync(context, -32002, leaseError, HttpStatusCode.Conflict).ConfigureAwait(false);
+                await TryWriteRpcErrorAsync(context, -32002, leaseError, HttpStatusCode.Conflict, responseId).ConfigureAwait(false);
                 return;
             }
 
@@ -980,18 +1007,18 @@ internal sealed class StdioMcpBridge : IDisposable
         {
             Log.Error(ex, "Stateless MCP request timed out; hard recovery is pending if the Worker remains unresponsive");
             if (sse != null) await WriteSseWithTimeoutAsync(sse, () => sse.WriteRpcErrorAsync(-32001, ex.Message)).ConfigureAwait(false);
-            else await TryWriteRpcErrorAsync(context, -32001, ex.Message, HttpStatusCode.GatewayTimeout).ConfigureAwait(false);
+            else await TryWriteRpcErrorAsync(context, -32001, ex.Message, HttpStatusCode.GatewayTimeout, responseId).ConfigureAwait(false);
         }
         catch (BridgeRequestQueueFullException ex)
         {
             if (sse != null) await WriteSseWithTimeoutAsync(sse, () => sse.WriteRpcErrorAsync(-32003, ex.Message)).ConfigureAwait(false);
-            else await TryWriteRpcErrorAsync(context, -32003, ex.Message, (HttpStatusCode)429).ConfigureAwait(false);
+            else await TryWriteRpcErrorAsync(context, -32003, ex.Message, (HttpStatusCode)429, responseId).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Stateless HTTP MCP request failed");
             if (sse != null) await WriteSseWithTimeoutAsync(sse, () => sse.WriteRpcErrorAsync(-32603, "Zemax MCP bridge error")).ConfigureAwait(false);
-            else await TryWriteRpcErrorAsync(context, -32603, "Zemax MCP bridge error", HttpStatusCode.InternalServerError).ConfigureAwait(false);
+            else await TryWriteRpcErrorAsync(context, -32603, "Zemax MCP bridge error", HttpStatusCode.InternalServerError, responseId).ConfigureAwait(false);
         }
         finally
         {
@@ -1005,19 +1032,25 @@ internal sealed class StdioMcpBridge : IDisposable
         }
     }
 
-    private bool TryValidateStatelessRequest(HttpListenerContext context, JObject request, out string method, out ModernClientIdentity client, out string error)
+    private bool TryValidateStatelessRequest(HttpListenerContext context, JObject request, out string method, out ModernClientIdentity client, out int errorCode, out string error)
     {
         method = request["method"]?.ToString() ?? string.Empty;
         client = default!;
+        errorCode = -32020;
         error = string.Empty;
         var parameters = request["params"] as JObject;
         var meta = parameters?["_meta"] as JObject;
         var bodyVersion = meta?["io.modelcontextprotocol/protocolVersion"]?.ToString();
         var headerVersion = context.Request.Headers["MCP-Protocol-Version"]?.Trim();
-        if (!string.Equals(headerVersion, StatelessMcpProtocolVersion, StringComparison.Ordinal) ||
-            !string.Equals(bodyVersion, StatelessMcpProtocolVersion, StringComparison.Ordinal))
+        if (!string.Equals(headerVersion, bodyVersion, StringComparison.Ordinal))
         {
-            error = "Header mismatch: MCP-Protocol-Version and params._meta.io.modelcontextprotocol/protocolVersion must both be 2026-07-28.";
+            error = "Header mismatch: MCP-Protocol-Version must match params._meta.io.modelcontextprotocol/protocolVersion.";
+            return false;
+        }
+        if (!string.Equals(headerVersion, StatelessMcpProtocolVersion, StringComparison.Ordinal))
+        {
+            errorCode = -32022;
+            error = "Unsupported stateless MCP protocol version '" + (headerVersion ?? "missing") + "'. Supported version: " + StatelessMcpProtocolVersion + ".";
             return false;
         }
         if (string.IsNullOrWhiteSpace(method))
@@ -1043,14 +1076,25 @@ internal sealed class StdioMcpBridge : IDisposable
         var capabilities = meta?["io.modelcontextprotocol/clientCapabilities"];
         var name = clientInfo?["name"]?.ToString();
         var version = clientInfo?["version"]?.ToString();
+        var instanceId = meta?["io.zemaxmcp/clientInstanceId"]?.ToString();
         if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(version) || capabilities == null)
         {
             error = "2026-07-28 requests must include clientInfo and clientCapabilities in params._meta.";
             return false;
         }
-        client = new ModernClientIdentity(name!, version!);
+        if (!string.IsNullOrWhiteSpace(instanceId) && !IsSafeClientInstanceId(instanceId!))
+        {
+            errorCode = -32602;
+            error = "params._meta.io.zemaxmcp/clientInstanceId must be 1-128 ASCII letters, digits, '.', '_' or '-'.";
+            return false;
+        }
+        client = new ModernClientIdentity(name!, version!, instanceId);
         return true;
     }
+
+    private static bool IsSafeClientInstanceId(string instanceId) =>
+        instanceId.Length is >= 1 and <= 128 && instanceId.All(character =>
+            char.IsLetterOrDigit(character) || character == '.' || character == '_' || character == '-');
 
     private static bool HeaderMatches(string? rawHeader, string bodyValue)
     {
@@ -1081,7 +1125,7 @@ internal sealed class StdioMcpBridge : IDisposable
     private string GetStatelessClientId(ModernClientIdentity client, HttpListenerContext context)
     {
         var address = context.Request.RemoteEndPoint?.Address.ToString() ?? "unknown";
-        var material = client.Name + "\n" + client.Version + "\n" + address;
+        var material = client.Name + "\n" + client.Version + "\n" + (client.InstanceId ?? "") + "\n" + address;
         using (var sha256 = SHA256.Create())
             return Convert.ToBase64String(sha256.ComputeHash(Encoding.UTF8.GetBytes(material))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
     }
@@ -1179,7 +1223,7 @@ internal sealed class StdioMcpBridge : IDisposable
         context.Response.Headers["Access-Control-Allow-Origin"] = origin;
         context.Response.Headers["Vary"] = "Origin";
         context.Response.Headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS";
-        context.Response.Headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version";
+        context.Response.Headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version, Mcp-Method, Mcp-Name";
     }
 
     internal static bool IsOriginAllowed(string origin, Uri? requestUrl)
@@ -1236,6 +1280,7 @@ internal sealed class StdioMcpBridge : IDisposable
                 {
                     ["name"] = x.Name,
                     ["version"] = x.Version,
+                    ["instanceId"] = x.InstanceId,
                     ["connectedAt"] = x.ConnectedAt.ToString("O"),
                     ["lastRequestAt"] = x.LastRequestAt.ToString("O"),
                     ["lastMethod"] = x.LastMethod,
@@ -1350,7 +1395,9 @@ internal sealed class StdioMcpBridge : IDisposable
                 .ToArray();
             foreach (var key in expired) _clients.Remove(key);
 
-            if (_controlLease != null && now - _controlLease.LastActivity <= ClientSessionIdleTimeout)
+            if (_controlLease != null &&
+                (now - _controlLease.LastActivity <= ClientSessionIdleTimeout ||
+                 ClientHasActiveOperation(_controlLease.OwnerClientId)))
             {
                 rejection = "OpticStudio is currently leased to " + _controlLease.OwnerName + ". Retry after its last activity is older than " + (int)ClientSessionIdleTimeout.TotalMinutes + " minutes.";
                 return false;
@@ -1399,7 +1446,7 @@ internal sealed class StdioMcpBridge : IDisposable
     {
         lock (_stateLock)
         {
-            if (!_clients.TryGetValue(sessionId, out var client) || !client.IsProvisional || !SupportedMcpProtocolVersions.Contains(protocolVersion)) return false;
+            if (!_clients.TryGetValue(sessionId, out var client) || !client.IsProvisional || !SupportedLegacyMcpProtocolVersions.Contains(protocolVersion)) return false;
             client.IsProvisional = false;
             client.ProtocolVersion = protocolVersion;
             _controlLease = new OpticStudioControlLease(sessionId, client.Name, DateTimeOffset.UtcNow);
@@ -1407,14 +1454,29 @@ internal sealed class StdioMcpBridge : IDisposable
         }
     }
 
-    private static string GetNegotiatedMcpProtocolVersion(string response)
+    private static bool TryGetRequestedLegacyProtocolVersion(JObject request, out string protocolVersion, out string error)
     {
+        protocolVersion = request["params"]?["protocolVersion"]?.ToString() ?? string.Empty;
+        if (SupportedLegacyMcpProtocolVersions.Contains(protocolVersion))
+        {
+            error = string.Empty;
+            return true;
+        }
+        error = "Unsupported legacy MCP protocol version '" + (string.IsNullOrWhiteSpace(protocolVersion) ? "missing" : protocolVersion) + "'. Supported versions: " + string.Join(", ", SupportedLegacyMcpProtocolVersions) + ".";
+        return false;
+    }
+
+    private static bool TryGetNegotiatedLegacyMcpProtocolVersion(string response, out string protocolVersion)
+    {
+        protocolVersion = string.Empty;
         try
         {
             var negotiated = JObject.Parse(response)["result"]?["protocolVersion"]?.ToString();
-            return SupportedMcpProtocolVersions.Contains(negotiated ?? string.Empty) ? negotiated! : DefaultMcpProtocolVersion;
+            if (!SupportedLegacyMcpProtocolVersions.Contains(negotiated ?? string.Empty)) return false;
+            protocolVersion = negotiated!;
+            return true;
         }
-        catch { return DefaultMcpProtocolVersion; }
+        catch { return false; }
     }
 
     private bool TryValidateMcpProtocolVersion(string sessionId, string? headerValue, out string error)
@@ -1427,9 +1489,9 @@ internal sealed class StdioMcpBridge : IDisposable
                 return false;
             }
             var version = string.IsNullOrWhiteSpace(headerValue) ? client.ProtocolVersion : headerValue!.Trim();
-            if (!SupportedMcpProtocolVersions.Contains(version))
+            if (!SupportedLegacyMcpProtocolVersions.Contains(version))
             {
-                error = "Unsupported MCP-Protocol-Version '" + version + "'. Supported versions: " + string.Join(", ", SupportedMcpProtocolVersions) + ".";
+                error = "Unsupported MCP-Protocol-Version '" + version + "'. Supported versions: " + string.Join(", ", SupportedLegacyMcpProtocolVersions) + ".";
                 return false;
             }
             if (!string.Equals(version, client.ProtocolVersion, StringComparison.Ordinal))
@@ -1555,10 +1617,10 @@ internal sealed class StdioMcpBridge : IDisposable
         context.Response.Close();
     }
 
-    private static async Task WriteMcpJsonAsync(HttpListenerContext context, string response, string? sessionId)
+    private static async Task WriteMcpJsonAsync(HttpListenerContext context, string response, string? sessionId, HttpStatusCode status = HttpStatusCode.OK)
     {
         var bytes = Encoding.UTF8.GetBytes(response);
-        context.Response.StatusCode = (int)HttpStatusCode.OK;
+        context.Response.StatusCode = (int)status;
         context.Response.ContentType = "application/json; charset=utf-8";
         if (!string.IsNullOrWhiteSpace(sessionId)) context.Response.Headers["Mcp-Session-Id"] = sessionId;
         context.Response.ContentLength64 = bytes.Length;
@@ -1566,17 +1628,19 @@ internal sealed class StdioMcpBridge : IDisposable
         context.Response.Close();
     }
 
-    private static async Task TryWriteRpcErrorAsync(HttpListenerContext context, int code, string message, HttpStatusCode status)
+    private static string BuildRpcErrorResponse(JToken? id, int code, string message) => new JObject
+    {
+        ["jsonrpc"] = "2.0",
+        ["error"] = new JObject { ["code"] = code, ["message"] = message },
+        ["id"] = id?.DeepClone() ?? JValue.CreateNull()
+    }.ToString(Newtonsoft.Json.Formatting.None);
+
+    private static async Task TryWriteRpcErrorAsync(HttpListenerContext context, int code, string message, HttpStatusCode status, JToken? id = null)
     {
         try
         {
             if (!context.Response.OutputStream.CanWrite) return;
-            await WriteJsonAsync(context, new JObject
-            {
-                ["jsonrpc"] = "2.0",
-                ["error"] = new JObject { ["code"] = code, ["message"] = message },
-                ["id"] = null
-            }, status).ConfigureAwait(false);
+            await WriteJsonAsync(context, JObject.Parse(BuildRpcErrorResponse(id, code, message)), status).ConfigureAwait(false);
         }
         catch (Exception writeError) { Log.Warning(writeError, "Could not write an HTTP MCP error response"); }
     }
@@ -2036,6 +2100,7 @@ internal sealed class StdioMcpBridge : IDisposable
         {
             Name = identity.Name;
             Version = identity.Version;
+            InstanceId = identity.InstanceId;
             ConnectedAt = connectedAt;
             LastRequestAt = connectedAt;
             LastMethod = "server/discover";
@@ -2043,6 +2108,7 @@ internal sealed class StdioMcpBridge : IDisposable
 
         public string Name { get; }
         public string Version { get; }
+        public string? InstanceId { get; }
         public DateTimeOffset ConnectedAt { get; }
         public DateTimeOffset LastRequestAt { get; set; }
         public string LastMethod { get; set; }
@@ -2067,9 +2133,15 @@ internal sealed class StdioMcpBridge : IDisposable
 
     private sealed class ModernClientIdentity
     {
-        public ModernClientIdentity(string name, string version) { Name = name; Version = version; }
+        public ModernClientIdentity(string name, string version, string? instanceId)
+        {
+            Name = name;
+            Version = version;
+            InstanceId = string.IsNullOrWhiteSpace(instanceId) ? null : instanceId;
+        }
         public string Name { get; }
         public string Version { get; }
+        public string? InstanceId { get; }
     }
 
     private sealed class ActiveRequest

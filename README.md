@@ -52,14 +52,14 @@ The Host starts the Worker through a current-user-only named pipe. The Host is t
 
 ### MCP protocol compatibility
 
-The Worker uses the C# MCP SDK 2.0 compatibility layer. The Host supports both protocol eras without conflating their transport state with control of the live optical system:
+The Worker uses the stable C# MCP SDK 2.0. The Host supports both protocol eras without conflating their transport state with control of the live optical system:
 
 | Client protocol | HTTP lifecycle | Host ownership rule |
 |---|---|---|
 | `2025-03-26` / `2025-11-25` | Legacy `initialize`, optional `Mcp-Session-Id`, and `DELETE` cleanup. `MCP-Protocol-Version` is checked against the negotiated version. | The initialized legacy client holds the OpticStudio control lease. |
-| `2026-07-28` | Stateless POST requests. Every request carries matching `MCP-Protocol-Version`, `Mcp-Method`, and `_meta` body metadata; tool/resource/prompt requests also carry `Mcp-Name`. `server/discover` is available and no session is minted. | The Host derives a stable client key from authenticated-request metadata and network endpoint, then grants one independent OpticStudio control lease. |
+| `2026-07-28` | Stateless POST requests. Every request carries matching `MCP-Protocol-Version`, `Mcp-Method`, and `_meta` body metadata; tool/resource/prompt requests also carry `Mcp-Name`. `server/discover` is available and no session is minted. Browser CORS preflight permits these two MCP headers. | The Host derives a stable client key from authenticated-request metadata and network endpoint, then grants one independent OpticStudio control lease. |
 
-The lease expires after fifteen minutes without activity (unless an operation is still draining) and is cleared when the Worker is restarted. Thus a modern stateless client can use independent POSTs while OpticStudio remains intentionally single-owner, single-STA, and serialized.
+The lease expires after fifteen minutes without activity (unless an operation is still draining) and is cleared when the Worker is restarted. Thus a modern stateless client can use independent POSTs while OpticStudio remains intentionally single-owner, single-STA, and serialized. A modern client that runs more than one same-name/version instance on one computer may add a per-instance `params._meta.io.zemaxmcp/clientInstanceId` (1–128 ASCII letters, digits, `.`, `_`, or `-`) to distinguish their control identities.
 
 ## Connection modes
 
