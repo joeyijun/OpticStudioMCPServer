@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Globalization;
 using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZOSAPI.Editors.LDE;
@@ -35,10 +36,39 @@ public class SetSurfaceParameterTool
         [Description("Parameter number (1-indexed). 0 to return all parameters.")] int parameterNumber = 0,
         [Description("Value to set (omit to read only)")] double? value = null,
         [Description("Make this parameter variable for optimization")] bool? makeVariable = null,
-        [Description("Batch set: comma-separated 'num:value' pairs, e.g. '3:0.2,4:0.1,6:1'")] string? batchSet = null)
+        [Description("Batch set: comma-separated 'num:value' pairs, e.g. '3:0.2,4:0.1,6:1'")] string? batchSet = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
+            if (parameterNumber < 0 || parameterNumber > 20)
+                return new SetParameterResult(false,
+                    Error: $"Invalid parameter number: {parameterNumber}. Valid range: 1-20 (0 for all).");
+            if (value.HasValue && (double.IsNaN(value.Value) || double.IsInfinity(value.Value)))
+                return new SetParameterResult(false, Error: "Parameter value must be finite.");
+            if (parameterNumber == 0 && (value.HasValue || makeVariable == true))
+                return new SetParameterResult(false, Error: "A parameterNumber from 1 to 20 is required when value or makeVariable is supplied.");
+
+            var parsedBatch = new List<ParameterEntry>();
+            if (!string.IsNullOrWhiteSpace(batchSet))
+            {
+                foreach (var pair in batchSet.Split(','))
+                {
+                    var parts = pair.Trim().Split(':');
+                    if (parts.Length != 2 ||
+                        !int.TryParse(parts[0].Trim(), out var pNum) || pNum < 1 || pNum > 20 ||
+                        !double.TryParse(parts[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var pVal) ||
+                        double.IsNaN(pVal) || double.IsInfinity(pVal))
+                    {
+                        return new SetParameterResult(false,
+                            Error: $"Invalid batch entry '{pair}'. Expected parameter 1-20 and a finite value, e.g. '3:0.2'.");
+                    }
+                    parsedBatch.Add(new ParameterEntry(pNum, pVal));
+                }
+            }
+
+            var isMutation = parsedBatch.Count > 0 || (parameterNumber > 0 && value.HasValue) || (parameterNumber > 0 && makeVariable == true);
+            var command = isMutation ? "SetSurfaceParameter" : "GetSurfaceParameter";
             var parameters = new Dictionary<string, object?>
             {
                 ["surfaceNumber"] = surfaceNumber,
@@ -47,92 +77,56 @@ public class SetSurfaceParameterTool
                 ["batchSet"] = batchSet
             };
 
-            return await _session.ExecuteAsync("SetSurfaceParameter", parameters, system =>
+            return await _session.ExecuteAsync(command, parameters, system =>
             {
                 var lde = system.LDE;
-
                 if (surfaceNumber < 0 || surfaceNumber >= lde.NumberOfSurfaces)
-                    throw new ArgumentException(
-                        $"Invalid surface number: {surfaceNumber}. Valid range: 0-{lde.NumberOfSurfaces - 1}");
+                    throw new ArgumentException($"Invalid surface number: {surfaceNumber}. Valid range: 0-{lde.NumberOfSurfaces - 1}");
 
                 var surface = lde.GetSurfaceAt(surfaceNumber);
-                string surfType = surface.Type.ToString();
+                var surfType = surface.Type.ToString();
 
-                // Batch set mode
-                if (!string.IsNullOrEmpty(batchSet))
+                if (parsedBatch.Count > 0)
                 {
                     var entries = new List<ParameterEntry>();
-                    foreach (var pair in batchSet!.Split(','))
+                    foreach (var requested in parsedBatch)
                     {
-                        var parts = pair.Trim().Split(':');
-                        if (parts.Length != 2)
-                            return new SetParameterResult(false,
-                                Error: $"Invalid batch format: '{pair}'. Expected 'num:value'.");
-
-                        if (!int.TryParse(parts[0].Trim(), out int pNum) ||
-                            !double.TryParse(parts[1].Trim(),
-                                global::System.Globalization.NumberStyles.Float,
-                                global::System.Globalization.CultureInfo.InvariantCulture,
-                                out double pVal))
-                            return new SetParameterResult(false,
-                                Error: $"Cannot parse: '{pair}'.");
-
-                        var bCell = surface.GetSurfaceCell(SurfaceColumn.Par0 + pNum);
-                        try { bCell.DoubleValue = pVal; }
-                        catch { bCell.IntegerValue = (int)pVal; }
-                        double readback;
-                        try { readback = bCell.DoubleValue; }
-                        catch { readback = bCell.IntegerValue; }
-                        entries.Add(new ParameterEntry(pNum, readback));
+                        var bCell = surface.GetSurfaceCell(SurfaceColumn.Par0 + requested.Number);
+                        WriteParameterValue(bCell, requested.Value);
+                        entries.Add(new ParameterEntry(requested.Number, ReadParameterValue(bCell)));
                     }
-
-                    return new SetParameterResult(
-                        Success: true,
-                        SurfaceNumber: surfaceNumber,
-                        SurfaceType: surfType,
-                        Parameters: entries.ToArray());
+                    return new SetParameterResult(true, SurfaceNumber: surfaceNumber, SurfaceType: surfType, Parameters: entries.ToArray());
                 }
 
-                // Single set mode
                 if (parameterNumber > 0 && value.HasValue)
                 {
                     var cell = surface.GetSurfaceCell(SurfaceColumn.Par0 + parameterNumber);
-                    try { cell.DoubleValue = value.Value; }
-                    catch { cell.IntegerValue = (int)value.Value; }
-
-                    if (makeVariable.HasValue && makeVariable.Value)
-                        cell.MakeSolveVariable();
-
-                    double readback;
-                    try { readback = cell.DoubleValue; }
-                    catch { readback = cell.IntegerValue; }
-                    return new SetParameterResult(
-                        Success: true,
-                        SurfaceNumber: surfaceNumber,
-                        SurfaceType: surfType,
-                        Parameters: new[] { new ParameterEntry(parameterNumber, readback) });
+                    WriteParameterValue(cell, value.Value);
+                    if (makeVariable == true) cell.MakeSolveVariable();
+                    return new SetParameterResult(true, SurfaceNumber: surfaceNumber, SurfaceType: surfType,
+                        Parameters: new[] { new ParameterEntry(parameterNumber, ReadParameterValue(cell)) });
                 }
 
-                // Validate parameterNumber range for read mode
-                if (parameterNumber < 0 || parameterNumber > 20)
-                    return new SetParameterResult(false,
-                        Error: $"Invalid parameter number: {parameterNumber}. Valid range: 1-20 (0 for all).");
+                if (parameterNumber > 0 && makeVariable == true)
+                {
+                    var cell = surface.GetSurfaceCell(SurfaceColumn.Par0 + parameterNumber);
+                    cell.MakeSolveVariable();
+                    return new SetParameterResult(true, SurfaceNumber: surfaceNumber, SurfaceType: surfType,
+                        Parameters: new[] { new ParameterEntry(parameterNumber, ReadParameterValue(cell)) });
+                }
 
-                // Read mode
                 var readEntries = new List<ParameterEntry>();
-                int consecutiveFailures = 0;
-                for (int p = 1; p <= 20; p++)
+                var consecutiveFailures = 0;
+                for (var p = 1; p <= 20; p++)
                 {
                     try
                     {
                         var cell = surface.GetSurfaceCell(SurfaceColumn.Par0 + p);
                         if (cell == null) { consecutiveFailures++; continue; }
-                        double v;
-                        try { v = cell.DoubleValue; }
-                        catch { v = cell.IntegerValue; } // Integer cells (e.g. CoordinateBreak Order)
+                        var readback = ReadParameterValue(cell);
                         consecutiveFailures = 0;
                         if (parameterNumber == 0 || parameterNumber == p)
-                            readEntries.Add(new ParameterEntry(p, v));
+                            readEntries.Add(new ParameterEntry(p, readback));
                     }
                     catch
                     {
@@ -141,16 +135,24 @@ public class SetSurfaceParameterTool
                     }
                 }
 
-                return new SetParameterResult(
-                    Success: true,
-                    SurfaceNumber: surfaceNumber,
-                    SurfaceType: surfType,
-                    Parameters: readEntries.ToArray());
-            });
+                return new SetParameterResult(true, SurfaceNumber: surfaceNumber, SurfaceType: surfType, Parameters: readEntries.ToArray());
+            }, cancellationToken);
         }
         catch (Exception ex)
         {
             return new SetParameterResult(false, Error: ex.Message);
         }
+    }
+
+    private static void WriteParameterValue(dynamic cell, double value)
+    {
+        try { cell.DoubleValue = value; }
+        catch { cell.IntegerValue = checked((int)value); }
+    }
+
+    private static double ReadParameterValue(dynamic cell)
+    {
+        try { return cell.DoubleValue; }
+        catch { return cell.IntegerValue; }
     }
 }
