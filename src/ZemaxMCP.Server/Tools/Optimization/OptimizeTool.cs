@@ -54,8 +54,7 @@ public class OptimizeTool
                         throw new InvalidOperationException("Local Optimization settings are not valid for the current system.");
 
                     double initialMerit = optimizer.InitialMeritFunction;
-                    if (!double.IsFinite(initialMerit))
-                        throw new InvalidOperationException("Local Optimization reported a non-finite initial merit function.");
+                    ValidateFinite(initialMerit, "initial merit function");
 
                     RunToCompletionOrCancellation(optimizer, cancellationToken);
                     if (!optimizer.Succeeded)
@@ -64,8 +63,7 @@ public class OptimizeTool
                             : optimizer.ErrorMessage);
 
                     double finalMerit = optimizer.CurrentMeritFunction;
-                    if (!double.IsFinite(finalMerit))
-                        throw new InvalidOperationException("Local Optimization reported a non-finite final merit function.");
+                    ValidateFinite(finalMerit, "final merit function");
 
                     string terminationReason = Math.Abs(finalMerit - initialMerit) < 1e-12
                         ? "CompletedNoMeritChange"
@@ -163,5 +161,11 @@ public class OptimizeTool
             optimizer.WaitForCompletion();
         }
         catch { }
+    }
+
+    private static void ValidateFinite(double value, string label)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value))
+            throw new InvalidOperationException($"Local Optimization reported a non-finite {label}.");
     }
 }
