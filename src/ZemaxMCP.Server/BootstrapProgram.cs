@@ -14,18 +14,18 @@ internal static class BootstrapProgram
     public static int Main(string[] args)
     {
         Console.SetOut(TextWriter.Null);
-        var runtimeZosAssemblies = RegisterZosApiResolver();
+        var runtimeCompatibilityPaths = RegisterZosApiResolver();
 
         try
         {
             // Release packages deliberately do not redistribute proprietary
             // ZOS-API DLLs. Before the CLR loads ServerApplication (which has
             // compile-time ZOS-API type references), reject an older runtime
-            // API than the one used to compile this Worker. This converts a
-            // possible MissingMethod/TypeLoad crash into an explicit version
-            // compatibility error. Developer builds without a marker are
-            // allowed and report that no cross-version preflight was possible.
-            var compatibility = ZosApiRuntimeCompatibility.Validate(AppContext.BaseDirectory, runtimeZosAssemblies);
+            // product/API than the one used to compile this Worker. This
+            // converts a possible MissingMethod/TypeLoad crash into an explicit
+            // version compatibility error. Developer builds without a marker
+            // are allowed and report that no cross-version preflight was possible.
+            var compatibility = ZosApiRuntimeCompatibility.Validate(AppContext.BaseDirectory, runtimeCompatibilityPaths);
             foreach (var message in compatibility.Messages)
                 Console.Error.WriteLine("ZOSAPI_COMPATIBILITY|" + message);
 
@@ -86,8 +86,16 @@ internal static class BootstrapProgram
         {
             var name = assembly.GetName().Name;
             if (string.IsNullOrWhiteSpace(name) ||
-                (name != "ZOSAPI_Interfaces" && name != "ZOSAPI" && name != "ZOSAPI_NetHelper")) continue;
+                (!name.Equals("ZOSAPI_Interfaces", StringComparison.OrdinalIgnoreCase) &&
+                 !name.Equals("ZOSAPI", StringComparison.OrdinalIgnoreCase) &&
+                 !name.Equals("ZOSAPI_NetHelper", StringComparison.OrdinalIgnoreCase))) continue;
             if (!string.IsNullOrWhiteSpace(assembly.Location)) paths[name] = assembly.Location;
+        }
+
+        if (!string.IsNullOrWhiteSpace(zemaxRoot))
+        {
+            var opticStudioExecutable = Path.Combine(zemaxRoot!, "OpticStudio.exe");
+            if (File.Exists(opticStudioExecutable)) paths["OpticStudio"] = opticStudioExecutable;
         }
         return paths;
     }
