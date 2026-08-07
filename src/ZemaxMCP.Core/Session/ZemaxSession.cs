@@ -26,6 +26,10 @@ public class ZemaxSession : IZemaxSession
     public int? CurrentInstanceId { get; private set; }
     public string? CurrentFilePath { get; private set; }
     public string? ZemaxDataDir { get; private set; }
+    public string? LicenseStatus { get; private set; }
+    public string SnapshotDirectory => _safety.SnapshotDirectory;
+    public string? LastSnapshotPath => _safety.LastSnapshotPath;
+    public event Action<string>? SnapshotCreated;
 
     public async Task WaitForBackgroundConnectAsync(CancellationToken cancellationToken = default)
     {
@@ -139,10 +143,7 @@ public class ZemaxSession : IZemaxSession
 
             _logger.LogInformation("ZOSAPI Application created. LicenseStatus={Status}, IsValidLicenseForAPI={Valid}",
                 application.LicenseStatus, application.IsValidLicenseForAPI);
-
-            Console.Error.WriteLine((application.IsValidLicenseForAPI
-                ? "ZEMAX_MCP_STATUS:ZOS_LICENSE_VALID:"
-                : "ZEMAX_MCP_STATUS:ZOS_LICENSE_INVALID:") + application.LicenseStatus);
+            LicenseStatus = application.LicenseStatus.ToString();
 
             if (!application.IsValidLicenseForAPI)
             {
@@ -151,7 +152,6 @@ public class ZemaxSession : IZemaxSession
 
             _primarySystem = application.PrimarySystem;
             ZemaxDataDir = application.ZemaxDataDir;
-            Console.Error.WriteLine("ZEMAX_MCP_STATUS:ZEMAX_DATA_DIR:" + (ZemaxDataDir ?? string.Empty));
 
             if (_primarySystem == null)
             {
@@ -166,7 +166,6 @@ public class ZemaxSession : IZemaxSession
             CurrentInstanceId = instanceId;
 
             _logger.LogInformation("Successfully connected to OpticStudio in {Mode} mode", mode);
-            Console.Error.WriteLine("ZEMAX_MCP_STATUS:ZOS_API_CONNECTED");
             _commandLog.LogResult("Connect", true, $"Connected in {mode} mode", sw.ElapsedMilliseconds);
             return true;
         }
@@ -249,7 +248,10 @@ public class ZemaxSession : IZemaxSession
             try
             {
                 EnsureConnected();
+                var previousSnapshot = _safety.LastSnapshotPath;
                 _safety.BeforeOperation(new ZosApiSystemSnapshot(_primarySystem!), commandName);
+                var createdSnapshot = _safety.LastSnapshotPath;
+                if (!string.Equals(previousSnapshot, createdSnapshot, StringComparison.Ordinal) && createdSnapshot is { Length: > 0 }) SnapshotCreated?.Invoke(createdSnapshot);
                 var result = operation(_primarySystem!);
                 _commandLog.LogResult(commandName, true, result, sw.ElapsedMilliseconds);
                 return result;
@@ -287,7 +289,10 @@ public class ZemaxSession : IZemaxSession
             try
             {
                 EnsureConnected();
+                var previousSnapshot = _safety.LastSnapshotPath;
                 _safety.BeforeOperation(new ZosApiSystemSnapshot(_primarySystem!), commandName);
+                var createdSnapshot = _safety.LastSnapshotPath;
+                if (!string.Equals(previousSnapshot, createdSnapshot, StringComparison.Ordinal) && createdSnapshot is { Length: > 0 }) SnapshotCreated?.Invoke(createdSnapshot);
                 operation(_primarySystem!);
                 _commandLog.LogResult(commandName, true, null, sw.ElapsedMilliseconds);
             }
@@ -387,6 +392,7 @@ public class ZemaxSession : IZemaxSession
 
         CurrentFilePath = null;
         ZemaxDataDir = null;
+        LicenseStatus = null;
         CurrentMode = null;
         CurrentInstanceId = null;
     }

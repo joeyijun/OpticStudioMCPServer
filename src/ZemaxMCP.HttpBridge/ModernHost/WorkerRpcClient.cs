@@ -33,6 +33,8 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     private Task? _pump;
     private DateTimeOffset? _startedAt;
     private bool _disposed;
+    private OperationProgress? _lastProgress;
+    private string? _lastSnapshotPath;
 
     public WorkerRpcClient(HostOptions options) => _options = options;
 
@@ -116,7 +118,9 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         mcpServerRunning = _writer != null && _worker is { HasExited: false },
         workerPid = _worker?.Id,
         workerStartedAt = _startedAt,
-        transport = "versioned private named-pipe RPC"
+        transport = "versioned private named-pipe RPC",
+        lastProgress = _lastProgress,
+        lastSnapshotPath = _lastSnapshotPath
     };
 
     public async ValueTask DisposeAsync()
@@ -136,9 +140,10 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         var requestId = Guid.NewGuid().ToString("N");
         var completion = new TaskCompletionSource<ZemaxRpcEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (!_pending.TryAdd(requestId, completion)) throw new InvalidOperationException("Could not track the Worker RPC request.");
+        var written = false;
+        var backgroundRecoveryOwnsPending = false;
         try
         {
-            using var cancellationRegistration = cancellationToken.Register(() => _ = SendCancellationAsync(operationId));
             var message = new ZemaxRpcEnvelope
             {
                 Kind = kind,
@@ -147,7 +152,9 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
                 ClientId = "mcp-host",
                 Payload = JsonSerializer.SerializeToElement(payload, _jsonOptions)
             };
-            await WriteAsync(writer, message, cancellationToken).ConfigureAwait(false);
+            await WriteAsync(writer, message, cancellationToken,
+                TimeSpan.FromSeconds(_options.RequestWriteTimeoutSeconds)).ConfigureAwait(false);
+            written = true;
             var response = await WaitForResponseAsync(completion.Task, operationId, writer, cancellationToken).ConfigureAwait(false);
             if (string.Equals(response.Kind, ZemaxRpcProtocol.Error, StringComparison.Ordinal))
             {
@@ -156,7 +163,16 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
             }
             return response.Payload.Deserialize<T>(_jsonOptions) ?? throw new InvalidOperationException("Worker returned an empty response.");
         }
-        finally { _pending.TryRemove(requestId, out _); }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested && written)
+        {
+            backgroundRecoveryOwnsPending = true;
+            _ = RecoverCancelledOperationAsync(completion.Task, requestId, operationId, writer);
+            throw;
+        }
+        finally
+        {
+            if (!backgroundRecoveryOwnsPending) _pending.TryRemove(requestId, out _);
+        }
     }
 
     private async Task SendCancellationAsync(string operationId)
@@ -196,10 +212,26 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
                 if (line == null) throw new EndOfStreamException("The Worker private pipe closed its response stream.");
                 var message = JsonSerializer.Deserialize<ZemaxRpcEnvelope>(line, _jsonOptions)
                     ?? throw new InvalidDataException("The Worker returned an empty RPC envelope.");
-                if (string.IsNullOrWhiteSpace(message.RequestId))
-                    throw new InvalidDataException("The Worker returned an RPC envelope without a request ID.");
-                if (_pending.TryGetValue(message.RequestId, out var pending))
-                    pending.TrySetResult(message);
+                switch (message.Kind)
+                {
+                    case ZemaxRpcProtocol.Progress:
+                        _lastProgress = message.Payload.Deserialize<OperationProgress>(_jsonOptions)
+                            ?? throw new InvalidDataException("The Worker returned an invalid progress event.");
+                        break;
+                    case ZemaxRpcProtocol.SnapshotCreated:
+                        _lastSnapshotPath = message.Payload.Deserialize<SnapshotCreatedEvent>(_jsonOptions)?.Path
+                            ?? throw new InvalidDataException("The Worker returned an invalid snapshot event.");
+                        break;
+                    case ZemaxRpcProtocol.Result:
+                    case ZemaxRpcProtocol.Error:
+                        if (string.IsNullOrWhiteSpace(message.RequestId))
+                            throw new InvalidDataException("The Worker returned a result without a request ID.");
+                        if (_pending.TryGetValue(message.RequestId, out var pending)) pending.TrySetResult(message);
+                        else Log.Debug("Ignoring uncorrelated Worker RPC response {RequestId}", message.RequestId);
+                        break;
+                    default:
+                        throw new InvalidDataException("The Worker returned an unsupported RPC message kind: " + message.Kind);
+                }
             }
         }
         catch (Exception ex) { FaultWorkerConnection(ex, expectedReader: reader); }
@@ -288,7 +320,6 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         if (first == responseTask) return await responseTask.ConfigureAwait(false);
         if (first == callerCancellation)
         {
-            _ = SendCancellationAsync(operationId);
             throw new OperationCanceledException(cancellationToken);
         }
 
@@ -307,6 +338,28 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         var timeout = new TimeoutException("The Worker did not finish after the soft timeout and cancellation grace period.");
         FaultWorkerConnection(timeout, expectedWriter: writer);
         throw timeout;
+    }
+
+    private async Task RecoverCancelledOperationAsync(Task<ZemaxRpcEnvelope> responseTask, string requestId, string operationId, StreamWriter writer)
+    {
+        try
+        {
+            // The HTTP request has already ended, but the private Worker must
+            // still drain or be restarted so a cancelled COM call cannot leave
+            // the next client permanently blocked.
+            var deadline = Task.Delay(TimeSpan.FromSeconds(_options.HardRecoveryTimeoutSeconds - _options.RequestTimeoutSeconds));
+            var cancellation = SendCancellationAsync(operationId);
+            var completed = await Task.WhenAny(responseTask, deadline, cancellation).ConfigureAwait(false);
+            if (completed == responseTask) return;
+            if (completed == cancellation && await Task.WhenAny(responseTask, deadline).ConfigureAwait(false) == responseTask) return;
+            FaultWorkerConnection(new TimeoutException("A client-cancelled Worker operation did not drain before the recovery deadline."), expectedWriter: writer);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Background recovery for cancelled Worker operation {OperationId} failed", operationId);
+            FaultWorkerConnection(ex, expectedWriter: writer);
+        }
+        finally { _pending.TryRemove(requestId, out _); }
     }
 
     private void CloseStaleConnection(string reason) => FaultWorkerConnection(new IOException(reason));

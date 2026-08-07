@@ -13,6 +13,7 @@ internal sealed class HostOptions
     public string AccessToken { get; private set; } = Environment.GetEnvironmentVariable("ZEMAX_MCP_TOKEN") ?? string.Empty;
     public int WorkerStartupTimeoutSeconds { get; private set; } = 90;
     public int RequestTimeoutSeconds { get; private set; } = 300;
+    public int RequestWriteTimeoutSeconds { get; private set; } = 10;
     public int HardRecoveryTimeoutSeconds { get; private set; } = 360;
     public int CancellationWriteTimeoutSeconds { get; private set; } = 5;
     public bool ReadOnly { get; private set; }
@@ -45,6 +46,7 @@ internal sealed class HostOptions
                 case "--log-dir": options.LogDirectory = value; break;
                 case "--worker-startup-timeout-seconds": options.WorkerStartupTimeoutSeconds = ParseRange(value, option, 10, 600); break;
                 case "--request-timeout-seconds": options.RequestTimeoutSeconds = ParseRange(value, option, 10, 3600); break;
+                case "--request-write-timeout-seconds": options.RequestWriteTimeoutSeconds = ParseRange(value, option, 1, 60); break;
                 case "--hard-recovery-timeout-seconds": options.HardRecoveryTimeoutSeconds = ParseRange(value, option, 20, 7200); break;
                 case "--cancellation-write-timeout-seconds": options.CancellationWriteTimeoutSeconds = ParseRange(value, option, 1, 30); break;
                 case "--allowed-origin": options._allowedOrigins.Add(OriginRule.Parse(value)); break;

@@ -109,7 +109,6 @@ public class MultistartOptimizer
                 // Legacy stderr progress reporting
                 if (progressInterval > 0 && trial % progressInterval == 0)
                 {
-                    Console.Error.WriteLine($"[Multistart] Trial {trial}/{maxTrials} | Best merit: {bestState.Merit:F6} | Accepted: {trialsAccepted}");
                 }
             }
 

@@ -19,6 +19,7 @@ public static class ZemaxRpcProtocol
     public const string CancelOperation = "cancel-operation";
     public const string GetStatus = "get-status";
     public const string Progress = "progress";
+    public const string SnapshotCreated = "snapshot-created";
     public const string Result = "result";
     public const string Error = "error";
 }
@@ -75,6 +76,25 @@ public sealed class WorkerStatus
     public string ConnectionMode { get; set; } = "unknown";
     public string? ZosApiAssembly { get; set; }
     public string? OpticStudioDataDirectory { get; set; }
+    public string? LicenseStatus { get; set; }
+    public string? SnapshotDirectory { get; set; }
+    public string? LastSnapshotPath { get; set; }
+    public IReadOnlyList<WorkerJobStatus> Jobs { get; set; } = Array.Empty<WorkerJobStatus>();
+}
+
+public sealed class WorkerJobStatus
+{
+    public string JobId { get; set; } = string.Empty;
+    public string ToolName { get; set; } = string.Empty;
+    public string State { get; set; } = string.Empty;
+    public double? Fraction { get; set; }
+    public int QueuePosition { get; set; }
+    public string? Message { get; set; }
+}
+
+public sealed class SnapshotCreatedEvent
+{
+    public string Path { get; set; } = string.Empty;
 }
 
 public sealed class OperationProgress

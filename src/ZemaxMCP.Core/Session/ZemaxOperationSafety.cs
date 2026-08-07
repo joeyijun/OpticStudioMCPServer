@@ -27,7 +27,6 @@ internal sealed class ZemaxOperationSafety
         if (_readOnly)
             throw new InvalidOperationException("Read-only mode blocked the mutating Zemax operation '" + commandName + "'. Disable read-only mode in the launcher to allow lens changes.");
         LastSnapshotPath = CreateSnapshot(system, commandName);
-        Console.Error.WriteLine("ZEMAX_MCP_STATUS:SNAPSHOT_CREATED:" + LastSnapshotPath);
     }
 
     internal static bool RequiresSnapshot(string commandName) =>

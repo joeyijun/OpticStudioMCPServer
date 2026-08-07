@@ -3,7 +3,6 @@ using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Server;
 using Serilog;
 using System.Reflection;
-using System.Globalization;
 using System.IO.Pipes;
 using System.Text;
 using ZemaxMCP.Core.Logging;
@@ -46,14 +45,6 @@ internal static class ServerApplication
         var initialized = string.IsNullOrWhiteSpace(zemaxRoot)
             ? ZOSAPI_NetHelper.ZOSAPI_Initializer.Initialize()
             : ZOSAPI_NetHelper.ZOSAPI_Initializer.Initialize(zemaxRoot);
-
-        if (initialized)
-        {
-            Console.Error.WriteLine("ZEMAX_MCP_STATUS:ZOS_API_LOADED");
-            Console.Error.WriteLine("ZEMAX_MCP_STATUS:ZOSAPI_ASSEMBLY:" + typeof(ZOSAPI.ZOSAPI_Connection).Assembly.Location);
-            Console.Error.WriteLine("ZEMAX_MCP_STATUS:ZOSAPI_INTERFACES_ASSEMBLY:" + typeof(ZOSAPI.IZOSAPI_Application).Assembly.Location);
-            Console.Error.WriteLine("ZEMAX_MCP_STATUS:ZOSAPI_NETHELPER_ASSEMBLY:" + typeof(ZOSAPI_NetHelper.ZOSAPI_Initializer).Assembly.Location);
-        }
 
         if (!initialized)
         {
@@ -100,14 +91,6 @@ internal static class ServerApplication
             builder.Services.AddSingleton<ConstraintStore>();
             builder.Services.AddSingleton<MultistartState>();
             var jobManager = new McpJobManager();
-            jobManager.JobChanged += job => Console.Error.WriteLine(string.Join("|", new[]
-            {
-                "ZEMAX_MCP_STATUS:JOB:" + job.JobId,
-                job.ToolName,
-                job.State.ToString(),
-                job.Progress?.ToString("0.###", CultureInfo.InvariantCulture) ?? "",
-                job.QueuePosition.ToString(CultureInfo.InvariantCulture)
-            }));
             builder.Services.AddSingleton(jobManager);
 
             // The Worker keeps all ZOS-API state in this process. In normal
@@ -119,7 +102,6 @@ internal static class ServerApplication
                 if (string.IsNullOrWhiteSpace(pipeSecret))
                     throw new InvalidOperationException("The private Worker pipe did not receive its handshake secret.");
                 workerPipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
-                Console.Error.WriteLine("ZEMAX_MCP_STATUS:WORKER_PIPE_CONNECTING");
                 await Task.Run(() => workerPipe.Connect()).ConfigureAwait(false);
                 workerPipeReader = new StreamReader(workerPipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
                 workerPipeWriter = new StreamWriter(workerPipe, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), 4096, leaveOpen: true) { AutoFlush = true };
@@ -127,7 +109,6 @@ internal static class ServerApplication
                 var acknowledgement = await workerPipeReader.ReadLineAsync().ConfigureAwait(false);
                 if (!string.Equals(acknowledgement, "ZEMAX_MCP_PIPE_OK", StringComparison.Ordinal))
                     throw new InvalidOperationException("The private Worker pipe handshake was rejected by the Host.");
-                Console.Error.WriteLine("ZEMAX_MCP_STATUS:WORKER_PIPE_CONNECTED");
             }
 
             // MCP is terminated by the .NET Host. The Worker retains the

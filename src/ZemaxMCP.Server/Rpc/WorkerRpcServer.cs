@@ -9,7 +9,9 @@ using Microsoft.Extensions.Options;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using ZemaxMCP.Core.Session;
 using ZemaxMCP.Rpc;
+using ZemaxMCP.Server.Services.Jobs;
 using ZemaxMCP.Toolsets;
 
 namespace ZemaxMCP.Server.Rpc;
@@ -44,34 +46,48 @@ internal sealed class WorkerRpcServer
     {
         using var reader = new StreamReader(input, Encoding.UTF8, false, 4096, leaveOpen: true);
         using var writer = new StreamWriter(output, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
-        while (!cancellationToken.IsCancellationRequested)
+        var jobs = _services.GetRequiredService<McpJobManager>();
+        var session = _services.GetRequiredService<IZemaxSession>();
+        Action<McpJobSnapshot> jobChanged = job => _ = WriteProgressAsync(writer, ToWorkerJobStatus(job));
+        Action<string> snapshotCreated = path => _ = WriteSnapshotCreatedAsync(writer, path);
+        jobs.JobChanged += jobChanged;
+        session.SnapshotCreated += snapshotCreated;
+        try
         {
-            var line = await reader.ReadLineAsync().ConfigureAwait(false);
-            if (line == null) return;
-            ZemaxRpcEnvelope? message;
-            try { message = JsonSerializer.Deserialize<ZemaxRpcEnvelope>(line, _jsonOptions); }
-            catch (JsonException ex)
+            while (!cancellationToken.IsCancellationRequested)
             {
-                await WriteErrorAsync(writer, string.Empty, string.Empty, "invalid_message", ex.Message).ConfigureAwait(false);
-                continue;
-            }
+                var line = await reader.ReadLineAsync().ConfigureAwait(false);
+                if (line == null) return;
+                ZemaxRpcEnvelope? message;
+                try { message = JsonSerializer.Deserialize<ZemaxRpcEnvelope>(line, _jsonOptions); }
+                catch (JsonException ex)
+                {
+                    await WriteErrorAsync(writer, string.Empty, string.Empty, "invalid_message", ex.Message).ConfigureAwait(false);
+                    continue;
+                }
 
-            if (message == null || message.Version != ZemaxRpcProtocol.Version || string.IsNullOrWhiteSpace(message.Kind))
-            {
-                await WriteErrorAsync(writer, message?.RequestId ?? string.Empty, message?.OperationId ?? string.Empty,
-                    "unsupported_protocol", "The Worker does not support this RPC message version.").ConfigureAwait(false);
-                continue;
-            }
+                if (message == null || message.Version != ZemaxRpcProtocol.Version || string.IsNullOrWhiteSpace(message.Kind))
+                {
+                    await WriteErrorAsync(writer, message?.RequestId ?? string.Empty, message?.OperationId ?? string.Empty,
+                        "unsupported_protocol", "The Worker does not support this RPC message version.").ConfigureAwait(false);
+                    continue;
+                }
 
-            // A cancellation must never wait for an active ZOS command.
-            if (string.Equals(message.Kind, ZemaxRpcProtocol.CancelOperation, StringComparison.Ordinal))
-            {
-                if (!string.IsNullOrWhiteSpace(message.OperationId) && _operations.TryGetValue(message.OperationId, out var operation)) operation.Cancel();
-                await WriteResultAsync(writer, message.RequestId, message.OperationId, new { cancelled = true }).ConfigureAwait(false);
-                continue;
-            }
+                // A cancellation must never wait for an active ZOS command.
+                if (string.Equals(message.Kind, ZemaxRpcProtocol.CancelOperation, StringComparison.Ordinal))
+                {
+                    if (!string.IsNullOrWhiteSpace(message.OperationId) && _operations.TryGetValue(message.OperationId, out var operation)) operation.Cancel();
+                    await WriteResultAsync(writer, message.RequestId, message.OperationId, new { cancelled = true }).ConfigureAwait(false);
+                    continue;
+                }
 
-            _ = ProcessAsync(message, writer, cancellationToken);
+                _ = ProcessAsync(message, writer, cancellationToken);
+            }
+        }
+        finally
+        {
+            jobs.JobChanged -= jobChanged;
+            session.SnapshotCreated -= snapshotCreated;
         }
     }
 
@@ -146,12 +162,56 @@ internal sealed class WorkerRpcServer
         finally { _operations.TryRemove(message.OperationId, out _); }
     }
 
-    private WorkerStatus CreateStatus() => new()
+    private WorkerStatus CreateStatus()
     {
-        ZosApiLoaded = true,
-        Connected = _services.GetRequiredService<ZemaxMCP.Core.Session.IZemaxSession>().IsConnected,
-        ConnectionMode = "managed-by-worker"
+        var session = _services.GetRequiredService<IZemaxSession>();
+        var jobs = _services.GetRequiredService<McpJobManager>();
+        return new WorkerStatus
+        {
+            ZosApiLoaded = true,
+            Connected = session.IsConnected,
+            ConnectionMode = session.CurrentMode?.ToString() ?? "not-connected",
+            ZosApiAssembly = typeof(ZOSAPI.ZOSAPI_Connection).Assembly.Location,
+            OpticStudioDataDirectory = session.ZemaxDataDir,
+            LicenseStatus = session.LicenseStatus ?? "not-validated",
+            SnapshotDirectory = session.SnapshotDirectory,
+            LastSnapshotPath = session.LastSnapshotPath,
+            Jobs = jobs.List().Select(ToWorkerJobStatus).ToArray()
+        };
+    }
+
+    private static WorkerJobStatus ToWorkerJobStatus(McpJobSnapshot job) => new()
+    {
+        JobId = job.JobId,
+        ToolName = job.ToolName,
+        State = job.State.ToString(),
+        Fraction = job.Progress,
+        QueuePosition = job.QueuePosition,
+        Message = job.Message
     };
+
+    private Task WriteProgressAsync(StreamWriter writer, WorkerJobStatus job) =>
+        WriteAsync(writer, new ZemaxRpcEnvelope
+        {
+            Kind = ZemaxRpcProtocol.Progress,
+            OperationId = job.JobId,
+            Payload = JsonSerializer.SerializeToElement(new OperationProgress
+            {
+                OperationId = job.JobId,
+                ToolName = job.ToolName,
+                Fraction = job.Fraction,
+                QueuePosition = job.QueuePosition,
+                State = job.State,
+                Message = job.Message
+            }, _jsonOptions)
+        });
+
+    private Task WriteSnapshotCreatedAsync(StreamWriter writer, string path) =>
+        WriteAsync(writer, new ZemaxRpcEnvelope
+        {
+            Kind = ZemaxRpcProtocol.SnapshotCreated,
+            Payload = JsonSerializer.SerializeToElement(new SnapshotCreatedEvent { Path = path }, _jsonOptions)
+        });
 
     private Task WriteResultAsync(StreamWriter writer, string requestId, string operationId, object result) =>
         WriteAsync(writer, new ZemaxRpcEnvelope
