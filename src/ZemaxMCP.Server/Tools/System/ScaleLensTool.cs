@@ -31,21 +31,18 @@ public sealed class ScaleLensTool
                 throw new ArgumentOutOfRangeException(nameof(timeoutSeconds), "Timeout must be between 1 and 300 seconds.");
 
             ZOSAPI.Tools.General.ScaleToUnits parsedUnits = default;
+            string? normalizedUnits = null;
             if (!string.IsNullOrWhiteSpace(targetUnits))
             {
-                parsedUnits = targetUnits.Trim().ToLowerInvariant() switch
-                {
-                    "millimeters" => ZOSAPI.Tools.General.ScaleToUnits.Millimeters,
-                    "centimeters" => ZOSAPI.Tools.General.ScaleToUnits.Centimeters,
-                    "inches" => ZOSAPI.Tools.General.ScaleToUnits.Inches,
-                    "meters" => ZOSAPI.Tools.General.ScaleToUnits.Meters,
-                    _ => throw new ArgumentException("Target units must be Millimeters, Centimeters, Inches, or Meters.")
-                };
+                var allowedUnits = new[] { "Millimeters", "Centimeters", "Inches", "Meters" };
+                normalizedUnits = allowedUnits.FirstOrDefault(value => string.Equals(value, targetUnits.Trim(), StringComparison.OrdinalIgnoreCase));
+                if (normalizedUnits == null || !Enum.TryParse<ZOSAPI.Tools.General.ScaleToUnits>(normalizedUnits, true, out parsedUnits))
+                    throw new ArgumentException("Target units must be Millimeters, Centimeters, Inches, or Meters.");
             }
 
             return await _session.ExecuteAsync("ScaleLens", new Dictionary<string, object?>
             {
-                ["factor"] = factor, ["targetUnits"] = targetUnits, ["timeoutSeconds"] = timeoutSeconds
+                ["factor"] = factor, ["targetUnits"] = normalizedUnits, ["timeoutSeconds"] = timeoutSeconds
             }, system =>
             {
                 var previousUnits = system.SystemData.Units.LensUnits.ToString();
