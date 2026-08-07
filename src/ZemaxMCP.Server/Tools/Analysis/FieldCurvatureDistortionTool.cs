@@ -14,48 +14,54 @@ public class FieldCurvatureDistortionTool
     public FieldCurvatureDistortionTool(IZemaxSession session) => _session = session;
 
     [ZemaxTool(Name = "zemax_field_curvature_distortion")]
-    [Description("Calculate field curvature (tangential and sagittal focus shift) and distortion as a function of field angle for each system wavelength. Returns focus shift in mm and distortion in percent.")]
+    [Description("Calculate field curvature and distortion versus field for each system wavelength. distortionType must be f_tan_theta or f_theta.")]
     public async Task<FieldCurvatureDistortionData> ExecuteAsync(
-        [Description("Distortion type: 'f_tan_theta' (default) or 'f_theta'")] string distortionType = "f_tan_theta")
+        [Description("Distortion type: f_tan_theta (default) or f_theta")] string distortionType = "f_tan_theta",
+        CancellationToken cancellationToken = default)
     {
         try
         {
-            var parameters = new Dictionary<string, object?>
+            var normalizedType = distortionType?.Trim().ToLowerInvariant() switch
             {
-                ["distortionType"] = distortionType
+                "f_tan_theta" => "f_tan_theta",
+                "f_theta" => "f_theta",
+                _ => throw new ArgumentException("distortionType must be f_tan_theta or f_theta.", nameof(distortionType))
             };
 
-            return await _session.ExecuteAsync("FieldCurvatureDistortion", parameters, system =>
-            {
-                var analysis = system.Analyses.New_FieldCurvatureAndDistortion();
-                try
+            return await _session.ExecuteAsync("FieldCurvatureDistortion",
+                new Dictionary<string, object?> { ["distortionType"] = normalizedType }, system =>
                 {
-                    var settings = analysis.GetSettings() as ZOSAPI.Analysis.Settings.Aberrations.IAS_FieldCurvatureAndDistortion;
-                    if (settings != null)
-                    {
-                        settings.Distortion = distortionType?.ToLowerInvariant() == "f_theta"
-                            ? ZOSAPI.Analysis.Settings.Aberrations.Distortions.F_Theta
-                            : ZOSAPI.Analysis.Settings.Aberrations.Distortions.F_TanTheta;
-                    }
-
-                    analysis.ApplyAndWaitForCompletion();
-
-                    var tempFile = Path.Combine(Path.GetTempPath(), $"zemax_fcd_{Guid.NewGuid():N}.txt");
+                    var analysis = system.Analyses.New_FieldCurvatureAndDistortion();
+                    if (analysis == null)
+                        throw new InvalidOperationException("OpticStudio did not create a Field Curvature and Distortion analysis.");
                     try
                     {
-                        analysis.GetResults().GetTextFile(tempFile);
-                        return ParseTextFile(tempFile);
+                        if (analysis.GetSettings() is not ZOSAPI.Analysis.Settings.Aberrations.IAS_FieldCurvatureAndDistortion settings)
+                            throw new InvalidOperationException("OpticStudio did not expose Field Curvature and Distortion settings through IAS_FieldCurvatureAndDistortion.");
+                        settings.Distortion = normalizedType == "f_theta"
+                            ? ZOSAPI.Analysis.Settings.Aberrations.Distortions.F_Theta
+                            : ZOSAPI.Analysis.Settings.Aberrations.Distortions.F_TanTheta;
+
+                        analysis.ApplyAndWaitForCompletion();
+                        var results = analysis.GetResults() ?? throw new InvalidOperationException("Field Curvature and Distortion returned no results object.");
+                        var tempFile = Path.Combine(Path.GetTempPath(), $"zemax_fcd_{Guid.NewGuid():N}.txt");
+                        try
+                        {
+                            results.GetTextFile(tempFile);
+                            if (!File.Exists(tempFile) || new FileInfo(tempFile).Length == 0)
+                                throw new IOException("Field Curvature and Distortion produced no text results.");
+                            return ParseTextFile(tempFile);
+                        }
+                        finally
+                        {
+                            try { File.Delete(tempFile); } catch { }
+                        }
                     }
                     finally
                     {
-                        try { File.Delete(tempFile); } catch { }
+                        analysis.Close();
                     }
-                }
-                finally
-                {
-                    analysis.Close();
-                }
-            });
+                }, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -66,13 +72,10 @@ public class FieldCurvatureDistortionTool
     private static FieldCurvatureDistortionData ParseTextFile(string filePath)
     {
         var lines = File.ReadAllLines(filePath);
-
         string distortionType = "", shiftUnits = "", heightUnits = "", distortionUnits = "";
-        double maxField = 0, maxDistortion = 0;
+        double maxField = double.NaN, maxDistortion = double.NaN;
         var wavelengthBlocks = new List<FieldCurvatureWavelengthData>();
-
-        // Current block state
-        double currentWavelength = 0, currentFocalLength = 0;
+        double currentWavelength = double.NaN, currentFocalLength = double.NaN;
         var fieldAngles = new List<double>();
         var tanShifts = new List<double>();
         var sagShifts = new List<double>();
@@ -92,52 +95,17 @@ public class FieldCurvatureDistortionTool
                 if (idx >= 0) distortionType = trimmed.Substring(idx + 1).Trim();
                 continue;
             }
+            if (trimmed.StartsWith("Shift units", StringComparison.OrdinalIgnoreCase)) { shiftUnits = ParseUnits(trimmed); continue; }
+            if (trimmed.StartsWith("Height units", StringComparison.OrdinalIgnoreCase)) { heightUnits = ParseUnits(trimmed); continue; }
+            if (trimmed.StartsWith("Distortion units", StringComparison.OrdinalIgnoreCase)) { distortionUnits = ParseUnits(trimmed); continue; }
+            if (trimmed.StartsWith("Maximum Field", StringComparison.OrdinalIgnoreCase)) { maxField = ParseValueBeforeUnit(trimmed); continue; }
+            if (trimmed.StartsWith("Maximum distortion", StringComparison.OrdinalIgnoreCase)) { maxDistortion = ParseValueAfterEquals(trimmed); continue; }
 
-            if (trimmed.StartsWith("Shift units", StringComparison.OrdinalIgnoreCase))
-            {
-                var idx = trimmed.IndexOf("are", StringComparison.OrdinalIgnoreCase);
-                if (idx >= 0) shiftUnits = trimmed.Substring(idx + 3).Trim().TrimEnd('.');
-                continue;
-            }
-
-            if (trimmed.StartsWith("Height units", StringComparison.OrdinalIgnoreCase))
-            {
-                var idx = trimmed.IndexOf("are", StringComparison.OrdinalIgnoreCase);
-                if (idx >= 0) heightUnits = trimmed.Substring(idx + 3).Trim().TrimEnd('.');
-                continue;
-            }
-
-            if (trimmed.StartsWith("Distortion units", StringComparison.OrdinalIgnoreCase))
-            {
-                var idx = trimmed.IndexOf("are", StringComparison.OrdinalIgnoreCase);
-                if (idx >= 0) distortionUnits = trimmed.Substring(idx + 3).Trim().TrimEnd('.');
-                continue;
-            }
-
-            if (trimmed.StartsWith("Maximum Field", StringComparison.OrdinalIgnoreCase))
-            {
-                maxField = ParseValueBeforeUnit(trimmed);
-                continue;
-            }
-
-            if (trimmed.StartsWith("Maximum distortion", StringComparison.OrdinalIgnoreCase))
-            {
-                maxDistortion = ParseValueAfterEquals(trimmed);
-                continue;
-            }
-
-            // "Data for wavelength : 0.486100 µm."
             if (trimmed.StartsWith("Data for wavelength", StringComparison.OrdinalIgnoreCase))
             {
-                // Save previous block if any
-                if (inData && fieldAngles.Count > 0)
-                {
-                    wavelengthBlocks.Add(BuildBlock(currentWavelength, currentFocalLength,
-                        fieldAngles, tanShifts, sagShifts, realHeights, refHeights, distortions));
-                }
-
+                AddCurrentBlock();
                 currentWavelength = ParseColonValue(trimmed);
-                currentFocalLength = 0;
+                currentFocalLength = double.NaN;
                 fieldAngles = new List<double>();
                 tanShifts = new List<double>();
                 sagShifts = new List<double>();
@@ -147,32 +115,18 @@ public class FieldCurvatureDistortionTool
                 inData = false;
                 continue;
             }
-
-            if (trimmed.StartsWith("Distortion focal length", StringComparison.OrdinalIgnoreCase))
-            {
-                currentFocalLength = ParseEqualsValue(trimmed);
-                continue;
-            }
-
-            // Detect column header row
-            if (trimmed.StartsWith("Y Angle", StringComparison.OrdinalIgnoreCase))
-            {
-                inData = true;
-                continue;
-            }
-
+            if (trimmed.StartsWith("Distortion focal length", StringComparison.OrdinalIgnoreCase)) { currentFocalLength = ParseEqualsValue(trimmed); continue; }
+            if (trimmed.StartsWith("Y Angle", StringComparison.OrdinalIgnoreCase)) { inData = true; continue; }
             if (!inData) continue;
 
-            // Parse data row: 6 columns, last one may end with " %"
-            var cleanLine = trimmed.Replace("%", "").Trim();
-            var values = cleanLine.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
+            var values = trimmed.Replace("%", "").Trim().Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
             if (values.Length >= 6 &&
-                double.TryParse(values[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double angle) &&
-                double.TryParse(values[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double tanS) &&
-                double.TryParse(values[2], NumberStyles.Float, CultureInfo.InvariantCulture, out double sagS) &&
-                double.TryParse(values[3], NumberStyles.Float, CultureInfo.InvariantCulture, out double realH) &&
-                double.TryParse(values[4], NumberStyles.Float, CultureInfo.InvariantCulture, out double refH) &&
-                double.TryParse(values[5], NumberStyles.Float, CultureInfo.InvariantCulture, out double dist))
+                double.TryParse(values[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var angle) &&
+                double.TryParse(values[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var tanS) &&
+                double.TryParse(values[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var sagS) &&
+                double.TryParse(values[3], NumberStyles.Float, CultureInfo.InvariantCulture, out var realH) &&
+                double.TryParse(values[4], NumberStyles.Float, CultureInfo.InvariantCulture, out var refH) &&
+                double.TryParse(values[5], NumberStyles.Float, CultureInfo.InvariantCulture, out var dist))
             {
                 fieldAngles.Add(angle);
                 tanShifts.Add(tanS);
@@ -182,13 +136,10 @@ public class FieldCurvatureDistortionTool
                 distortions.Add(dist);
             }
         }
+        AddCurrentBlock();
 
-        // Save last block
-        if (fieldAngles.Count > 0)
-        {
-            wavelengthBlocks.Add(BuildBlock(currentWavelength, currentFocalLength,
-                fieldAngles, tanShifts, sagShifts, realHeights, refHeights, distortions));
-        }
+        if (wavelengthBlocks.Count == 0)
+            throw new InvalidDataException("Field Curvature and Distortion text results contained no parsable wavelength blocks. The installed OpticStudio text format may be unsupported.");
 
         return new FieldCurvatureDistortionData
         {
@@ -201,35 +152,40 @@ public class FieldCurvatureDistortionTool
             MaximumDistortionPercent = maxDistortion,
             WavelengthData = wavelengthBlocks.ToArray()
         };
+
+        void AddCurrentBlock()
+        {
+            if (fieldAngles.Count == 0) return;
+            var expected = fieldAngles.Count;
+            if (tanShifts.Count != expected || sagShifts.Count != expected || realHeights.Count != expected || refHeights.Count != expected || distortions.Count != expected)
+                throw new InvalidDataException("Field Curvature and Distortion contained an incomplete data block.");
+            wavelengthBlocks.Add(new FieldCurvatureWavelengthData
+            {
+                Wavelength = currentWavelength,
+                DistortionFocalLength = currentFocalLength,
+                FieldAnglesDeg = fieldAngles.ToArray(),
+                TangentialShift = tanShifts.ToArray(),
+                SagittalShift = sagShifts.ToArray(),
+                RealHeight = realHeights.ToArray(),
+                ReferenceHeight = refHeights.ToArray(),
+                DistortionPercent = distortions.ToArray(),
+                DataPoints = expected
+            });
+        }
     }
 
-    private static FieldCurvatureWavelengthData BuildBlock(
-        double wavelength, double focalLength,
-        List<double> fieldAngles, List<double> tanShifts, List<double> sagShifts,
-        List<double> realHeights, List<double> refHeights, List<double> distortions)
+    private static string ParseUnits(string line)
     {
-        return new FieldCurvatureWavelengthData
-        {
-            Wavelength = wavelength,
-            DistortionFocalLength = focalLength,
-            FieldAnglesDeg = fieldAngles.ToArray(),
-            TangentialShift = tanShifts.ToArray(),
-            SagittalShift = sagShifts.ToArray(),
-            RealHeight = realHeights.ToArray(),
-            ReferenceHeight = refHeights.ToArray(),
-            DistortionPercent = distortions.ToArray(),
-            DataPoints = fieldAngles.Count
-        };
+        var idx = line.IndexOf("are", StringComparison.OrdinalIgnoreCase);
+        return idx >= 0 ? line.Substring(idx + 3).Trim().TrimEnd('.') : "";
     }
 
     private static double ParseColonValue(string line)
     {
         int idx = line.LastIndexOf(':');
-        if (idx < 0) return 0;
+        if (idx < 0) return double.NaN;
         var part = line.Substring(idx + 1).Trim().Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
-        if (part.Length > 0 && double.TryParse(part[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double val))
-            return val;
-        return 0;
+        return part.Length > 0 && double.TryParse(part[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ? value : double.NaN;
     }
 
     private static double ParseEqualsValue(string line)
@@ -237,32 +193,25 @@ public class FieldCurvatureDistortionTool
         int idx = line.LastIndexOf('=');
         if (idx < 0) return ParseColonValue(line);
         var part = line.Substring(idx + 1).Trim().Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
-        if (part.Length > 0 && double.TryParse(part[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double val))
-            return val;
-        return 0;
+        return part.Length > 0 && double.TryParse(part[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ? value : double.NaN;
     }
 
     private static double ParseValueBeforeUnit(string line)
     {
-        // "Maximum Field is 14.000 Degrees."
         var parts = line.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
         for (int i = parts.Length - 1; i >= 0; i--)
         {
             var clean = parts[i].TrimEnd('.', '%');
-            if (double.TryParse(clean, NumberStyles.Float, CultureInfo.InvariantCulture, out double val))
-                return val;
+            if (double.TryParse(clean, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)) return value;
         }
-        return 0;
+        return double.NaN;
     }
 
     private static double ParseValueAfterEquals(string line)
     {
-        // "Maximum distortion = 0.9401%"
         int idx = line.IndexOf('=');
-        if (idx < 0) return 0;
+        if (idx < 0) return double.NaN;
         var part = line.Substring(idx + 1).Trim().TrimEnd('%').Trim();
-        if (double.TryParse(part, NumberStyles.Float, CultureInfo.InvariantCulture, out double val))
-            return val;
-        return 0;
+        return double.TryParse(part, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ? value : double.NaN;
     }
 }
