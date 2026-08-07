@@ -40,6 +40,10 @@ public static class StaticToolManifest
     {
         if (!ByName.TryGetValue(toolName, out var entry)) return false;
         if (!ToolsetCatalog.IsToolAllowed(profile, toolName)) return false;
-        return !readOnly || string.Equals(entry.Impact, ToolsetCatalog.ToolImpact.ReadOnly.ToString(), StringComparison.Ordinal);
+        // Preserve the established global read-only semantics: HighImpact
+        // operations are blocked, while Caution session/connection operations
+        // remain available. Profiles such as basic-viewing can independently
+        // restrict the surface to ReadOnly impact only.
+        return !readOnly || !string.Equals(entry.Impact, ToolsetCatalog.ToolImpact.HighImpact.ToString(), StringComparison.Ordinal);
     }
 }
