@@ -65,7 +65,7 @@ public static class GlassFilterService
         ValidateRange(c.NdMin, c.NdMax, "Nd");
         ValidateRange(c.VdMin, c.VdMax, "Vd");
         ValidateRange(c.DPgFMin, c.DPgFMax, "dPgF");
-        ValidateRange(c.TCEMin, c.TCMax, "TCE");
+        ValidateRange(c.TCEMin, c.TCEMax, "TCE");
         if (c.MinWavelengthCoverage is <= 0)
             throw new ArgumentOutOfRangeException(nameof(c.MinWavelengthCoverage), "Minimum wavelength coverage must be > 0 µm.");
         if (c.MaxWavelengthCoverage is <= 0)
