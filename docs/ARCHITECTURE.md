@@ -35,6 +35,7 @@ The Host may start and answer `tools/list` without starting the Worker. The Work
 
 - `src/ZemaxMCP.HttpBridge` builds `ZemaxMCP.Host`. The historical directory name is retained to avoid breaking packaging/update paths; the solution display name is `ZemaxMCP.Host`.
 - `src/ZemaxMCP.Server` builds `ZemaxMCP.Worker` and is the only executable project allowed to depend on proprietary ZOS-API assemblies.
+- `BootstrapProgram` owns early CLR binding for the three ZOS-API assemblies. `ServerApplication` owns the authenticated private-RPC handshake and does not register a second resolver.
 
 ### Shared
 
@@ -64,7 +65,7 @@ Worker tool methods remain the authoring source for tool names, descriptions and
 - explicit domain
 - explicit impact level
 
-`StaticToolManifest.ContractFingerprint` is a deterministic SHA-256 digest over those fields. The Host and Worker compare the fingerprint, RPC version, Worker PID and per-launch secret during the private-pipe handshake before the Worker loads ZOS-API. A mixed or stale package fails startup rather than silently executing against a different contract.
+`StaticToolManifest.ContractFingerprint` is a deterministic SHA-256 digest over those fields. The Host and Worker compare the fingerprint, RPC version, Worker PID and per-launch secret during the private-pipe handshake before the Worker initializes ZOS-API or begins any OpticStudio COM operation. A mixed or stale package fails startup rather than silently executing against a different contract.
 
 The same manifest backs `tools/list`, Host direct-call admission, Worker RPC admission and `zemax_tool_catalog`. The Worker reflection registry binds and invokes implementations but does not generate a second schema.
 
@@ -107,6 +108,10 @@ OpticStudio ownership is independent of MCP transport sessions. Identity is reso
 Instance identifiers are 1-128 ASCII letters/digits plus `.`, `_` and `-`. The packaged stdio proxy generates a new identifier per proxy process. Clients that support custom MCP request metadata or HTTP headers can provide their own stable/process-specific identifier.
 
 Do not use `Mcp-Name` as client identity; it is routing metadata for the invoked tool/resource/prompt.
+
+## Retired migration assets
+
+The old Worker-owned MCP prompts/resources and JSON appsettings were intentionally removed after the public SDK Host migration. They are recoverable from Git history if those capabilities are deliberately reintroduced, but they are not kept as excluded/dead source in the active Worker tree.
 
 ## Dependency rules
 
