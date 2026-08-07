@@ -56,11 +56,13 @@ public class ConstrainedOptimizeTool
 
             return await _session.ExecuteAsync("ConstrainedOptimize", parameters, system =>
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var scanner = new VariableScanner();
                 var meritReader = new MeritFunctionReader();
                 var lmOptimizer = new LMOptimizer(meritReader);
-                var variables = scanner.ScanVariables(system);
+                var variables = scanner.ScanVariables(system, cancellationToken);
                 _constraintStore.ApplyConstraints(variables);
+                cancellationToken.ThrowIfCancellationRequested();
 
                 var lmResult = lmOptimizer.Optimize(
                     system,
