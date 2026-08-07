@@ -16,8 +16,10 @@ if ($forbes -match 'rings\s*=\s*Math\.Max|arms\s*=\s*Math\.Max' -or
     $forbes -notmatch 'if \(!mfe\.RemoveOperandAt\(row\)\)' -or
     $forbes -notmatch 'ChangeTypeChecked' -or
     $forbes -notmatch 'catch \(OperationCanceledException\)' -or
-    $forbes -notmatch 'cancellationToken\.ThrowIfCancellationRequested\(\)') {
-    throw "zemax_forbes_merit_function must retain strict sampling inputs, explicit Radau support, transactional MFE rollback, checked mutations, and cancellation."
+    $forbes -notmatch 'cancellationToken\.ThrowIfCancellationRequested\(\)' -or
+    $forbes -notmatch 'bool useEqualFieldWeights = totalWeight <= 0' -or
+    $forbes -notmatch 'useEqualFieldWeights \? 1\.0 / raw\.Count : item\.Weight / totalWeight') {
+    throw "zemax_forbes_merit_function must retain strict sampling inputs, explicit Radau support, transactional MFE rollback, checked mutations, cancellation, and zero-weight-preserving field normalization."
 }
 
 $scanner = Get-Content -LiteralPath (Join-Path $constrainedRoot "VariableScanner.cs") -Raw
@@ -52,6 +54,12 @@ if ($getVariables -notmatch 'CancellationToken cancellationToken' -or
     throw "zemax_get_variables must propagate cancellation through VariableScanner."
 }
 
+$constrainedOptimize = Get-Content -LiteralPath (Join-Path $optimizationRoot "ConstrainedOptimizeTool.cs") -Raw
+if ($constrainedOptimize -notmatch 'scanner\.ScanVariables\(system, cancellationToken\)' -or
+    $constrainedOptimize -notmatch 'catch \(OperationCanceledException\)') {
+    throw "zemax_constrained_optimize must propagate cancellation through variable discovery and the optimizer."
+}
+
 $reader = Get-Content -LiteralPath (Join-Path $constrainedRoot "MeritFunctionReader.cs") -Raw
 if ($reader -notmatch 'weight == 0' -or
     $reader -notmatch 'Weighted MFE row' -or
@@ -70,4 +78,4 @@ if ($getMerit -match '\.Sanitize\(' -or
     throw "zemax_get_merit_function must preserve typed cells, fail on non-finite data, and never fabricate zeroes through sanitize/empty catches."
 }
 
-Write-Host "Stage E optimization contract guards passed: MFE transactions, MCE variable addressing, typed reads, and cancellation are intact."
+Write-Host "Stage E optimization contract guards passed: MFE transactions, MCE variable addressing, typed reads, field weights, and cancellation are intact."
