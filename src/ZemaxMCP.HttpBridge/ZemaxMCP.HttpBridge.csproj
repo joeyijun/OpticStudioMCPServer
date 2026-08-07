@@ -8,9 +8,6 @@
     <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="..\ZemaxMCP.Toolsets\ToolsetCatalog.cs" Link="Toolsets\ToolsetCatalog.cs" />
-  </ItemGroup>
-  <ItemGroup>
     <PackageReference Include="ModelContextProtocol" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" />
     <PackageReference Include="Serilog.Sinks.File" />
