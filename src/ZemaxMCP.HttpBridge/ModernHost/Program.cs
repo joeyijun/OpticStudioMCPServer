@@ -170,6 +170,7 @@ internal static class Program
                     manifestFingerprint = StaticToolManifest.ContractFingerprint,
                     workerRpcVersion = status?.RpcVersion,
                     workerManifestFingerprint = status?.ManifestFingerprint,
+                    toolset = options.Toolset,
                     zosApiLoaded = status?.ZosApiLoaded ?? false,
                     zosApiConnected = status?.Connected ?? false,
                     licenseStatus = status?.CurrentLicenseStatus ?? status?.LastLicenseStatus ?? "Not validated",
@@ -261,7 +262,8 @@ internal static class Program
 
     private static string HashIdentityComponent(string value)
     {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(value));
-        return Convert.ToHexString(hash.AsSpan(0, 8)).ToLowerInvariant();
+        using var sha256 = SHA256.Create();
+        var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(value));
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 }
