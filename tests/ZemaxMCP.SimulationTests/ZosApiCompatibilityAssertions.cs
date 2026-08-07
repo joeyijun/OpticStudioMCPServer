@@ -24,6 +24,7 @@ internal static class ZosApiCompatibilityAssertions
             var runtimeAssembly = Assembly.GetExecutingAssembly().Location;
             var runtime = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
+                ["OpticStudio"] = runtimeAssembly,
                 ["ZOSAPI_Interfaces"] = runtimeAssembly,
                 ["ZOSAPI"] = runtimeAssembly,
                 ["ZOSAPI_NetHelper"] = runtimeAssembly
@@ -55,14 +56,15 @@ internal static class ZosApiCompatibilityAssertions
         }
     }
 
-    private static void WriteMarker(string root, string assemblyVersion)
+    private static void WriteMarker(string root, string version)
     {
         File.WriteAllLines(Path.Combine(root, ZosApiRuntimeCompatibility.BuildInfoFileName), new[]
         {
             "format=1",
-            "ZOSAPI_Interfaces.assemblyVersion=" + assemblyVersion,
-            "ZOSAPI.assemblyVersion=" + assemblyVersion,
-            "ZOSAPI_NetHelper.assemblyVersion=" + assemblyVersion
+            "OpticStudio.productVersion=" + version,
+            "ZOSAPI_Interfaces.assemblyVersion=" + version,
+            "ZOSAPI.assemblyVersion=" + version,
+            "ZOSAPI_NetHelper.assemblyVersion=" + version
         });
     }
 }
