@@ -62,7 +62,7 @@ public static class CatalogExportService
         }
     }
 
-    public static void Export(IEnumerable<GlassEntry> glasses, string outputPath, string catalogName)
+    public static void Export(IEnumerable<GlassEntry> glasses, string outputPath, string catalogName, bool overwrite)
     {
         if (glasses == null) throw new ArgumentNullException(nameof(glasses));
         if (string.IsNullOrWhiteSpace(outputPath)) throw new ArgumentException("Output path is required.", nameof(outputPath));
@@ -86,10 +86,20 @@ public static class CatalogExportService
                 }
             }
 
-            if (File.Exists(fullOutputPath))
-                File.Replace(tempPath, fullOutputPath, null);
+            if (overwrite)
+            {
+                if (File.Exists(fullOutputPath))
+                    File.Replace(tempPath, fullOutputPath, null);
+                else
+                    File.Move(tempPath, fullOutputPath);
+            }
             else
+            {
+                // File.Move is the final no-clobber gate. If another process creates
+                // the target after the earlier friendly existence check, this fails
+                // rather than silently replacing that file.
                 File.Move(tempPath, fullOutputPath);
+            }
         }
         finally
         {
