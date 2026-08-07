@@ -24,6 +24,7 @@
     <ProjectReference Include="..\ZemaxMCP.Core\ZemaxMCP.Core.csproj" />
     <ProjectReference Include="..\ZemaxMCP.Documentation\ZemaxMCP.Documentation.csproj" />
     <ProjectReference Include="..\ZemaxMCP.Rpc\ZemaxMCP.Rpc.csproj" />
+    <ProjectReference Include="..\ZemaxMCP.ToolManifest\ZemaxMCP.ToolManifest.csproj" />
   </ItemGroup>
 
   <ItemGroup>
