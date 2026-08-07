@@ -1,4 +1,5 @@
 using System.Reflection;
+using ZemaxMCP.Server.Compatibility;
 
 namespace ZemaxMCP.Server;
 
@@ -13,10 +14,21 @@ internal static class BootstrapProgram
     public static int Main(string[] args)
     {
         Console.SetOut(TextWriter.Null);
-        RegisterZosApiResolver();
+        var runtimeZosAssemblies = RegisterZosApiResolver();
 
         try
         {
+            // Release packages deliberately do not redistribute proprietary
+            // ZOS-API DLLs. Before the CLR loads ServerApplication (which has
+            // compile-time ZOS-API type references), reject an older runtime
+            // API than the one used to compile this Worker. This converts a
+            // possible MissingMethod/TypeLoad crash into an explicit version
+            // compatibility error. Developer builds without a marker are
+            // allowed and report that no cross-version preflight was possible.
+            var compatibility = ZosApiRuntimeCompatibility.Validate(AppContext.BaseDirectory, runtimeZosAssemblies);
+            foreach (var message in compatibility.Messages)
+                Console.Error.WriteLine("ZOSAPI_COMPATIBILITY|" + message);
+
             var serverApplication = Assembly.GetExecutingAssembly()
                 .GetType("ZemaxMCP.Server.ServerApplication", throwOnError: true)!;
             var main = serverApplication.GetMethod("RunAsync", BindingFlags.Static | BindingFlags.Public)
@@ -38,7 +50,7 @@ internal static class BootstrapProgram
         }
     }
 
-    private static void RegisterZosApiResolver()
+    private static IReadOnlyDictionary<string, string> RegisterZosApiResolver()
     {
         var zemaxRoot = Environment.GetEnvironmentVariable("ZEMAX_ROOT")?.Trim().Trim('"');
 
@@ -68,6 +80,16 @@ internal static class BootstrapProgram
                 break;
             }
         }
+
+        var paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            var name = assembly.GetName().Name;
+            if (string.IsNullOrWhiteSpace(name) ||
+                (name != "ZOSAPI_Interfaces" && name != "ZOSAPI" && name != "ZOSAPI_NetHelper")) continue;
+            if (!string.IsNullOrWhiteSpace(assembly.Location)) paths[name] = assembly.Location;
+        }
+        return paths;
     }
 
     private static IEnumerable<string> CandidateFolders(string assemblyName, string? zemaxRoot)
