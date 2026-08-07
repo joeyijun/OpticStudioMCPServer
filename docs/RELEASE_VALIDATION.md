@@ -19,9 +19,10 @@ Hosted checks cover:
 - syntax/protocol-shape validation of the live release verifier;
 - functional-safety guards covering reviewed Stage A-F contracts;
 - dedicated Stage E optimization guards for transactional MFE changes, configuration-aware MCE variable addressing, typed merit reads, and cancellation;
-- dedicated Stage F guards for POP, NSC, tolerancing, BMP rendering, and generic analysis exports.
+- dedicated Stage F guards for POP, NSC, tolerancing, BMP rendering, and generic analysis exports;
+- cross-version ZOS-API policy guards for an x64 Worker, packaged compile-baseline metadata, pre-type-load runtime version checks, and ZMX safety snapshots.
 
-Hosted CI deliberately does **not** claim that a ZOS-API call works against a real OpticStudio build. Proprietary ZOS-API assemblies and a valid OpticStudio license are not available on the hosted runner. Version-sensitive ZOS-API members are checked against the current Ansys reference and must still pass the licensed-machine acceptance defined below.
+Hosted CI deliberately does **not** claim that a ZOS-API call works against a real OpticStudio build. Proprietary ZOS-API assemblies and a valid OpticStudio license are not available on the hosted runner. Version-sensitive ZOS-API members are checked against the current Ansys reference, while claimed older-version support must additionally pass `scripts/verify-zosapi-compatibility.ps1` against the actual old DLLs and then the licensed-machine acceptance defined below. See `docs/ZOSAPI_COMPATIBILITY.md`.
 
 ## 2. Live smoke test: real OpticStudio
 
@@ -68,7 +69,7 @@ Read/write mode:
 ./scripts/verify-live-mcp.ps1 -VerifySafety
 ```
 
-The same no-op mutation must succeed and create a verified `.zos` pre-change snapshot. The optical metadata itself is not intentionally changed.
+The same no-op mutation must succeed and create a verified `.zmx` pre-change snapshot. ZMX is deliberately used as the cross-version safety format because `.ZOS` did not exist before OpticStudio 21.3, while modern OpticStudio continues to support ZMX. The optical metadata itself is not intentionally changed.
 
 ## 4. Functional review order and current status
 
@@ -95,7 +96,7 @@ For each public tool, review:
 6. **Result truthfulness** — `Success=true` describes the requested primary operation; missing/invalid primary data is not fabricated as zero/empty success.
 7. **Readback** — mutating tools read back applied values where the ZOS-API supports it.
 8. **Atomicity** — validation precedes mutation; multi-step writes use rollback or explicit partial-failure contracts.
-9. **Version compatibility** — version-sensitive members fail explicitly instead of silently retaining defaults.
+9. **Version compatibility** — version-sensitive members fail explicitly instead of silently retaining defaults; every claimed OpticStudio family must compile against its actual ZOS-API assemblies.
 10. **Filesystem/data integrity** — documented path boundaries, source completeness, no-clobber behavior, and malformed-data rejection are enforced.
 
 ## 5. Current functional review fixes
@@ -108,6 +109,9 @@ For each public tool, review:
 - `zemax_new_system` and `zemax_open_file` no longer record duplicate HighImpact operations merely for readback.
 - `zemax_save_file` treats the Zemax file as the primary result; constraint-sidecar failure is an auxiliary warning after a successful lens save.
 - Quick Focus and Scale Lens use strict documented criterion/unit vocabularies and propagate cancellation.
+- The Worker is explicitly x64 to avoid the legacy NetHelper/registry-view failure mode on older OpticStudio installations.
+- Packaged Workers record the ZOS-API release used to compile them and reject an older selected runtime before CLR type binding can fail on missing interface members.
+- HighImpact safety snapshots use `.zmx`, not `.zos`, so 2021 releases before 21.3 are not blocked by a file format they cannot read.
 
 ### Stage B — Sequential editing
 
@@ -146,6 +150,7 @@ Stage D static review is complete. Actual OpticStudio MCE/catalog integration re
 - Hammer uses the official `AutomaticOptimization` and `TargetRunTimeM` settings instead of exposing ignored parameters.
 - Custom LM cancellation propagates through finite-difference Jacobians, linear algebra/trial steps, and merit evaluation; cancellation restores the last accepted design and rethrows `OperationCanceledException`.
 - Multistart preserves Job Cancelled semantics, propagates cancellation through variable/material discovery and every LM trial, and checkpoints through `CopySystem` so saving a checkpoint cannot rename the active optical system.
+- Unsaved multistart designs default to `.zmx` checkpoints for compatibility with OpticStudio releases before 21.3; already-saved systems preserve their `.zmx` or `.zos` extension.
 - Variable discovery and the optimization accessor use `IMCERow.GetOperandCell(configuration)` for MCE variables rather than treating a configuration number as a raw editor column index.
 - Variable and merit data must be finite. A non-finite weighted MFE row fails custom optimization rather than being silently dropped from the objective.
 - Constraint batches are validated/staged before commit; sidecars use strict finite parsing and atomic temporary-file replacement.
@@ -170,16 +175,35 @@ Stage E static review is complete. Numerical convergence quality, ZOS optimizati
 
 Stage F static review is complete. POP physics, NSC detector behavior, version-specific analysis grid/text availability, and exported BMP/TXT/ZBF/raw-grid interoperability remain deferred to licensed-machine acceptance.
 
-## 6. Release gate
+## 6. Cross-version compile acceptance
+
+A claimed OpticStudio family must compile the complete Worker against that family's real ZOS-API assemblies before live testing:
+
+```powershell
+./scripts/verify-zosapi-compatibility.ps1 -ZemaxRoots @(
+  '<OpticStudio 2021 root>',
+  '<OpticStudio 2023 root>',
+  '<OpticStudio 2024 root>',
+  '<OpticStudio 2026 root>'
+)
+```
+
+This does not start OpticStudio or require a license. A compile failure means the source still has a direct dependency on an API member unavailable in that version and the version must not be advertised as supported until the dependency is removed/late-bound or the support floor is raised.
+
+Official release packaging should set `ZEMAX_API_BASELINE_ROOT` to the oldest version that passed this matrix. The resulting `ZOSAPI_BUILD_INFO.txt` makes that compile baseline part of the package contract.
+
+## 7. Release gate
 
 A build is release-ready only when all of the following are true:
 
 - GitHub Windows CI is green at the exact release-candidate commit;
-- the live MCP 2026-07-28 verifier passes against a licensed OpticStudio installation;
+- every OpticStudio version/family claimed as supported passes `verify-zosapi-compatibility.ps1` against its real API assemblies;
+- the release Worker was built against the oldest claimed supported ZOS-API baseline and contains `ZOSAPI_BUILD_INFO.txt`;
+- the live MCP 2026-07-28 verifier passes against a licensed OpticStudio installation for the release's intended version matrix;
 - safety verification passes in the intended release mode(s);
 - Host/Worker RPC version and manifest fingerprint agree in live health;
 - no P0/P1 finding remains in every functional stage declared complete for release;
 - the release ZIP/update signature and rollback checks pass;
 - the tested OpticStudio version(s) are recorded in the release notes.
 
-The current branch has completed static Stage A-F review as documented above, but **licensed OpticStudio acceptance has intentionally not yet been performed**.
+The current branch has completed static Stage A-F review as documented above, but **licensed OpticStudio acceptance and real 2021/2023/2024 API compile-matrix validation have intentionally not yet been performed**.
