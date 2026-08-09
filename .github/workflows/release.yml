@@ -19,6 +19,15 @@ jobs:
       - name: Verify explicit operation safety metadata
         shell: pwsh
         run: ./scripts/verify-operation-metadata.ps1
+      - name: Verify Stage A-F functional safety
+        shell: pwsh
+        run: ./scripts/verify-functional-safety.ps1
+      - name: Verify Stage E optimization contracts
+        shell: pwsh
+        run: ./scripts/verify-optimization-contracts.ps1
+      - name: Verify Stage F specialized contracts
+        shell: pwsh
+        run: ./scripts/verify-specialized-contracts.ps1
       - name: Build and simulate ZOS-independent Core/Server logic
         shell: pwsh
         run: dotnet run --project tests/ZemaxMCP.SimulationTests/ZemaxMCP.SimulationTests.csproj -c Release
