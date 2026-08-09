@@ -64,7 +64,11 @@ internal sealed class HostOptions
         if (string.IsNullOrWhiteSpace(options.Host)) throw new ArgumentException("--host cannot be empty.");
         if (options.HardRecoveryTimeoutSeconds <= options.RequestTimeoutSeconds)
             throw new ArgumentException("--hard-recovery-timeout-seconds must be greater than --request-timeout-seconds.");
-        if (options.Host == "0.0.0.0" && string.IsNullOrWhiteSpace(options.AccessToken))
+        // Local loopback use may remain tokenless for zero-setup desktop clients.
+        // Any non-loopback binding exposes the MCP endpoint beyond this machine
+        // and therefore requires explicit bearer authentication, whether the
+        // binding is a wildcard, a concrete LAN address, or a host name.
+        if (!IsLoopback(options.Host) && string.IsNullOrWhiteSpace(options.AccessToken))
             throw new ArgumentException("LAN sharing requires ZEMAX_MCP_TOKEN to be configured.");
         if (options._allowedHosts.Count == 0)
         {
