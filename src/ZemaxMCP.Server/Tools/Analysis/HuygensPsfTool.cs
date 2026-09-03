@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Globalization;
 using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
+using ZOSAPI.Analysis;
 using ZOSAPI.Analysis.Settings;
 using ZOSAPI.Analysis.Settings.Psf;
 

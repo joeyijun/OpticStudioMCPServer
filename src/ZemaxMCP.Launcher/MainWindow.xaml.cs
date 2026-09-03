@@ -430,6 +430,7 @@ public partial class MainWindow : Window
         SetClientMenuIndicator(statuses, "Codex", CodexConfigDot, CodexConfigState);
         SetClientMenuIndicator(statuses, "Claude Desktop", ClaudeConfigDot, ClaudeConfigState);
         SetClientMenuIndicator(statuses, "Cursor", CursorConfigDot, CursorConfigState);
+        SetClientMenuIndicator(statuses, "Google Antigravity", AntigravityConfigDot, AntigravityConfigState);
         SetClientMenuIndicator(statuses, "Kimi Code", KimiConfigDot, KimiConfigState);
         SetClientMenuIndicator(statuses, "WorkBuddy", WorkBuddyConfigDot, WorkBuddyConfigState);
         SetClientMenuIndicator(statuses, "VS Code / Copilot", VsCodeConfigDot, VsCodeConfigState);
@@ -723,6 +724,7 @@ public partial class MainWindow : Window
     private void Codex_Click(object sender, RoutedEventArgs e) => ConfigureClient("Codex", () => Configurator.ConfigureCodex(McpUrl, McpToken));
     private void Claude_Click(object sender, RoutedEventArgs e) => ConfigureClient("Claude Desktop", () => Configurator.ConfigureClaudeDesktop(McpUrl, McpToken));
     private void Cursor_Click(object sender, RoutedEventArgs e) => ConfigureClient("Cursor", () => Configurator.ConfigureCursor(McpUrl, McpToken));
+    private void Antigravity_Click(object sender, RoutedEventArgs e) => ConfigureClient("Google Antigravity", () => Configurator.ConfigureAntigravity(McpUrl, McpToken));
     private void Kimi_Click(object sender, RoutedEventArgs e) => ConfigureClient("Kimi Code", () => Configurator.ConfigureKimi(McpUrl, McpToken));
     private void WorkBuddy_Click(object sender, RoutedEventArgs e) => ConfigureClient("WorkBuddy", () => Configurator.ConfigureWorkBuddy(McpUrl, McpToken));
     private void CopyGenericConfig_Click(object sender, RoutedEventArgs e)
@@ -937,11 +939,20 @@ internal static class Configurator
     private static string CodexPath => Path.Combine(CodexHome, "config.toml");
     private static string ClaudeDesktopPath => Path.Combine(AppData, "Claude", "claude_desktop_config.json");
     private static string CursorPath => Path.Combine(UserProfile, ".cursor", "mcp.json");
+    // Antigravity's current global configuration location is documented as
+    // ~/.gemini/config/mcp_config.json. Keep the former location in the
+    // candidate list so an established installation is updated in place.
+    private static readonly string[] AntigravityConfigPaths =
+    {
+        Path.Combine(UserProfile, ".gemini", "config", "mcp_config.json"),
+        Path.Combine(UserProfile, ".gemini", "antigravity", "mcp_config.json")
+    };
+    private static string AntigravityPath => AntigravityConfigPaths.FirstOrDefault(File.Exists) ?? AntigravityConfigPaths[0];
     private static string KimiHome => EnvironmentPathOrDefault("KIMI_CODE_HOME", Path.Combine(UserProfile, ".kimi-code"));
     private static string KimiPath => Path.Combine(KimiHome, "mcp.json");
     private static string WorkBuddyPath => Path.Combine(UserProfile, ".workbuddy", "mcp.json");
     private static string VsCodeDefaultPath => Path.Combine(AppData, "Code", "User", "mcp.json");
-    public static readonly string[] KnownAliases = { "codex", "claude", "cursor", "kimi", "workbuddy", "codebuddy", "vscode", "visual studio", "copilot" };
+    public static readonly string[] KnownAliases = { "codex", "claude", "cursor", "antigravity", "gemini", "kimi", "workbuddy", "codebuddy", "vscode", "visual studio", "copilot" };
 
     public static void ConfigureClaudeDesktop(string url) => ConfigureClaudeDesktop(url, "");
     public static void ConfigureClaudeDesktop(string url, string token)
@@ -953,6 +964,12 @@ internal static class Configurator
     }
     public static void ConfigureCursor(string url) => ConfigureCursor(url, "");
     public static void ConfigureCursor(string url, string token) => ConfigureJson(CursorPath, "mcpServers", url, token);
+    public static void ConfigureAntigravity(string url) => ConfigureAntigravity(url, "");
+    public static void ConfigureAntigravity(string url, string token)
+    {
+        ValidateUrl(url);
+        ConfigureAntigravityJson(AntigravityPath, url, token);
+    }
     public static void ConfigureKimi(string url) => ConfigureKimi(url, "");
     public static void ConfigureKimi(string url, string token) => ConfigureJson(KimiPath, "mcpServers", url, token, false, true);
     public static void ConfigureWorkBuddy(string url) => ConfigureWorkBuddy(url, "");
@@ -967,6 +984,7 @@ internal static class Configurator
             new ClientConfigurationStatus("Codex", new[] { "codex" }, Directory.Exists(CodexHome), IsCodexConfigured(expectedUrl, expectedToken), CodexPath, ConfigureCodex),
             new ClientConfigurationStatus("Claude Desktop", new[] { "claude" }, Directory.Exists(Path.Combine(AppData, "Claude")), IsClaudeConfigured(expectedUrl, expectedToken), ClaudeDesktopPath, ConfigureClaudeDesktop),
             new ClientConfigurationStatus("Cursor", new[] { "cursor" }, Directory.Exists(Path.Combine(UserProfile, ".cursor")) || Directory.Exists(Path.Combine(AppData, "Cursor")) || Directory.Exists(Path.Combine(LocalAppData, "Cursor")), IsJsonConfigured(CursorPath, "mcpServers", expectedUrl, expectedToken), CursorPath, ConfigureCursor),
+            new ClientConfigurationStatus("Google Antigravity", new[] { "antigravity", "gemini" }, Directory.Exists(Path.Combine(UserProfile, ".gemini")), IsAntigravityConfigured(expectedUrl, expectedToken), AntigravityPath, ConfigureAntigravity),
             new ClientConfigurationStatus("Kimi Code", new[] { "kimi" }, Directory.Exists(KimiHome), IsJsonConfigured(KimiPath, "mcpServers", expectedUrl, expectedToken), KimiPath, ConfigureKimi),
             new ClientConfigurationStatus("WorkBuddy", new[] { "workbuddy", "codebuddy" }, Directory.Exists(Path.Combine(UserProfile, ".workbuddy")) || Directory.Exists(Path.Combine(AppData, "WorkBuddy")) || Directory.Exists(Path.Combine(LocalAppData, "WorkBuddy")), IsJsonConfigured(WorkBuddyPath, "mcpServers", expectedUrl, expectedToken), WorkBuddyPath, ConfigureWorkBuddy),
             new ClientConfigurationStatus("VS Code / Copilot", new[] { "vscode", "visual studio", "copilot" }, Directory.Exists(Path.Combine(AppData, "Code")) || Directory.Exists(Path.Combine(LocalAppData, "Programs", "Microsoft VS Code")), vsCodePaths.Any(x => IsJsonConfigured(x, "servers", expectedUrl, expectedToken)), string.Join("; ", vsCodePaths), null)
@@ -1015,6 +1033,25 @@ internal static class Configurator
             entry["startupTimeoutMs"] = 60000;
             entry["toolTimeoutMs"] = 300000;
         }
+        servers["zemax-mcp"] = entry;
+        WriteAtomically(path, root.ToString());
+    }
+
+    private static void ConfigureAntigravityJson(string path, string url, string token)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var root = File.Exists(path) ? JObject.Parse(File.ReadAllText(path)) : new JObject();
+        var servers = root["mcpServers"] as JObject;
+        if (servers == null)
+        {
+            servers = new JObject();
+            root["mcpServers"] = servers;
+        }
+
+        // Google Antigravity uses serverUrl for every remote MCP transport.
+        // Do not write url/httpUrl: those legacy fields are explicitly rejected.
+        var entry = new JObject { ["serverUrl"] = url };
+        AddHeaders(entry, token);
         servers["zemax-mcp"] = entry;
         WriteAtomically(path, root.ToString());
     }
@@ -1076,6 +1113,20 @@ internal static class Configurator
             return entry != null && UrlsEqual(entry["url"]?.ToString(), expectedUrl) && HasExpectedToken(entry, expectedToken);
         }
         catch { return false; }
+    }
+    private static bool IsAntigravityConfigured(string expectedUrl, string expectedToken)
+    {
+        foreach (var path in AntigravityConfigPaths)
+        {
+            try
+            {
+                var entry = File.Exists(path) ? JObject.Parse(File.ReadAllText(path))["mcpServers"]?["zemax-mcp"] : null;
+                if (entry != null && UrlsEqual(entry["serverUrl"]?.ToString(), expectedUrl) && HasExpectedToken(entry, expectedToken))
+                    return true;
+            }
+            catch { }
+        }
+        return false;
     }
     private static bool IsClaudeConfigured(string expectedUrl, string expectedToken)
     {

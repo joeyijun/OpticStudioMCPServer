@@ -82,6 +82,7 @@ Use **Configure AI clients** in the launcher. Existing unrelated MCP entries are
 | Codex | `$CODEX_HOME/config.toml`, or `~/.codex/config.toml` | The client card turns green after an actual request. |
 | Claude Desktop | `%APPDATA%/Claude/claude_desktop_config.json`; the packaged local stdio proxy reaches the HTTP/LAN endpoint and provides per-process client identity | The client card turns green after an actual request. |
 | Cursor | `~/.cursor/mcp.json` | The client card turns green after an actual request. |
+| Google Antigravity | `~/.gemini/config/mcp_config.json` (an existing legacy Antigravity configuration is detected and preserved in place) | The launcher writes Antigravity's remote `serverUrl` plus the Bearer header. Restart Antigravity, then use its MCP Servers panel or `/mcp` to confirm the connection. |
 | Kimi Code | `$KIMI_CODE_HOME/mcp.json`, or `~/.kimi-code/mcp.json` | Run `/mcp` in Kimi Code or watch the launcher client card. See the [official Kimi MCP guide](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/mcp.html). |
 | WorkBuddy | `~/.workbuddy/mcp.json` | WorkBuddy shows its own green/red MCP status; the launcher also records real requests. See the [official WorkBuddy MCP guide](https://www.workbuddy.ai/docs/zh/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide). |
 | VS Code / Copilot | Native `vscode:mcp/install` review flow; status checks the default and profile-specific `mcp.json` files | Approve the server in VS Code, then make a request. |

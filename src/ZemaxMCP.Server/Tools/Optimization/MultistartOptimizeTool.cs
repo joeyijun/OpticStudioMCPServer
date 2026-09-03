@@ -134,7 +134,7 @@ public class MultistartOptimizeTool
                                 if (string.IsNullOrEmpty(_multistartState.SaveFolder)) return;
 
                                 var totalTrial = priorTrialsRun + trial;
-                                var meritStr = merit.ToString("F6", System.Globalization.CultureInfo.InvariantCulture).Replace(".", "p");
+                                var meritStr = merit.ToString("F6", global::System.Globalization.CultureInfo.InvariantCulture).Replace(".", "p");
                                 var savePath = Path.Combine(_multistartState.SaveFolder, $"best_t{totalTrial}_mf{meritStr}{saveExtension}");
                                 try
                                 {

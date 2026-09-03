@@ -78,11 +78,17 @@ New-Item $publish -ItemType Directory -Force | Out-Null
 
 Write-Host "Building Worker against ZOS-API baseline: $ZosApiBuildRoot"
 dotnet build "$root\src\ZemaxMCP.Server\ZemaxMCP.Server.csproj" -c $Configuration -p:ZEMAX_ROOT="$ZosApiBuildRoot" -p:ZOSAPI_NETHELPER_PATH="$netHelperPath"
+if ($LASTEXITCODE -ne 0) { throw "Worker build failed." }
 dotnet publish "$root\src\ZemaxMCP.HttpBridge\ZemaxMCP.HttpBridge.csproj" -c $Configuration -r win-x64 --self-contained true -o "$root\artifacts\Host-publish"
+if ($LASTEXITCODE -ne 0) { throw "Host publish failed." }
 dotnet build "$root\src\ZemaxMCP.ClientProxy\ZemaxMCP.ClientProxy.csproj" -c $Configuration
+if ($LASTEXITCODE -ne 0) { throw "Client proxy build failed." }
 dotnet build "$root\src\ZemaxMCP.Launcher\ZemaxMCP.Launcher.csproj" -c $Configuration
+if ($LASTEXITCODE -ne 0) { throw "Launcher build failed." }
 dotnet build "$root\src\ZemaxMCP.Installer\ZemaxMCP.Installer.csproj" -c $Configuration
+if ($LASTEXITCODE -ne 0) { throw "Installer build failed." }
 dotnet build "$root\src\ZemaxMCP.Updater\ZemaxMCP.Updater.csproj" -c $Configuration
+if ($LASTEXITCODE -ne 0) { throw "Updater build failed." }
 
 $projects = "ZemaxMCP.Server", "ZemaxMCP.ClientProxy", "ZemaxMCP.Launcher", "ZemaxMCP.Installer", "ZemaxMCP.Updater"
 $releaseAssemblies = @{}

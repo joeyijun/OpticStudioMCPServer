@@ -338,9 +338,9 @@ public class LMOptimizer
         for (int i = 0; i < rows.Count; i++)
         {
             if (rows[i].Weight < 0 || double.IsNaN(rows[i].Weight) || double.IsInfinity(rows[i].Weight))
-                throw new InvalidOperationException($"Merit row {rows[i].Row} has invalid weight {rows[i].Weight}.");
+                throw new InvalidOperationException($"Merit row {rows[i].RowNumber} has invalid weight {rows[i].Weight}.");
             residuals[i] = Math.Sqrt(rows[i].Weight) * (rows[i].Value - rows[i].Target);
-            ValidateFinite(residuals[i], $"residual for merit row {rows[i].Row}");
+            ValidateFinite(residuals[i], $"residual for merit row {rows[i].RowNumber}");
         }
         return residuals;
     }
