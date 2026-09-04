@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing GitHub Release tag containing ZemaxMCP-win-x64.zip (for example v1.1.1)
+        description: Existing GitHub Release tag containing ZemaxMCP-win-x64.zip (for example v1.4.1; 1.4.1 is also accepted)
         required: true
         type: string
 
@@ -18,30 +18,81 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
-    env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
+      - name: Resolve existing release tag and package asset
+        id: release
+        shell: pwsh
+        env:
+          REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $requested = $env:REQUESTED_RELEASE_TAG.Trim()
+          if ([string]::IsNullOrWhiteSpace($requested)) {
+            throw "A release tag is required."
+          }
+
+          $candidates = [System.Collections.Generic.List[string]]::new()
+          $candidates.Add($requested)
+          if ($requested.StartsWith("v", [System.StringComparison]::OrdinalIgnoreCase)) {
+            if ($requested.Length -gt 1) { $candidates.Add($requested.Substring(1)) }
+          }
+          else {
+            $candidates.Add("v" + $requested)
+          }
+
+          $release = $null
+          $lastError = $null
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json"; "X-GitHub-Api-Version" = "2022-11-28"; "User-Agent" = "zemax-mcp-release-signer" }
+          foreach ($candidate in $candidates | Select-Object -Unique) {
+            try {
+              $escapedTag = [Uri]::EscapeDataString($candidate)
+              $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$escapedTag"
+              $release = Invoke-RestMethod -Uri $uri -Headers $headers
+              if ($release) { break }
+            }
+            catch { $lastError = $_.Exception.Message }
+          }
+          if ($null -eq $release) {
+            throw "No GitHub Release matched '$requested'. Tried: $($candidates -join ', '). Last API error: $lastError"
+          }
+
+          $asset = @($release.assets | Where-Object { $_.name -eq "ZemaxMCP-win-x64.zip" })
+          if ($asset.Count -ne 1) {
+            $available = @($release.assets | ForEach-Object { $_.name }) -join ', '
+            throw "Release $($release.tag_name) must contain exactly one ZemaxMCP-win-x64.zip asset. Available assets: $available"
+          }
+
+          "release_tag=$($release.tag_name)" >> $env:GITHUB_OUTPUT
+          "asset_id=$($asset[0].id)" >> $env:GITHUB_OUTPUT
       - name: Download the existing release ZIP
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+          RELEASE_ASSET_ID: ${{ steps.release.outputs.asset_id }}
         run: |
           New-Item artifacts -ItemType Directory -Force | Out-Null
-          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern "ZemaxMCP-win-x64.zip" --dir artifacts
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/octet-stream"; "X-GitHub-Api-Version" = "2022-11-28" }
+          $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/assets/$env:RELEASE_ASSET_ID"
+          Invoke-WebRequest -Uri $uri -Headers $headers -OutFile "artifacts/ZemaxMCP-win-x64.zip"
           if (-not (Test-Path "artifacts/ZemaxMCP-win-x64.zip")) {
             throw "Release $env:RELEASE_TAG does not contain ZemaxMCP-win-x64.zip. Upload the locally built ZIP first."
+          }
+          if ((Get-Item "artifacts/ZemaxMCP-win-x64.zip").Length -le 0) {
+            throw "Downloaded ZemaxMCP-win-x64.zip is empty."
           }
       - name: Sign the update manifest for the uploaded ZIP
         shell: pwsh
         env:
           UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY_B64 }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
         run: ./scripts/New-UpdateManifest.ps1 -PackagePath artifacts/ZemaxMCP-win-x64.zip -Version $env:RELEASE_TAG
       - name: Attach signed manifest to the existing release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.release_tag }}
+          tag_name: ${{ steps.release.outputs.release_tag }}
           files: artifacts/release-manifest.json
