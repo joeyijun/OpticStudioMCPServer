@@ -1,21 +1,23 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net48</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <AssemblyName>ZemaxMCP.Host</AssemblyName>
+    <UseAppHost>true</UseAppHost>
+    <PublishSingleFile>false</PublishSingleFile>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="..\ZemaxMCP.Toolsets\ToolsetCatalog.cs" Link="Toolsets\ToolsetCatalog.cs" />
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" />
+    <PackageReference Include="Serilog.Sinks.File" />
+    <PackageReference Include="Serilog.AspNetCore" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Newtonsoft.Json" />
-    <PackageReference Include="Serilog" />
-    <PackageReference Include="Serilog.Sinks.File" />
-    <!-- Keep the release folder ABI-compatible with the net48 MCP server. -->
-    <PackageReference Include="System.Diagnostics.DiagnosticSource" />
-    <PackageReference Include="System.Buffers" />
-    <PackageReference Include="System.Memory" />
-    <PackageReference Include="System.Numerics.Vectors" />
-    <PackageReference Include="System.Runtime.CompilerServices.Unsafe" />
+    <ProjectReference Include="..\ZemaxMCP.Rpc\ZemaxMCP.Rpc.csproj" />
+    <ProjectReference Include="..\ZemaxMCP.ToolManifest\ZemaxMCP.ToolManifest.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ZemaxMCP.PrivateRpcTests" />
   </ItemGroup>
 </Project>

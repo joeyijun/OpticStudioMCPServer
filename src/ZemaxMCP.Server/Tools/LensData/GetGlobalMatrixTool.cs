@@ -1,17 +1,17 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GetGlobalMatrixTool
 {
     private readonly IZemaxSession _session;
     public GetGlobalMatrixTool(IZemaxSession session) => _session = session;
     public record Result(bool Success, string? Error = null, int SurfaceNumber = 0, double[][]? Rotation = null, double[]? Origin = null);
 
-    [McpServerTool(Name = "zemax_get_global_matrix")]
+    [ZemaxTool(Name = "zemax_get_global_matrix")]
     [Description("Get a sequential surface local-to-global rotation matrix and global vertex origin.")]
     public async Task<Result> ExecuteAsync([Description("Surface number")] int surfaceNumber)
     {

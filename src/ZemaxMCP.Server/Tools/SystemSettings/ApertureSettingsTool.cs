@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.SystemSettings;
 
-[McpServerToolType]
+[ZemaxToolType]
 public sealed class ApertureSettingsTool
 {
     private readonly IZemaxSession _session;
@@ -16,7 +16,7 @@ public sealed class ApertureSettingsTool
         bool TelecentricObjectSpace, bool FastSemiDiameters, bool CheckGrinApertures,
         bool IterateSolvesWhenUpdating, double SemiDiameterMargin, double SemiDiameterMarginPercent);
 
-    [McpServerTool(Name = "zemax_get_aperture_settings")]
+    [ZemaxTool(Name = "zemax_get_aperture_settings")]
     [Description("Read complete System Explorer aperture settings, including apodization, afocal/telecentric modes, semi-diameter calculation options, and margins.")]
     public async Task<ApertureSettingsResult> ExecuteAsync()
     {

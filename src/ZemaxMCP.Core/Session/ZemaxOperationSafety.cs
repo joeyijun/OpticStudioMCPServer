@@ -27,7 +27,6 @@ internal sealed class ZemaxOperationSafety
         if (_readOnly)
             throw new InvalidOperationException("Read-only mode blocked the mutating Zemax operation '" + commandName + "'. Disable read-only mode in the launcher to allow lens changes.");
         LastSnapshotPath = CreateSnapshot(system, commandName);
-        Console.Error.WriteLine("ZEMAX_MCP_STATUS:SNAPSHOT_CREATED:" + LastSnapshotPath);
     }
 
     internal static bool RequiresSnapshot(string commandName) =>
@@ -39,14 +38,19 @@ internal sealed class ZemaxOperationSafety
         var sourceName = string.IsNullOrWhiteSpace(system.SystemFile) ? "Unsaved" : Path.GetFileNameWithoutExtension(system.SystemFile);
         var safeName = Sanitize(sourceName ?? "Lens");
         var safeCommand = Sanitize(commandName);
-        var fileName = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture) + "_" + safeName + "_before-" + safeCommand + ".zos";
+
+        // ZOS was introduced only in OpticStudio 21.3. ZMX remains supported by
+        // 21.3+ and is also understood by older 2021 releases, so safety copies
+        // deliberately use ZMX as the cross-version interchange baseline.
+        var fileName = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture) + "_" + safeName + "_before-" + safeCommand + ".zmx";
         var path = Path.Combine(_snapshotDirectory, fileName);
         IZosSystemSnapshot? copy = null;
         try
         {
             copy = system.CopySystem() ?? throw new InvalidOperationException("OpticStudio did not create a system copy for the safety snapshot.");
             copy.SaveAs(path);
-            if (!File.Exists(path)) throw new IOException("OpticStudio did not write the safety snapshot: " + path);
+            if (!File.Exists(path) || new FileInfo(path).Length == 0)
+                throw new IOException("OpticStudio did not write a non-empty safety snapshot: " + path);
         }
         finally
         {
@@ -60,7 +64,11 @@ internal sealed class ZemaxOperationSafety
     {
         try
         {
-            foreach (var file in new DirectoryInfo(_snapshotDirectory).GetFiles("*.zos")
+            // Keep retention compatible with existing installations that may
+            // already contain .zos snapshots from newer-only builds.
+            foreach (var file in new DirectoryInfo(_snapshotDirectory).GetFiles()
+                         .Where(x => x.Extension.Equals(".zmx", StringComparison.OrdinalIgnoreCase) ||
+                                     x.Extension.Equals(".zos", StringComparison.OrdinalIgnoreCase))
                          .OrderByDescending(x => x.LastWriteTimeUtc).Skip(MaximumSnapshots)) file.Delete();
         }
         catch { /* Snapshot retention must not invalidate a successfully created snapshot. */ }

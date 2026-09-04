@@ -9,7 +9,7 @@ $sourceFiles = @(Get-ChildItem -LiteralPath $toolsRoot -Recurse -Filter "*.cs" -
 $sourceCommands = @($sourceFiles | Select-String -Pattern 'ExecuteAsync\("([^"]+)"' -AllMatches | ForEach-Object {
     foreach ($match in $_.Matches) { $match.Groups[1].Value }
 } | Sort-Object -Unique)
-$sourceTools = @($sourceFiles | Select-String -Pattern 'McpServerTool\s*\(\s*Name\s*=\s*"([^"]+)"' -AllMatches | ForEach-Object {
+$sourceTools = @($sourceFiles | Select-String -Pattern 'ZemaxTool\s*\(\s*Name\s*=\s*"([^"]+)"' -AllMatches | ForEach-Object {
     foreach ($match in $_.Matches) { $match.Groups[1].Value }
 } | Sort-Object -Unique)
 $metadata = Get-Content -Raw $metadataPath
@@ -32,11 +32,11 @@ foreach ($line in ($metadata -split "`r?`n")) {
 $missingCommands = @($sourceCommands | Where-Object { $_ -notin $metadataCommands })
 $missingTools = @($sourceTools | Where-Object { $_ -notin $metadataTools })
 if ($missingCommands.Count -gt 0) { throw "Commands missing explicit safety metadata: $($missingCommands -join ', ')" }
-if ($missingTools.Count -gt 0) { throw "MCP tools missing explicit safety metadata: $($missingTools -join ', ')" }
+if ($missingTools.Count -gt 0) { throw "Worker tools missing explicit safety metadata: $($missingTools -join ', ')" }
 $duplicateRisks = @($metadataToolOccurrences | Group-Object | Where-Object { $_.Count -ne 1 } | ForEach-Object Name)
 $unexpectedRisks = @($metadataTools | Where-Object { $_ -notin $sourceTools })
-if ($duplicateRisks.Count -gt 0) { throw "MCP tools must have exactly one explicit risk level: $($duplicateRisks -join ', ')" }
-if ($unexpectedRisks.Count -gt 0) { throw "Explicit safety metadata references unregistered MCP tools: $($unexpectedRisks -join ', ')" }
+if ($duplicateRisks.Count -gt 0) { throw "Worker tools must have exactly one explicit risk level: $($duplicateRisks -join ', ')" }
+if ($unexpectedRisks.Count -gt 0) { throw "Explicit safety metadata references unregistered Worker tools: $($unexpectedRisks -join ', ')" }
 if ((Get-Content -Raw $catalogPath) -match 'StartsWith\("zemax_(set|add|delete|remove|clear|calculate)_') {
     throw "Tool catalog must use ZemaxOperationMetadata instead of name-prefix risk rules."
 }
@@ -51,9 +51,9 @@ $duplicateDomains = @($domainCounts.Keys | Where-Object { $domainCounts[$_] -ne 
 $missingDomains = @($sourceTools | Where-Object { $_ -notin $domainTools })
 $unexpectedDomains = @($domainTools | Where-Object { $_ -notin $sourceTools } | Sort-Object -Unique)
 $invalidDomains = @($domainMatches | Where-Object { $_.Groups[2].Value -notin @('system', 'sequential-editing', 'non-sequential', 'analysis', 'optimization', 'tolerance', 'polarization', 'files', 'administration') })
-if ($missingDomains.Count -gt 0) { throw "MCP tools missing explicit domain metadata: $($missingDomains -join ', ')" }
+if ($missingDomains.Count -gt 0) { throw "Worker tools missing explicit domain metadata: $($missingDomains -join ', ')" }
 if ($unexpectedDomains.Count -gt 0) { throw "Explicit domain metadata references unregistered tools: $($unexpectedDomains -join ', ')" }
-if ($duplicateDomains.Count -gt 0) { throw "MCP tools must have exactly one explicit domain: $($duplicateDomains -join ', ')" }
+if ($duplicateDomains.Count -gt 0) { throw "Worker tools must have exactly one explicit domain: $($duplicateDomains -join ', ')" }
 if ($invalidDomains.Count -gt 0) { throw "Explicit domain metadata contains an unknown domain." }
 $domainLookup = [regex]::Match($toolset, 'public static string GetDomainId\(string toolName\)(?<body>[\s\S]*?)\r?\n    }\r?\n\r?\n    public static Domain').Value
 if ([string]::IsNullOrWhiteSpace($domainLookup) -or $domainLookup -match 'StartsWith\(|IndexOf\(|IsAnalysisTool|zemax_get_|zemax_set_') {
@@ -130,4 +130,4 @@ foreach ($profile in $profiles.Keys) {
     }
 }
 
-Write-Host "Explicit operation metadata covers $($sourceCommands.Count) execution commands and $($sourceTools.Count) MCP tools with one verified risk and domain each."
+Write-Host "Explicit operation metadata covers $($sourceCommands.Count) execution commands and $($sourceTools.Count) Worker tools with one verified risk and domain each."

@@ -1,6 +1,6 @@
 using System.ComponentModel;
 using System.Globalization;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 using ZOSAPI.Analysis;
@@ -8,22 +8,30 @@ using ZOSAPI.Analysis.Settings.Mtf;
 
 namespace ZemaxMCP.Server.Tools.Analysis;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class MtfAnalysisTool
 {
     private readonly IZemaxSession _session;
 
     public MtfAnalysisTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_fft_mtf")]
-    [Description("Calculate FFT MTF (Modulation Transfer Function) for ALL fields at once. Returns the full MTF curve (tangential and sagittal) for every field in the system plus the diffraction limit, up to the specified maximum spatial frequency. Only one call is needed — do NOT call this tool multiple times for different fields.")]
+    [ZemaxTool(Name = "zemax_fft_mtf")]
+    [Description("Calculate FFT MTF for all fields. Returns tangential/sagittal curves for every field plus the diffraction limit up to the requested maximum spatial frequency.")]
     public async Task<MtfData> ExecuteAsync(
-        [Description("Maximum spatial frequency in cycles/mm")] double frequency,
+        [Description("Maximum spatial frequency in cycles/mm; must be finite and positive")] double frequency,
         [Description("Wavelength number (0 for polychromatic)")] int wavelength = 0,
-        [Description("Sampling (1-6, higher = more accurate)")] int sampling = 3)
+        [Description("Sampling level 1-6: 32, 64, 128, 256, 512, or 1024 square samples")] int sampling = 3,
+        CancellationToken cancellationToken = default)
     {
         try
         {
+            if (double.IsNaN(frequency) || double.IsInfinity(frequency) || frequency <= 0)
+                throw new ArgumentOutOfRangeException(nameof(frequency), "Maximum spatial frequency must be finite and positive.");
+            if (wavelength < 0)
+                throw new ArgumentOutOfRangeException(nameof(wavelength), "Wavelength must be 0 (polychromatic) or a positive wavelength number.");
+            if (sampling < 1 || sampling > 6)
+                throw new ArgumentOutOfRangeException(nameof(sampling), "Sampling must be between 1 and 6.");
+
             var parameters = new Dictionary<string, object?>
             {
                 ["frequency"] = frequency,
@@ -33,25 +41,33 @@ public class MtfAnalysisTool
 
             return await _session.ExecuteAsync("MTF", parameters, system =>
             {
-                var fftMtfAnalysis = system.Analyses.New_FftMtf();
+                var wavelengthCount = system.SystemData.Wavelengths.NumberOfWavelengths;
+                if (wavelength > wavelengthCount)
+                    throw new ArgumentOutOfRangeException(nameof(wavelength), $"Wavelength must be 0 or between 1 and {wavelengthCount}.");
+
+                var analysis = system.Analyses.New_FftMtf()
+                    ?? throw new InvalidOperationException("OpticStudio did not create an FFT MTF analysis.");
                 try
                 {
-                    if (fftMtfAnalysis.GetSettings() is IAS_FftMtf settings)
-                    {
-                        settings.Type = MtfTypes.Modulation;
-                        settings.Field.UseAllFields();
-                        settings.Wavelength.SetWavelengthNumber(wavelength);
-                        settings.SampleSize = MapSampling(sampling);
-                        settings.MaximumFrequency = frequency;
-                        settings.ShowDiffractionLimit = true;
-                    }
+                    if (analysis.GetSettings() is not IAS_FftMtf settings)
+                        throw new InvalidOperationException("OpticStudio did not expose FFT MTF settings through IAS_FftMtf.");
 
-                    fftMtfAnalysis.ApplyAndWaitForCompletion();
+                    settings.Type = MtfTypes.Modulation;
+                    settings.Field.UseAllFields();
+                    settings.Wavelength.SetWavelengthNumber(wavelength);
+                    settings.SampleSize = MapSampling(sampling);
+                    settings.MaximumFrequency = frequency;
+                    settings.ShowDiffractionLimit = true;
+                    analysis.ApplyAndWaitForCompletion();
 
+                    var results = analysis.GetResults()
+                        ?? throw new InvalidOperationException("FFT MTF returned no results object.");
                     var tempFile = Path.Combine(Path.GetTempPath(), $"zemax_fft_mtf_{Guid.NewGuid():N}.txt");
                     try
                     {
-                        fftMtfAnalysis.GetResults().GetTextFile(tempFile);
+                        results.GetTextFile(tempFile);
+                        if (!File.Exists(tempFile) || new FileInfo(tempFile).Length == 0)
+                            throw new IOException("FFT MTF analysis produced no text results.");
                         return ParseMtfTextFile(tempFile, frequency, wavelength);
                     }
                     finally
@@ -61,9 +77,9 @@ public class MtfAnalysisTool
                 }
                 finally
                 {
-                    fftMtfAnalysis.Close();
+                    analysis.Close();
                 }
-            });
+            }, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -85,13 +101,12 @@ public class MtfAnalysisTool
         4 => SampleSizes.S_256x256,
         5 => SampleSizes.S_512x512,
         6 => SampleSizes.S_1024x1024,
-        _ => SampleSizes.S_128x128
+        _ => throw new ArgumentOutOfRangeException(nameof(sampling))
     };
 
     private static MtfData ParseMtfTextFile(string filePath, double maxFreq, int wavelength)
     {
         var lines = File.ReadAllLines(filePath);
-
         var sections = new List<(string label, List<double> freqs, List<double> tan, List<double> sag)>();
         string? currentLabel = null;
         List<double>? curFreqs = null;
@@ -102,13 +117,10 @@ public class MtfAnalysisTool
         foreach (var line in lines)
         {
             var trimmed = line.Trim();
-
             if (trimmed.StartsWith("Field:", StringComparison.OrdinalIgnoreCase) &&
                 trimmed.IndexOf("Field type", StringComparison.OrdinalIgnoreCase) < 0)
             {
-                if (currentLabel != null && curFreqs is { Count: > 0 })
-                    sections.Add((currentLabel, curFreqs, curTan!, curSag!));
-
+                SaveSection(sections, currentLabel, curFreqs, curTan, curSag);
                 currentLabel = trimmed.Substring(6).Trim();
                 curFreqs = new List<double>();
                 curTan = new List<double>();
@@ -118,50 +130,45 @@ public class MtfAnalysisTool
             }
 
             var lower = trimmed.ToLowerInvariant();
-            if (!inData && currentLabel != null &&
-                lower.Contains("freq") &&
-                (lower.Contains("tan") || lower.Contains("sag")))
+            if (!inData && currentLabel != null && lower.Contains("freq") && (lower.Contains("tan") || lower.Contains("sag")))
             {
                 inData = true;
                 continue;
             }
-
-            if (!inData || curFreqs == null)
-                continue;
-
+            if (!inData || curFreqs == null || curTan == null || curSag == null) continue;
             if (string.IsNullOrWhiteSpace(trimmed))
             {
-                if (curFreqs.Count > 0)
-                    inData = false;
+                if (curFreqs.Count > 0) inData = false;
                 continue;
             }
 
             var values = trimmed.Split(['\t', ' '], StringSplitOptions.RemoveEmptyEntries);
-            if (values.Length >= 3 &&
-                double.TryParse(values[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double freq))
-            {
-                curFreqs.Add(freq);
-                AddParsedValue(values, 1, curTan!);
-                AddParsedValue(values, 2, curSag!);
-            }
+            if (!double.TryParse(values.FirstOrDefault(), NumberStyles.Float, CultureInfo.InvariantCulture, out double freq))
+                continue;
+            if (values.Length < 3 ||
+                !double.TryParse(values[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double tan) ||
+                !double.TryParse(values[2], NumberStyles.Float, CultureInfo.InvariantCulture, out double sag))
+                throw new InvalidDataException($"Could not parse FFT MTF data row '{trimmed}'.");
+
+            curFreqs.Add(freq);
+            curTan.Add(tan);
+            curSag.Add(sag);
         }
 
-        if (currentLabel != null && curFreqs is { Count: > 0 })
-            sections.Add((currentLabel, curFreqs, curTan!, curSag!));
+        SaveSection(sections, currentLabel, curFreqs, curTan, curSag);
+        if (sections.Count == 0)
+            throw new InvalidDataException("FFT MTF text results contained no parsable field data. The installed OpticStudio text format may be unsupported.");
 
-        // Separate diffraction limit from field sections
         (string label, List<double> freqs, List<double> tan, List<double> sag)? dlSection = null;
         var fieldSections = new List<(string label, List<double> freqs, List<double> tan, List<double> sag)>();
-
         foreach (var section in sections)
         {
-            if (section.label.IndexOf("Diffraction", StringComparison.OrdinalIgnoreCase) >= 0)
-                dlSection = section;
-            else
-                fieldSections.Add(section);
+            if (section.label.IndexOf("Diffraction", StringComparison.OrdinalIgnoreCase) >= 0) dlSection = section;
+            else fieldSections.Add(section);
         }
+        if (fieldSections.Count == 0)
+            throw new InvalidDataException("FFT MTF text results contained no field sections.");
 
-        // Build all fields
         var fields = new MtfFieldData[fieldSections.Count];
         for (int i = 0; i < fieldSections.Count; i++)
         {
@@ -187,16 +194,20 @@ public class MtfAnalysisTool
             MaxFrequency = maxFreq,
             Wavelength = wavelength,
             TotalFields = fieldSections.Count,
-            DataPoints = fieldSections.Count > 0 ? fieldSections[0].freqs.Count : 0
+            DataPoints = fieldSections[0].freqs.Count
         };
     }
 
-    private static void AddParsedValue(string[] values, int index, List<double> list)
+    private static void SaveSection(
+        List<(string label, List<double> freqs, List<double> tan, List<double> sag)> sections,
+        string? label,
+        List<double>? freqs,
+        List<double>? tan,
+        List<double>? sag)
     {
-        if (index < values.Length &&
-            double.TryParse(values[index], NumberStyles.Float, CultureInfo.InvariantCulture, out double val))
-            list.Add(val);
-        else
-            list.Add(0);
+        if (label == null || freqs is not { Count: > 0 }) return;
+        if (tan == null || sag == null || tan.Count != freqs.Count || sag.Count != freqs.Count)
+            throw new InvalidDataException($"FFT MTF section '{label}' has inconsistent data-column lengths.");
+        sections.Add((label, freqs, tan, sag));
     }
 }

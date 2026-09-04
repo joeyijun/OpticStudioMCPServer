@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public sealed class FieldWavelengthStatusTool
 {
     private readonly IZemaxSession _session;
@@ -19,7 +19,7 @@ public sealed class FieldWavelengthStatusTool
     public record WavelengthsResult(bool Success, string? Error, int PrimaryWavelength,
         IReadOnlyList<WavelengthStatus> Wavelengths);
 
-    [McpServerTool(Name = "zemax_get_field_settings")]
+    [ZemaxTool(Name = "zemax_get_field_settings")]
     [Description("Read complete sequential field settings, including type, normalization, comments, solves, activity, and vignetting factors.")]
     public async Task<FieldsResult> GetFieldsAsync()
     {
@@ -42,7 +42,7 @@ public sealed class FieldWavelengthStatusTool
         catch (Exception ex) { return new FieldsResult(false, ex.Message, "", "", Array.Empty<FieldStatus>()); }
     }
 
-    [McpServerTool(Name = "zemax_get_wavelength_settings")]
+    [ZemaxTool(Name = "zemax_get_wavelength_settings")]
     [Description("Read all sequential wavelengths with their weights, active state, and the actual primary wavelength.")]
     public async Task<WavelengthsResult> GetWavelengthsAsync()
     {

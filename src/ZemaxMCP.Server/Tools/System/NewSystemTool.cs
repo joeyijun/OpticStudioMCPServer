@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.System;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class NewSystemTool
 {
     private readonly IZemaxSession _session;
@@ -17,24 +17,27 @@ public class NewSystemTool
         int NumberOfSurfaces
     );
 
-    [McpServerTool(Name = "zemax_new_system")]
-    [Description("Create a new blank optical system")]
-    public async Task<NewSystemResult> ExecuteAsync()
+    [ZemaxTool(Name = "zemax_new_system")]
+    [Description("Create a new blank optical system. The current system is protected by the normal high-impact snapshot policy before replacement.")]
+    public async Task<NewSystemResult> ExecuteAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            await _session.NewSystemAsync();
+            var created = await _session.NewSystemAsync(cancellationToken);
+            if (!created)
+                return new NewSystemResult(false, "OpticStudio did not create a new optical system.", 0);
 
-            var result = await _session.ExecuteAsync("NewSystem", null, system =>
-            {
-                return new NewSystemResult(
-                    Success: true,
-                    Error: null,
-                    NumberOfSurfaces: system.LDE.NumberOfSurfaces
-                );
-            });
+            // NewSystemAsync already logged/protected the HighImpact mutation.
+            // Read the resulting surface count under a read-only command instead
+            // of incorrectly triggering a second NewSystem safety snapshot.
+            var numberOfSurfaces = await _session.ExecuteAsync("GetSystem", null,
+                system => system.LDE.NumberOfSurfaces, cancellationToken);
 
-            return result;
+            return new NewSystemResult(
+                Success: true,
+                Error: null,
+                NumberOfSurfaces: numberOfSurfaces
+            );
         }
         catch (Exception ex)
         {

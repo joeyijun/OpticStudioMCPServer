@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
-using ZOSAPI.Editors.MFE;
+using ZOSAPI.Wizards;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class OptimizationWizardTool
 {
     private readonly IZemaxSession _session;
@@ -21,325 +21,255 @@ public class OptimizationWizardTool
         string Criterion,
         string Reference,
         double InitialMerit,
-        List<string> OperandsSummary
-    );
+        string Summary);
 
-    [McpServerTool(Name = "zemax_optimization_wizard")]
-    [Description("Automatically construct a merit function based on optimization criteria (similar to Zemax Optimization Wizard)")]
+    [ZemaxTool(Name = "zemax_optimization_wizard")]
+    [Description("Generate a sequential Merit Function with the current ISEQOptimizationWizard2 API. All settings are validated before mutation; the pre-wizard Merit Function is backed up and restored if clear/apply/cancellation fails.")]
     public async Task<OptimizationWizardResult> ExecuteAsync(
-        [Description("Optimization criterion: RMSSpotRadius, RMSSpotRadiusX, RMSSpotRadiusY, RMSWavefront, PeakToValley")]
-        string criterion = "RMSSpotRadius",
-
-        [Description("Reference point: Centroid or ChiefRay")]
-        string reference = "Centroid",
-
-        [Description("Pupil integration method: GaussianQuadrature or RectangularArray")]
-        string pupilIntegration = "GaussianQuadrature",
-
-        [Description("Rings for Gaussian quadrature (1-6)")]
-        int rings = 3,
-
-        [Description("Grid size for rectangular array")]
-        int gridSize = 6,
-
-        [Description("Arms for Gaussian quadrature")]
-        int arms = 6,
-
-        [Description("Add operands for all defined fields")]
-        bool includeAllFields = true,
-
-        [Description("Wavelength number (0 for polychromatic)")]
-        int wavelength = 0,
-
-        [Description("Add glass boundary constraints (MNCT, MXCT, MNET)")]
-        bool addBoundaryConstraints = false,
-
-        [Description("Minimum center thickness for glass (mm)")]
-        double minCenterThickness = 1.0,
-
-        [Description("Maximum center thickness for glass (mm)")]
-        double maxCenterThickness = 50.0,
-
-        [Description("Minimum edge thickness for air gaps (mm)")]
-        double minEdgeThickness = 0.5,
-
-        [Description("Clear existing merit function before adding")]
-        bool clearExisting = true)
+        [Description("Criterion: RMSSpotRadius, RMSSpotRadiusX, RMSSpotRadiusY, RMSWavefront, or PeakToValley.")] string criterion = "RMSSpotRadius",
+        [Description("Reference: Centroid, ChiefRay, or Unreferenced.")] string reference = "Centroid",
+        [Description("Pupil integration: GaussianQuadrature or RectangularArray.")] string pupilIntegration = "GaussianQuadrature",
+        [Description("Gaussian Quadrature rings, 1..20.")] int rings = 3,
+        [Description("Rectangular N x N grid size; even integer 4..204.")] int gridSize = 32,
+        [Description("Gaussian pupil arms: exactly 6, 8, 10, or 12.")] int arms = 6,
+        [Description("Use all fields. If false, the 'field' parameter selects one field.")] bool includeAllFields = true,
+        [Description("Field number when includeAllFields=false; 1-indexed.")] int field = 1,
+        [Description("Compatibility parameter. ISEQOptimizationWizard2 has no wavelength-selection property, so only 0 is supported.")] int wavelength = 0,
+        [Description("Add glass/air boundary constraints using the thickness values below.")] bool addBoundaryConstraints = true,
+        [Description("Minimum center thickness for glass boundaries; must be finite and >= 0 when boundaries are enabled.")] double minCenterThickness = 1.0,
+        [Description("Maximum center thickness for glass boundaries; must be finite and >= minCenterThickness when boundaries are enabled.")] double maxCenterThickness = 100.0,
+        [Description("Minimum edge thickness used for glass edge and air minimum/edge boundaries; must be finite and >= 0 when boundaries are enabled.")] double minEdgeThickness = 0.5,
+        [Description("If true, replace the existing Merit Function; otherwise append generated operands after the current last operand.")] bool clearExisting = false,
+        CancellationToken cancellationToken = default)
     {
-        // Validate and normalize inputs
-        criterion = criterion?.Trim() ?? "RMSSpotRadius";
-        reference = reference?.Trim() ?? "Centroid";
-        pupilIntegration = pupilIntegration?.Trim() ?? "GaussianQuadrature";
-
-        rings = Math.Max(1, Math.Min(6, rings));
-        gridSize = Math.Max(1, Math.Min(32, gridSize));
-        arms = Math.Max(1, Math.Min(12, arms));
+        string criterionName = criterion?.Trim() ?? string.Empty;
+        string referenceName = reference?.Trim() ?? string.Empty;
+        string integrationName = pupilIntegration?.Trim() ?? string.Empty;
 
         try
         {
+            var mappedCriterion = ParseCriterion(criterionName);
+            var mappedReference = ParseReference(referenceName);
+            var sampling = ParseSampling(integrationName, rings, arms, gridSize);
+            if (field < 1)
+                throw new ArgumentOutOfRangeException(nameof(field), "field must be >= 1.");
+            if (wavelength != 0)
+                throw new NotSupportedException("ISEQOptimizationWizard2 has no wavelength-selection property. wavelength must remain 0; add explicit wavelength-control operands to the MFE when wavelength-specific weighting is required.");
+            if (addBoundaryConstraints)
+            {
+                ValidateNonNegativeFinite(minCenterThickness, nameof(minCenterThickness));
+                ValidateNonNegativeFinite(maxCenterThickness, nameof(maxCenterThickness));
+                ValidateNonNegativeFinite(minEdgeThickness, nameof(minEdgeThickness));
+                if (minCenterThickness > maxCenterThickness)
+                    throw new ArgumentException("minCenterThickness cannot exceed maxCenterThickness.");
+            }
+
             var parameters = new Dictionary<string, object?>
             {
-                ["criterion"] = criterion,
-                ["reference"] = reference,
-                ["pupilIntegration"] = pupilIntegration,
+                ["criterion"] = mappedCriterion.Name,
+                ["reference"] = mappedReference.ToString(),
+                ["pupilIntegration"] = sampling.Name,
                 ["rings"] = rings,
+                ["gridSize"] = gridSize,
+                ["arms"] = arms,
+                ["includeAllFields"] = includeAllFields,
+                ["field"] = field,
+                ["wavelength"] = wavelength,
+                ["addBoundaryConstraints"] = addBoundaryConstraints,
+                ["minCenterThickness"] = minCenterThickness,
+                ["maxCenterThickness"] = maxCenterThickness,
+                ["minEdgeThickness"] = minEdgeThickness,
                 ["clearExisting"] = clearExisting
             };
 
-            var result = await _session.ExecuteAsync("OptimizationWizard", parameters, system =>
+            return await _session.ExecuteAsync("OptimizationWizard", parameters, system =>
             {
-                if (system == null)
+                var mfe = system.MFE ?? throw new InvalidOperationException("Merit Function Editor is not available.");
+                int fieldCount = system.SystemData.Fields.NumberOfFields;
+                if (!includeAllFields && field > fieldCount)
+                    throw new ArgumentOutOfRangeException(nameof(field), $"field {field} exceeds the system field count ({fieldCount}).");
+
+                int beforeCount = mfe.NumberOfOperands;
+                string backupPath = Path.Combine(Path.GetTempPath(), $"zemax_mfe_wizard_{Guid.NewGuid():N}.mf");
+                mfe.SaveMeritFunction(backupPath);
+                if (!File.Exists(backupPath) || new FileInfo(backupPath).Length == 0)
+                    throw new IOException("Could not create the temporary Merit Function backup required for atomic wizard application.");
+
+                try
                 {
-                    throw new InvalidOperationException("Optical system is not available");
-                }
-
-                var mfe = system.MFE;
-                if (mfe == null)
-                {
-                    throw new InvalidOperationException("Merit Function Editor is not available");
-                }
-
-                var operandsSummary = new List<string>();
-
-                // Use the ZOSAPI SEQOptimizationWizard as per ZEMAX documentation
-                var optWizard = mfe.SEQOptimizationWizard;
-                if (optWizard == null)
-                {
-                    throw new InvalidOperationException("SEQ Optimization Wizard is not available");
-                }
-
-                // Map criterion to Data index
-                // The Data property uses integer indices. Common mappings:
-                // 0 = RMS (Wavefront), 1 = RMS Spot Radius, 2 = RMS Spot X, 3 = RMS Spot Y
-                // 4 = Wavefront PTV, etc.
-                // We need to find the correct index by iterating GetDataTypeAt()
-                int dataIndex = FindDataTypeIndex(optWizard, criterion);
-                optWizard.Data = dataIndex;
-
-                // Map reference to Reference index
-                // 0 = Centroid, 1 = Chief Ray typically
-                int referenceIndex = FindReferenceIndex(optWizard, reference);
-                optWizard.Reference = referenceIndex;
-
-                // Map pupil integration method
-                // 0 = Gaussian Quadrature, 1 = Rectangular Array typically
-                int pupilMethodIndex = pupilIntegration.Equals("GaussianQuadrature", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
-                optWizard.PupilIntegrationMethod = pupilMethodIndex;
-
-                // Set Ring index - ZEMAX uses 0-based index where index = rings - 1
-                // According to docs: Ring = 2 means 3 rings
-                int ringIndex = rings - 1;
-                if (ringIndex >= 0 && ringIndex < optWizard.NumberOfRings)
-                {
-                    optWizard.Ring = ringIndex;
-                }
-
-                // Set Grid for rectangular array
-                int gridIndex = FindGridIndex(optWizard, gridSize);
-                if (gridIndex >= 0)
-                {
-                    optWizard.Grid = gridIndex;
-                }
-
-                // Set Arms
-                int armIndex = FindArmIndex(optWizard, arms);
-                if (armIndex >= 0)
-                {
-                    optWizard.Arm = armIndex;
-                }
-
-                // Set overall weight
-                optWizard.OverallWeight = 1.0;
-
-                // Set boundary constraints if requested
-                if (addBoundaryConstraints)
-                {
-                    optWizard.IsGlassUsed = true;
-                    optWizard.GlassMin = minCenterThickness;
-                    optWizard.GlassMax = maxCenterThickness;
-                    optWizard.GlassEdge = minEdgeThickness;
-
-                    optWizard.IsAirUsed = true;
-                    optWizard.AirMin = minEdgeThickness;
-                    optWizard.AirMax = 1000.0;
-                    optWizard.AirEdge = minEdgeThickness;
-                }
-                else
-                {
-                    optWizard.IsGlassUsed = false;
-                    optWizard.IsAirUsed = false;
-                }
-
-                // Apply the wizard - this creates the merit function
-                optWizard.CommonSettings.Apply();
-
-                // Get the resulting merit function info
-                int operandsAdded = mfe.NumberOfOperands;
-                double initialMerit = mfe.CalculateMeritFunction();
-
-                // Build summary of what was configured
-                operandsSummary.Add($"Criterion: {GetDataTypeName(optWizard, dataIndex)} (index {dataIndex})");
-                operandsSummary.Add($"Reference: {GetReferenceName(optWizard, referenceIndex)} (index {referenceIndex})");
-                operandsSummary.Add($"Pupil Integration: {GetPupilMethodName(optWizard, pupilMethodIndex)}");
-                operandsSummary.Add($"Rings: {rings} (index {ringIndex})");
-                if (addBoundaryConstraints)
-                {
-                    operandsSummary.Add($"Glass constraints: Min={minCenterThickness}mm, Max={maxCenterThickness}mm");
-                    operandsSummary.Add($"Air constraints: Edge={minEdgeThickness}mm");
-                }
-                operandsSummary.Add($"Total operands: {operandsAdded}");
-
-                // Count fields
-                int numFields = 0;
-                var fields = system.SystemData?.Fields;
-                if (fields != null)
-                {
-                    numFields = fields.NumberOfFields;
-                }
-
-                // Estimate constraints added (if boundary constraints enabled)
-                int constraintsAdded = 0;
-                if (addBoundaryConstraints)
-                {
-                    var lde = system.LDE;
-                    if (lde != null)
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (clearExisting && beforeCount > 0)
                     {
-                        for (int i = 1; i < lde.NumberOfSurfaces - 1; i++)
-                        {
-                            var surf = lde.GetSurfaceAt(i);
-                            if (surf != null && !string.IsNullOrWhiteSpace(surf.Material))
-                            {
-                                constraintsAdded += 2; // MNCT + MXCT
-                            }
-                        }
+                        int removed = mfe.RemoveOperandsAt(1, beforeCount);
+                        if (removed != beforeCount)
+                            throw new InvalidOperationException($"Requested removal of {beforeCount} existing MFE operands, but OpticStudio removed {removed}.");
                     }
+
+                    var wizard = mfe.SEQOptimizationWizard2
+                        ?? throw new InvalidOperationException("OpticStudio did not expose ISEQOptimizationWizard2.");
+                    wizard.ResetSettings();
+                    wizard.Criterion = mappedCriterion.Criterion;
+                    wizard.Type = mappedCriterion.Type;
+                    wizard.Reference = mappedReference;
+                    wizard.XSWeight = mappedCriterion.XSWeight;
+                    wizard.YTWeight = mappedCriterion.YTWeight;
+                    wizard.UseGaussianQuadrature = sampling.UseGaussian;
+                    wizard.UseRectangularArray = !sampling.UseGaussian;
+                    if (sampling.UseGaussian)
+                    {
+                        wizard.Rings = rings;
+                        wizard.Arms = sampling.Arms;
+                    }
+                    else
+                    {
+                        wizard.GridSizeNxN = gridSize;
+                    }
+
+                    wizard.UseAllFields = includeAllFields;
+                    if (!includeAllFields) wizard.FieldNumber = field;
+                    wizard.UseAllConfigurations = true;
+                    wizard.StartAt = clearExisting ? 1 : beforeCount + 1;
+                    wizard.OverallWeight = 1.0;
+
+                    wizard.UseGlassBoundaryValues = addBoundaryConstraints;
+                    wizard.UseAirBoundaryValues = addBoundaryConstraints;
+                    if (addBoundaryConstraints)
+                    {
+                        wizard.GlassMin = minCenterThickness;
+                        wizard.GlassMax = maxCenterThickness;
+                        wizard.GlassEdgeThickness = minEdgeThickness;
+                        wizard.AirMin = minEdgeThickness;
+                        wizard.AirMax = 1000.0;
+                        wizard.AirEdgeThickness = minEdgeThickness;
+                    }
+
+                    cancellationToken.ThrowIfCancellationRequested();
+                    wizard.Apply();
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    int afterCount = mfe.NumberOfOperands;
+                    int operandsAdded = clearExisting ? afterCount : afterCount - beforeCount;
+                    if (operandsAdded <= 0)
+                        throw new InvalidOperationException("Optimization Wizard completed without adding any Merit Function operands.");
+
+                    double initialMerit = mfe.CalculateMeritFunction();
+                    if (double.IsNaN(initialMerit) || double.IsInfinity(initialMerit))
+                        throw new InvalidOperationException("Optimization Wizard generated a Merit Function with a non-finite value.");
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    int constraintsAdded = addBoundaryConstraints ? -1 : 0;
+                    string constraintNote = addBoundaryConstraints
+                        ? "Boundary operands were requested, but Wizard2 does not report their count separately; ConstraintsAdded=-1 means not separately measurable."
+                        : "Boundary constraints were disabled.";
+                    string summary = $"Wizard2 generated {operandsAdded} operand(s), initial merit {initialMerit:F6}. {constraintNote}";
+
+                    return new OptimizationWizardResult(
+                        true,
+                        null,
+                        operandsAdded,
+                        includeAllFields ? fieldCount : 1,
+                        constraintsAdded,
+                        mappedCriterion.Name,
+                        mappedReference.ToString(),
+                        initialMerit,
+                        summary);
                 }
-
-                return new OptimizationWizardResult(
-                    Success: true,
-                    Error: null,
-                    OperandsAdded: operandsAdded,
-                    FieldsIncluded: numFields,
-                    ConstraintsAdded: constraintsAdded,
-                    Criterion: criterion,
-                    Reference: reference,
-                    InitialMerit: initialMerit,
-                    OperandsSummary: operandsSummary
-                );
-            });
-
-            return result;
+                catch (Exception original)
+                {
+                    try
+                    {
+                        mfe.LoadMeritFunction(backupPath);
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        throw new InvalidOperationException(
+                            $"Optimization Wizard failed and restoring the pre-wizard Merit Function backup also failed. Use the pre-change system safety snapshot for recovery. Original error: {original.Message}; rollback error: {rollbackException.Message}",
+                            original);
+                    }
+                    throw;
+                }
+                finally
+                {
+                    try { File.Delete(backupPath); } catch { }
+                }
+            }, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
             return new OptimizationWizardResult(
-                Success: false,
-                Error: ex.Message,
-                OperandsAdded: 0, FieldsIncluded: 0, ConstraintsAdded: 0,
-                Criterion: criterion, Reference: reference, InitialMerit: 0,
-                OperandsSummary: new List<string>()
-            );
+                false,
+                ex.Message,
+                0,
+                0,
+                0,
+                criterionName,
+                referenceName,
+                0,
+                $"Optimization Wizard was not applied: {ex.Message}");
         }
     }
 
-    /// <summary>
-    /// Find the index for a given criterion name by searching GetDataTypeAt()
-    /// </summary>
-    private static int FindDataTypeIndex(ZOSAPI.Wizards.ISEQOptimizationWizard wizard, string criterion)
+    private static (string Name, CriterionTypes Criterion, OptimizationTypes Type, double XSWeight, double YTWeight) ParseCriterion(string criterion)
     {
-        // Default mappings based on common ZEMAX configurations
-        // These are typical index values:
-        string normalizedCriterion = criterion.ToUpperInvariant().Replace(" ", "");
-
-        // Try to find by iterating through available types
-        for (int i = 0; i < wizard.NumberOfDataTypes; i++)
+        string normalized = NormalizeToken(criterion);
+        return normalized switch
         {
-            string typeName = wizard.GetDataTypeAt(i) ?? "";
-            string normalizedType = typeName.ToUpperInvariant().Replace(" ", "");
-
-            if (normalizedType.Contains(normalizedCriterion) ||
-                normalizedCriterion.Contains(normalizedType))
-            {
-                return i;
-            }
-
-            // Check common patterns
-            if (normalizedCriterion.Contains("SPOTRADIUS") && normalizedType.Contains("SPOT") && normalizedType.Contains("RADIUS"))
-                return i;
-            if (normalizedCriterion.Contains("WAVEFRONT") && normalizedType.Contains("WAVEFRONT"))
-                return i;
-            if (normalizedCriterion.Contains("PEAKTOVALLEY") && (normalizedType.Contains("PTV") || normalizedType.Contains("PEAK")))
-                return i;
-        }
-
-        // Default to 1 (RMS Spot Radius) based on ZEMAX example
-        return 1;
+            "RMSSPOTRADIUS" => ("RMSSpotRadius", CriterionTypes.Spot, OptimizationTypes.RMS, 1.0, 1.0),
+            "RMSSPOTRADIUSX" => ("RMSSpotRadiusX", CriterionTypes.Spot, OptimizationTypes.RMS, 1.0, 0.0),
+            "RMSSPOTRADIUSY" => ("RMSSpotRadiusY", CriterionTypes.Spot, OptimizationTypes.RMS, 0.0, 1.0),
+            "RMSWAVEFRONT" => ("RMSWavefront", CriterionTypes.Wavefront, OptimizationTypes.RMS, 1.0, 1.0),
+            "PEAKTOVALLEY" => ("PeakToValley", CriterionTypes.Wavefront, OptimizationTypes.PTV, 1.0, 1.0),
+            _ => throw new ArgumentException("criterion must be RMSSpotRadius, RMSSpotRadiusX, RMSSpotRadiusY, RMSWavefront, or PeakToValley.", nameof(criterion))
+        };
     }
 
-    /// <summary>
-    /// Find the index for a given reference type
-    /// </summary>
-    private static int FindReferenceIndex(ZOSAPI.Wizards.ISEQOptimizationWizard wizard, string reference)
+    private static ReferenceTypes ParseReference(string reference) => NormalizeToken(reference) switch
     {
-        for (int i = 0; i < wizard.NumberOfReferences; i++)
+        "CENTROID" => ReferenceTypes.Centroid,
+        "CHIEFRAY" => ReferenceTypes.ChiefRay,
+        "UNREFERENCED" => ReferenceTypes.Unreferenced,
+        _ => throw new ArgumentException("reference must be Centroid, ChiefRay, or Unreferenced.", nameof(reference))
+    };
+
+    private static (string Name, bool UseGaussian, PupilArmsCount Arms) ParseSampling(string sampling, int rings, int arms, int gridSize)
+    {
+        switch (NormalizeToken(sampling))
         {
-            string refName = wizard.GetReferenceAt(i) ?? "";
-            if (refName.IndexOf(reference, StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                return i;
-            }
+            case "GAUSSIAN":
+            case "GAUSSIANQUADRATURE":
+                if (rings < 1 || rings > 20)
+                    throw new ArgumentOutOfRangeException(nameof(rings), "Gaussian Quadrature rings must be in 1..20.");
+                var armEnum = arms switch
+                {
+                    6 => PupilArmsCount.Arms_6,
+                    8 => PupilArmsCount.Arms_8,
+                    10 => PupilArmsCount.Arms_10,
+                    12 => PupilArmsCount.Arms_12,
+                    _ => throw new ArgumentOutOfRangeException(nameof(arms), "Gaussian arms must be exactly 6, 8, 10, or 12.")
+                };
+                return ("GaussianQuadrature", true, armEnum);
+
+            case "RECTANGULAR":
+            case "RECTANGULARARRAY":
+                if (gridSize < 4 || gridSize > 204 || (gridSize & 1) != 0)
+                    throw new ArgumentOutOfRangeException(nameof(gridSize), "Rectangular gridSize must be an even integer in 4..204.");
+                return ("RectangularArray", false, PupilArmsCount.Arms_6);
+
+            default:
+                throw new ArgumentException("pupilIntegration must be GaussianQuadrature or RectangularArray.", nameof(sampling));
         }
-        // Default: 0 = Centroid, 1 = Chief Ray
-        return reference.Equals("ChiefRay", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
     }
 
-    /// <summary>
-    /// Find the index for a given grid size
-    /// </summary>
-    private static int FindGridIndex(ZOSAPI.Wizards.ISEQOptimizationWizard wizard, int gridSize)
-    {
-        for (int i = 0; i < wizard.NumberOfGrids; i++)
-        {
-            string gridName = wizard.GetGridAt(i) ?? "";
-            if (gridName.Contains(gridSize.ToString()))
-            {
-                return i;
-            }
-        }
-        return 2; // Default to a reasonable grid
-    }
+    private static string NormalizeToken(string value) =>
+        new(value.Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
 
-    /// <summary>
-    /// Find the index for a given arm count
-    /// </summary>
-    private static int FindArmIndex(ZOSAPI.Wizards.ISEQOptimizationWizard wizard, int arms)
+    private static void ValidateNonNegativeFinite(double value, string name)
     {
-        for (int i = 0; i < wizard.NumberOfArms; i++)
-        {
-            string armName = wizard.GetArmAt(i) ?? "";
-            if (armName.Contains(arms.ToString()))
-            {
-                return i;
-            }
-        }
-        return arms - 1; // Default based on arm count
-    }
-
-    private static string GetDataTypeName(ZOSAPI.Wizards.ISEQOptimizationWizard wizard, int index)
-    {
-        try { return wizard.GetDataTypeAt(index) ?? $"Type {index}"; }
-        catch { return $"Type {index}"; }
-    }
-
-    private static string GetReferenceName(ZOSAPI.Wizards.ISEQOptimizationWizard wizard, int index)
-    {
-        try { return wizard.GetReferenceAt(index) ?? $"Reference {index}"; }
-        catch { return $"Reference {index}"; }
-    }
-
-    private static string GetPupilMethodName(ZOSAPI.Wizards.ISEQOptimizationWizard wizard, int index)
-    {
-        try { return wizard.GetPupilIntegrationMethodAt(index) ?? $"Method {index}"; }
-        catch { return $"Method {index}"; }
+        if (double.IsNaN(value) || double.IsInfinity(value) || value < 0)
+            throw new ArgumentOutOfRangeException(name, $"{name} must be finite and >= 0.");
     }
 }

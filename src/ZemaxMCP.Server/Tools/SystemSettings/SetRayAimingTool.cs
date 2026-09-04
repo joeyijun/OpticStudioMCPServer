@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.SystemSettings;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetRayAimingTool
 {
     private readonly IZemaxSession _session;
@@ -17,7 +17,7 @@ public class SetRayAimingTool
         string RayAiming
     );
 
-    [McpServerTool(Name = "zemax_set_ray_aiming")]
+    [ZemaxTool(Name = "zemax_set_ray_aiming")]
     [Description("Set the ray aiming setting")]
     public async Task<SetRayAimingResult> ExecuteAsync(
         [Description("Ray aiming type: Off, Paraxial, Real")] string rayAiming)

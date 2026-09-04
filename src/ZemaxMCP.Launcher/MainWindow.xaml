@@ -368,6 +368,10 @@
                     <MenuItem.Icon><Ellipse x:Name="CursorConfigDot" Width="9" Height="9" Fill="#94A3B8"/></MenuItem.Icon>
                     <MenuItem.Header><Grid Width="252"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Cursor"/><TextBlock Grid.Column="1" x:Name="CursorConfigState" Style="{StaticResource ClientStatusText}"/></Grid></MenuItem.Header>
                   </MenuItem>
+                  <MenuItem Style="{StaticResource ClientMenuItem}" Click="Antigravity_Click">
+                    <MenuItem.Icon><Ellipse x:Name="AntigravityConfigDot" Width="9" Height="9" Fill="#94A3B8"/></MenuItem.Icon>
+                    <MenuItem.Header><Grid Width="252"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Google Antigravity"/><TextBlock Grid.Column="1" x:Name="AntigravityConfigState" Style="{StaticResource ClientStatusText}"/></Grid></MenuItem.Header>
+                  </MenuItem>
                   <MenuItem Style="{StaticResource ClientMenuItem}" Click="Kimi_Click">
                     <MenuItem.Icon><Ellipse x:Name="KimiConfigDot" Width="9" Height="9" Fill="#94A3B8"/></MenuItem.Icon>
                     <MenuItem.Header><Grid Width="252"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Kimi Code"/><TextBlock Grid.Column="1" x:Name="KimiConfigState" Style="{StaticResource ClientStatusText}"/></Grid></MenuItem.Header>

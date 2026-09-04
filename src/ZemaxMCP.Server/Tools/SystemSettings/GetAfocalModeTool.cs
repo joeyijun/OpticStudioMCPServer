@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.SystemSettings;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GetAfocalModeTool
 {
     private readonly IZemaxSession _session;
@@ -17,7 +17,7 @@ public class GetAfocalModeTool
         bool AfocalMode
     );
 
-    [McpServerTool(Name = "zemax_get_afocal_mode")]
+    [ZemaxTool(Name = "zemax_get_afocal_mode")]
     [Description("Get the afocal mode setting")]
     public async Task<GetAfocalModeResult> ExecuteAsync()
     {

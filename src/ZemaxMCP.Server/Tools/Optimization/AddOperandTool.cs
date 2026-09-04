@@ -1,11 +1,13 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Documentation;
+using ZOSAPI.Editors;
+using ZOSAPI.Editors.MFE;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class AddOperandTool
 {
     private readonly IZemaxSession _session;
@@ -25,51 +27,60 @@ public class AddOperandTool
         double Value,
         double Target,
         double Weight,
-        string? OperandDescription
-    );
+        string? OperandDescription);
 
-    [McpServerTool(Name = "zemax_add_operand")]
-    [Description("Add an optimization operand to the merit function")]
+    [ZemaxTool(Name = "zemax_add_operand")]
+    [Description("Add an optimization operand to the Merit Function Editor. Operand type and numeric inputs are validated before insertion; failed post-insert setup is rolled back or reported explicitly as a partial mutation.")]
     public async Task<AddOperandResult> ExecuteAsync(
-        [Description("Operand type (e.g., EFFL, MTFT, RSCE)")] string operandType,
-        [Description("Target value")] double target = 0,
-        [Description("Weight")] double weight = 1,
-        [Description("Row to insert at (0 to append)")] int insertAt = 0,
-        [Description("Int1 parameter (meaning depends on operand)")] int? int1 = null,
-        [Description("Int2 parameter (meaning depends on operand)")] int? int2 = null,
-        [Description("Data1 parameter")] double? data1 = null,
-        [Description("Data2 parameter")] double? data2 = null,
-        [Description("Data3 parameter")] double? data3 = null,
-        [Description("Data4 parameter")] double? data4 = null,
-        [Description("Data5 parameter")] double? data5 = null,
-        [Description("Data6 parameter")] double? data6 = null)
+        [Description("Named operand type (for example EFFL, MTFT, RSCE). Numeric enum values are not accepted.")] string operandType,
+        [Description("Target value; must be finite.")] double target = 0,
+        [Description("Weight; must be finite.")] double weight = 1,
+        [Description("Row to insert at (1..NumberOfOperands+1), or 0 to append.")] int insertAt = 0,
+        [Description("Int1 parameter. Applied to operand cell 2 and must be valid for the selected operand.")] int? int1 = null,
+        [Description("Int2 parameter. Applied to operand cell 3 and must be valid for the selected operand.")] int? int2 = null,
+        [Description("Optional numeric Data1 parameter for operand cell 4.")] double? data1 = null,
+        [Description("Optional numeric Data2 parameter for operand cell 5.")] double? data2 = null,
+        [Description("Optional numeric Data3 parameter for operand cell 6.")] double? data3 = null,
+        [Description("Optional numeric Data4 parameter for operand cell 7.")] double? data4 = null,
+        [Description("Optional numeric Data5 parameter for operand cell 8.")] double? data5 = null,
+        [Description("Optional numeric Data6 parameter for operand cell 9.")] double? data6 = null,
+        CancellationToken cancellationToken = default)
     {
-        // Validate operand type
-        var operandDef = _operandDb.GetOperand(operandType);
+        string normalizedType = operandType?.Trim() ?? string.Empty;
+        var operandDef = _operandDb.GetOperand(normalizedType);
         if (operandDef == null)
         {
-            var suggestions = _operandDb.SearchOperands(operandType, 3);
+            var suggestions = _operandDb.SearchOperands(normalizedType, 3);
             var suggestText = suggestions.Any()
                 ? $"Did you mean: {string.Join(", ", suggestions.Select(s => s.Operand.Name))}"
                 : "Use zemax_search_operands to find valid operand types.";
-
-            return new AddOperandResult(
-                Success: false,
-                Error: $"Unknown operand type: {operandType}. {suggestText}",
-                Row: 0,
-                OperandType: operandType,
-                Value: 0,
-                Target: target,
-                Weight: weight,
-                OperandDescription: null
-            );
+            return new AddOperandResult(false, $"Unknown operand type: {normalizedType}. {suggestText}", 0,
+                normalizedType, 0, target, weight, null);
         }
 
         try
         {
+            ValidateFinite(target, nameof(target));
+            ValidateFinite(weight, nameof(weight));
+            ValidateFinite(data1, nameof(data1));
+            ValidateFinite(data2, nameof(data2));
+            ValidateFinite(data3, nameof(data3));
+            ValidateFinite(data4, nameof(data4));
+            ValidateFinite(data5, nameof(data5));
+            ValidateFinite(data6, nameof(data6));
+            if (insertAt < 0)
+                throw new ArgumentOutOfRangeException(nameof(insertAt), "insertAt must be 0 (append) or a positive operand position.");
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var enumName = Enum.GetNames(typeof(MeritOperandType))
+                .FirstOrDefault(name => name.Equals(normalizedType, StringComparison.OrdinalIgnoreCase));
+            if (enumName == null)
+                throw new ArgumentException($"Operand database entry '{normalizedType}' is not a named MeritOperandType in this ZOS-API version.", nameof(operandType));
+            var parsedType = (MeritOperandType)Enum.Parse(typeof(MeritOperandType), enumName, false);
+
             var parameters = new Dictionary<string, object?>
             {
-                ["operandType"] = operandType,
+                ["operandType"] = enumName,
                 ["target"] = target,
                 ["weight"] = weight,
                 ["insertAt"] = insertAt,
@@ -83,82 +94,128 @@ public class AddOperandTool
                 ["data6"] = data6
             };
 
-            var result = await _session.ExecuteAsync("AddOperand", parameters, system =>
+            return await _session.ExecuteAsync("AddOperand", parameters, system =>
             {
-                if (system == null)
+                var mfe = system.MFE ?? throw new InvalidOperationException("Merit Function Editor is not available.");
+                if (insertAt > mfe.NumberOfOperands + 1)
+                    throw new ArgumentOutOfRangeException(nameof(insertAt), $"insertAt must be 0 or in 1..{mfe.NumberOfOperands + 1}.");
+                cancellationToken.ThrowIfCancellationRequested();
+
+                IMFERow? row = null;
+                try
                 {
-                    throw new InvalidOperationException("Optical system is not available");
-                }
+                    row = insertAt == 0 ? mfe.AddOperand() : mfe.InsertNewOperandAt(insertAt);
+                    if (row == null || !row.IsValidRow || !row.IsActive)
+                        throw new InvalidOperationException("OpticStudio did not create a valid active Merit Function operand row.");
+                    if (!row.ChangeType(parsedType))
+                        throw new InvalidOperationException($"OpticStudio rejected MeritOperandType '{enumName}'.");
 
-                var mfe = system.MFE;
-                if (mfe == null)
+                    ApplyIntegerCell(row, 2, int1, nameof(int1));
+                    ApplyIntegerCell(row, 3, int2, nameof(int2));
+                    ApplyNumericCell(row, 4, data1, nameof(data1));
+                    ApplyNumericCell(row, 5, data2, nameof(data2));
+                    ApplyNumericCell(row, 6, data3, nameof(data3));
+                    ApplyNumericCell(row, 7, data4, nameof(data4));
+                    ApplyNumericCell(row, 8, data5, nameof(data5));
+                    ApplyNumericCell(row, 9, data6, nameof(data6));
+
+                    row.Target = target;
+                    row.Weight = weight;
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var merit = mfe.CalculateMeritFunction();
+                    if (double.IsNaN(merit) || double.IsInfinity(merit))
+                        throw new InvalidDataException($"Merit Function became non-finite after adding {enumName}: {merit}.");
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var value = row.Value;
+                    if (double.IsNaN(value) || double.IsInfinity(value))
+                        throw new InvalidDataException($"Added operand {enumName} returned non-finite value {value}.");
+
+                    return new AddOperandResult(true, null, row.OperandNumber, row.Type.ToString(), value,
+                        row.Target, row.Weight, operandDef.Description);
+                }
+                catch (Exception original)
                 {
-                    throw new InvalidOperationException("Merit Function Editor is not available");
+                    if (row != null && row.IsValidRow)
+                    {
+                        bool rolledBack;
+                        try { rolledBack = mfe.RemoveOperandAt(row.OperandNumber); }
+                        catch (Exception rollbackException)
+                        {
+                            throw new InvalidOperationException(
+                                $"Merit operand setup failed and rollback threw an exception. The inserted row may remain; use the pre-change safety snapshot for recovery. Original error: {original.Message}; rollback error: {rollbackException.Message}",
+                                original);
+                        }
+                        if (!rolledBack)
+                        {
+                            throw new InvalidOperationException(
+                                $"Merit operand setup failed and OpticStudio rejected rollback. The inserted row may remain; use the pre-change safety snapshot for recovery. Original error: {original.Message}",
+                                original);
+                        }
+                    }
+                    throw;
                 }
-
-                ZOSAPI.Editors.MFE.IMFERow row;
-                if (insertAt > 0 && insertAt <= mfe.NumberOfOperands)
-                {
-                    row = mfe.InsertNewOperandAt(insertAt);
-                }
-                else
-                {
-                    row = mfe.AddOperand();
-                }
-
-                // Parse and set operand type
-                if (Enum.TryParse<ZOSAPI.Editors.MFE.MeritOperandType>(
-                    operandType, true, out var opType))
-                {
-                    row.ChangeType(opType);
-                }
-                else
-                {
-                    throw new ArgumentException($"Invalid operand type: {operandType}");
-                }
-
-                // Set parameters
-                if (int1.HasValue) row.GetCellAt(2).IntegerValue = int1.Value;
-                if (int2.HasValue) row.GetCellAt(3).IntegerValue = int2.Value;
-                if (data1.HasValue) row.GetCellAt(4).DoubleValue = data1.Value;
-                if (data2.HasValue) row.GetCellAt(5).DoubleValue = data2.Value;
-                if (data3.HasValue) row.GetCellAt(6).DoubleValue = data3.Value;
-                if (data4.HasValue) row.GetCellAt(7).DoubleValue = data4.Value;
-                if (data5.HasValue) row.GetCellAt(8).DoubleValue = data5.Value;
-                if (data6.HasValue) row.GetCellAt(9).DoubleValue = data6.Value;
-
-                row.Target = target;
-                row.Weight = weight;
-
-                // Calculate to get initial value
-                mfe.CalculateMeritFunction();
-
-                return new AddOperandResult(
-                    Success: true,
-                    Error: null,
-                    Row: row.OperandNumber,
-                    OperandType: operandType,
-                    Value: row.Value,
-                    Target: row.Target,
-                    Weight: row.Weight,
-                    OperandDescription: operandDef?.Description
-                );
-            });
-
-            return result;
+            }, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            return new AddOperandResult(
-                Success: false,
-                Error: ex.Message,
-                Row: 0,
-                OperandType: operandType,
-                Value: 0,
-                Target: target,
-                Weight: weight,
-                OperandDescription: operandDef?.Description
-            );
+            return new AddOperandResult(false, ex.Message, 0, normalizedType, 0, target, weight, operandDef.Description);
         }
+    }
+
+    private static void ApplyIntegerCell(IMFERow row, int cellIndex, int? requestedValue, string parameterName)
+    {
+        if (!requestedValue.HasValue) return;
+        var cell = GetWritableCell(row, cellIndex, parameterName);
+        if (cell.DataType != CellDataType.Integer)
+            throw new ArgumentException($"{parameterName} cannot be applied because MeritOperandType '{row.Type}' cell {cellIndex} has data type {cell.DataType}, not Integer.", parameterName);
+        cell.IntegerValue = requestedValue.Value;
+    }
+
+    private static void ApplyNumericCell(IMFERow row, int cellIndex, double? requestedValue, string parameterName)
+    {
+        if (!requestedValue.HasValue) return;
+        var cell = GetWritableCell(row, cellIndex, parameterName);
+        switch (cell.DataType)
+        {
+            case CellDataType.Double:
+                cell.DoubleValue = requestedValue.Value;
+                break;
+            case CellDataType.Integer:
+                double rounded = Math.Round(requestedValue.Value);
+                if (Math.Abs(requestedValue.Value - rounded) > 1e-12 || rounded < int.MinValue || rounded > int.MaxValue)
+                    throw new ArgumentException($"{parameterName}={requestedValue.Value} must be an integer for MeritOperandType '{row.Type}'.", parameterName);
+                cell.IntegerValue = (int)rounded;
+                break;
+            case CellDataType.String:
+                throw new ArgumentException($"{parameterName} cannot set string-valued cell {cellIndex} for MeritOperandType '{row.Type}'.", parameterName);
+            default:
+                throw new InvalidOperationException($"Unsupported MFE cell data type {cell.DataType} at cell {cellIndex}.");
+        }
+    }
+
+    private static IEditorCell GetWritableCell(IMFERow row, int cellIndex, string parameterName)
+    {
+        var cell = row.GetCellAt(cellIndex)
+            ?? throw new InvalidOperationException($"Merit operand '{row.Type}' did not expose cell {cellIndex}.");
+        if (!cell.IsActive)
+            throw new ArgumentException($"Merit operand '{row.Type}' does not expose {parameterName} at cell {cellIndex}.", parameterName);
+        if (cell.IsReadOnly)
+            throw new InvalidOperationException($"Merit operand '{row.Type}' cell {cellIndex} is read-only.");
+        return cell;
+    }
+
+    private static void ValidateFinite(double value, string name)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value))
+            throw new ArgumentOutOfRangeException(name, $"{name} must be finite.");
+    }
+
+    private static void ValidateFinite(double? value, string name)
+    {
+        if (value.HasValue) ValidateFinite(value.Value, name);
     }
 }

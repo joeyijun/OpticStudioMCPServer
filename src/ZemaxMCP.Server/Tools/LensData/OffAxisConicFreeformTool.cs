@@ -1,17 +1,17 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZOSAPI.Editors.LDE;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class OffAxisConicFreeformTool
 {
     private readonly IZemaxSession _session;
     public OffAxisConicFreeformTool(IZemaxSession session) => _session = session;
     public record Result(bool Success,string? Error=null,int SurfaceNumber=0,double Offset=0,double NormRadius=0,bool OffsetIsVariable=false);
-    [McpServerTool(Name="zemax_set_off_axis_conic")]
+    [ZemaxTool(Name="zemax_set_off_axis_conic")]
     [Description("Read or set Offset and normalization radius of an OffAxisConicFreeform surface.")]
     public async Task<Result> ExecuteAsync(int surfaceNumber,double? offset=null,double? normRadius=null,bool? offsetVariable=null)
     {

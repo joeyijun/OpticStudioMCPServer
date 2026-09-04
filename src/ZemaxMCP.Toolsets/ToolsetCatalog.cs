@@ -201,7 +201,7 @@ public static class ToolsetCatalog
         "zemax_get_surface_aperture", "zemax_get_surface_solves", "zemax_get_system", "zemax_get_system_files", "zemax_get_system_metadata",
         "zemax_get_tolerances", "zemax_get_units", "zemax_get_variables", "zemax_get_vignetting", "zemax_get_wavelength_settings", "zemax_huygens_psf",
         "zemax_job_list", "zemax_job_status", "zemax_lateral_color", "zemax_list_surface_types", "zemax_longitudinal_aberration", "zemax_multistart_status",
-        "zemax_opd_fan", "zemax_operand_help", "zemax_pop", "zemax_pupil_aberration_fan", "zemax_ray_fan", "zemax_ray_trace", "zemax_ray_trace_extended",
+        "zemax_opd_fan", "zemax_operand_help", "zemax_pupil_aberration_fan", "zemax_ray_fan", "zemax_ray_trace", "zemax_ray_trace_extended",
         "zemax_relative_illumination", "zemax_rms_spot", "zemax_search_operands", "zemax_seidel_coefficients", "zemax_spot_diagram", "zemax_status", "zemax_tool_catalog"
     };
 
@@ -215,7 +215,7 @@ public static class ToolsetCatalog
         "zemax_add_configuration_operand", "zemax_add_operand", "zemax_add_surface", "zemax_clear_vignetting", "zemax_constrained_optimize",
         "zemax_delete_configuration_operand", "zemax_export_analysis", "zemax_export_glass_catalog", "zemax_forbes_merit_function", "zemax_global_search",
         "zemax_hammer", "zemax_load_merit_function_file", "zemax_multistart_optimize", "zemax_new_system", "zemax_optimization_wizard", "zemax_optimize",
-        "zemax_quick_focus", "zemax_remove_operand", "zemax_remove_surface", "zemax_save_file", "zemax_save_merit_function_file", "zemax_scale_lens",
+        "zemax_pop", "zemax_quick_focus", "zemax_remove_operand", "zemax_remove_surface", "zemax_save_file", "zemax_save_merit_function_file", "zemax_scale_lens",
         "zemax_set_afocal_mode", "zemax_set_aperture", "zemax_set_apodization", "zemax_set_aspheric_surface", "zemax_set_clear_semi_diameter_margin",
         "zemax_set_configuration_operand_value", "zemax_set_current_configuration", "zemax_set_environment", "zemax_set_extra_data", "zemax_set_fields",
         "zemax_set_mtf_units", "zemax_set_number_of_configurations", "zemax_set_number_of_fields", "zemax_set_number_of_wavelengths", "zemax_set_off_axis_conic",

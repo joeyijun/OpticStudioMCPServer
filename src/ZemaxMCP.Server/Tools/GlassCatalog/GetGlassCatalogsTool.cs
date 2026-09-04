@@ -1,11 +1,11 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Services.GlassCatalog;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.GlassCatalog;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GetGlassCatalogsTool
 {
     private readonly IZemaxSession _session;
@@ -15,7 +15,7 @@ public class GetGlassCatalogsTool
     public record CatalogInfo(string Name, string FilePath);
     public record GetCatalogsResult(bool Success, string? Error, List<CatalogInfo>? Catalogs);
 
-    [McpServerTool(Name = "zemax_get_glass_catalogs")]
+    [ZemaxTool(Name = "zemax_get_glass_catalogs")]
     [Description("List available glass catalog names from the Zemax Glasscat directory")]
     public Task<GetCatalogsResult> ExecuteAsync()
     {

@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.SystemSettings;
 
-[McpServerToolType]
+[ZemaxToolType]
 public sealed class SystemFilesTool
 {
     private readonly IZemaxSession _session;
@@ -15,7 +15,7 @@ public sealed class SystemFilesTool
         IReadOnlyList<string> AvailableScatterProfiles, IReadOnlyList<string> AvailableAbgDataFiles,
         IReadOnlyList<string> AvailableGradiumProfiles);
 
-    [McpServerTool(Name = "zemax_get_system_files")]
+    [ZemaxTool(Name = "zemax_get_system_files")]
     [Description("Read the coating, scatter, ABg, and GRIN data files selected by the optical system; optionally list the files available to OpticStudio.")]
     public async Task<SystemFilesResult> ExecuteAsync(
         [Description("Include available file lists; disabled by default to keep the MCP response compact")] bool includeAvailable = false)

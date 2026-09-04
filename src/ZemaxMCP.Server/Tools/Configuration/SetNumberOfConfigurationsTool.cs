@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Configuration;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetNumberOfConfigurationsTool
 {
     private readonly IZemaxSession _session;
@@ -17,49 +17,46 @@ public class SetNumberOfConfigurationsTool
         int NumberOfConfigurations
     );
 
-    [McpServerTool(Name = "zemax_set_number_of_configurations")]
-    [Description("Set the number of configurations in the multi-configuration editor")]
+    [ZemaxTool(Name = "zemax_set_number_of_configurations")]
+    [Description("Set the number of configurations in the Multi-Configuration Editor. Existing configurations are removed from the end when reducing the count.")]
     public async Task<SetNumberOfConfigurationsResult> ExecuteAsync(
-        [Description("Number of configurations to set")] int numberOfConfigurations)
+        [Description("Target number of configurations; must be at least 1.")] int numberOfConfigurations,
+        CancellationToken cancellationToken = default)
     {
         if (numberOfConfigurations < 1)
-        {
-            return new SetNumberOfConfigurationsResult(false, "Number of configurations must be at least 1", 0);
-        }
+            return new SetNumberOfConfigurationsResult(false, "Number of configurations must be at least 1.", 0);
 
         try
         {
-            var result = await _session.ExecuteAsync("SetNumberOfConfigurations",
+            return await _session.ExecuteAsync("SetNumberOfConfigurations",
                 new Dictionary<string, object?> { ["numberOfConfigurations"] = numberOfConfigurations },
                 system =>
-            {
-                var mce = system.MCE;
-                int currentCount = mce.NumberOfConfigurations;
-
-                if (numberOfConfigurations > currentCount)
                 {
-                    // Add configurations
-                    for (int i = currentCount; i < numberOfConfigurations; i++)
-                    {
-                        mce.AddConfiguration(false);
-                    }
-                }
-                else if (numberOfConfigurations < currentCount)
-                {
-                    // Remove configurations from the end
-                    for (int i = currentCount; i > numberOfConfigurations; i--)
-                    {
-                        mce.DeleteConfiguration(i);
-                    }
-                }
+                    var mce = system.MCE;
+                    int currentCount = mce.NumberOfConfigurations;
 
-                return new SetNumberOfConfigurationsResult(
-                    Success: true,
-                    Error: null,
-                    NumberOfConfigurations: mce.NumberOfConfigurations
-                );
-            });
-            return result;
+                    if (numberOfConfigurations > currentCount)
+                    {
+                        for (int i = currentCount; i < numberOfConfigurations; i++)
+                        {
+                            if (!mce.AddConfiguration(false))
+                                throw new InvalidOperationException($"OpticStudio failed while adding configuration {i + 1}; current count is {mce.NumberOfConfigurations}.");
+                        }
+                    }
+                    else if (numberOfConfigurations < currentCount)
+                    {
+                        for (int i = currentCount; i > numberOfConfigurations; i--)
+                        {
+                            if (!mce.DeleteConfiguration(i))
+                                throw new InvalidOperationException($"OpticStudio failed while deleting configuration {i}; current count is {mce.NumberOfConfigurations}.");
+                        }
+                    }
+
+                    if (mce.NumberOfConfigurations != numberOfConfigurations)
+                        throw new InvalidOperationException($"MCE configuration count is {mce.NumberOfConfigurations}; expected {numberOfConfigurations}.");
+
+                    return new SetNumberOfConfigurationsResult(true, null, mce.NumberOfConfigurations);
+                }, cancellationToken);
         }
         catch (Exception ex)
         {

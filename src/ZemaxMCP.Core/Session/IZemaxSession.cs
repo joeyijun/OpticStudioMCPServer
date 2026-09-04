@@ -10,6 +10,13 @@ public interface IZemaxSession : IDisposable
     int? CurrentInstanceId { get; }
     string? CurrentFilePath { get; }
     string? ZemaxDataDir { get; }
+    string? CurrentLicenseStatus { get; }
+    string? LastLicenseStatus { get; }
+    bool? LicenseValidForApi { get; }
+    string? LastConnectionError { get; }
+    string SnapshotDirectory { get; }
+    string? LastSnapshotPath { get; }
+    event Action<string>? SnapshotCreated;
 
     Task<bool> ConnectAsync(CancellationToken cancellationToken = default);
     Task<bool> ConnectAsync(ConnectionMode mode, int instanceId = 0, CancellationToken cancellationToken = default);

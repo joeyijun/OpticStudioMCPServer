@@ -1,12 +1,13 @@
 using System.ComponentModel;
 using System.Diagnostics;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
+using ZOSAPI.Tools;
 using ZOSAPI.Tools.Optimization;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.Optimization;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class HammerOptimizationTool
 {
     private readonly IZemaxSession _session;
@@ -26,151 +27,188 @@ public class HammerOptimizationTool
         string TerminationReason
     );
 
-    [McpServerTool(Name = "zemax_hammer")]
-    [Description("Run Hammer optimization on the current optical system. Hammer continuously optimizes and supports glass substitution when surfaces have MaterialSubstitute solve set.")]
+    [ZemaxTool(Name = "zemax_hammer")]
+    [Description("Run Hammer Optimization with the official AutomaticOptimization/TargetRunTimeM settings and a separate finite MCP wall-clock timeout. Timeout or caller cancellation always cancels and drains Hammer before Close.")]
     public async Task<HammerResult> ExecuteAsync(
         [Description("Optimization algorithm: DLS or Orthogonal")] string algorithm = "DLS",
-        [Description("Number of CPU cores to use (0 for all available)")] int cores = 0,
-        [Description("Target runtime in minutes (for automatic mode)")] double targetRuntimeMinutes = 5.0,
-        [Description("Maximum runtime in seconds (timeout)")] double timeoutSeconds = 120,
-        [Description("Use automatic optimization mode (true) or fixed cycles (false)")] bool automatic = true)
+        [Description("CPU cores: 0 uses MaxCores; otherwise the value must be between 1 and MaxCores.")] int cores = 0,
+        [Description("OpticStudio Hammer target runtime in minutes; must be finite and > 0.")] double targetRuntimeMinutes = 5.0,
+        [Description("MCP wall-clock timeout in seconds; must be finite and > 0. Reaching it cancels Hammer and returns the best merit found so far.")] double timeoutSeconds = 120,
+        [Description("Set OpticStudio Hammer's AutomaticOptimization option. This is the pre-Hammer automatic local optimization option; it is not a fixed-cycle selector.")] bool automatic = true,
+        CancellationToken cancellationToken = default)
     {
+        string algorithmName = algorithm?.Trim() ?? string.Empty;
         try
         {
+            var algorithmValue = ParseAlgorithm(algorithmName);
+            if (cores < 0) throw new ArgumentOutOfRangeException(nameof(cores), "cores must be >= 0.");
+            ValidatePositiveFinite(targetRuntimeMinutes, nameof(targetRuntimeMinutes));
+            ValidatePositiveFinite(timeoutSeconds, nameof(timeoutSeconds));
+
             var parameters = new Dictionary<string, object?>
             {
-                ["algorithm"] = algorithm,
+                ["algorithm"] = algorithmName,
                 ["cores"] = cores,
                 ["targetRuntimeMinutes"] = targetRuntimeMinutes,
                 ["timeoutSeconds"] = timeoutSeconds,
                 ["automatic"] = automatic
             };
 
-            var result = await _session.ExecuteAsync("Hammer", parameters, system =>
+            return await _session.ExecuteAsync("Hammer", parameters, system =>
             {
-                if (system == null)
-                {
-                    throw new InvalidOperationException("Optical system is not available");
-                }
-
-                var mfe = system.MFE;
-                if (mfe == null)
-                {
-                    throw new InvalidOperationException("Merit Function Editor is not available");
-                }
-
-                var initialMerit = mfe.CalculateMeritFunction();
-
-                var hammer = system.Tools?.OpenHammerOptimization();
-                if (hammer == null)
-                {
-                    throw new InvalidOperationException("Failed to open Hammer Optimization tool");
-                }
-
+                var hammer = system.Tools?.OpenHammerOptimization()
+                    ?? throw new InvalidOperationException("Failed to open Hammer Optimization tool.");
                 try
                 {
-                    // Set algorithm
-                    hammer.Algorithm = algorithm.ToUpper() switch
-                    {
-                        "DLS" => OptimizationAlgorithm.DampedLeastSquares,
-                        "ORTHOGONAL" => OptimizationAlgorithm.OrthogonalDescent,
-                        _ => OptimizationAlgorithm.DampedLeastSquares
-                    };
+                    hammer.Algorithm = algorithmValue;
+                    if (cores > hammer.MaxCores)
+                        throw new ArgumentOutOfRangeException(nameof(cores), $"cores={cores} exceeds this OpticStudio instance's MaxCores ({hammer.MaxCores}).");
+                    hammer.NumberOfCores = cores == 0 ? hammer.MaxCores : cores;
+                    hammer.AutomaticOptimization = automatic;
+                    hammer.TargetRunTimeM = targetRuntimeMinutes;
+                    if (!hammer.IsValid)
+                        throw new InvalidOperationException("Hammer Optimization settings are not valid for the current system.");
 
-                    // Set number of cores (0 means use MaxCores)
-                    if (cores > 0)
-                    {
-                        hammer.NumberOfCores = Math.Min(cores, hammer.MaxCores);
-                    }
-                    else
-                    {
-                        hammer.NumberOfCores = hammer.MaxCores;
-                    }
-
-                    // Get variable count
-                    var variables = hammer.Variables;
-
-                    string terminationReason = "Unknown";
+                    double initialMerit = hammer.InitialMeritFunction;
+                    ValidateFiniteResult(initialMerit, "initial merit function");
+                    int variables = hammer.Variables;
                     var stopwatch = Stopwatch.StartNew();
-
-                    // Start Hammer with non-blocking Run(), then poll and cancel
-                    hammer.Run();
-
-                    double bestMerit = double.MaxValue;
-                    long lastImprovedMs = 0;
-                    long timeoutMs = (long)(timeoutSeconds * 1000);
-                    long totalRuntimeMs = (long)(targetRuntimeMinutes * 60 * 1000);
                     int improvements = 0;
+                    double bestObservedMerit = initialMerit;
 
-                    while (true)
-                    {
-                        Thread.Sleep(1000);
-
-                        try
+                    string terminationReason = RunHammer(
+                        hammer,
+                        timeoutSeconds,
+                        cancellationToken,
+                        stopwatch,
+                        merit =>
                         {
-                            double currentMerit = hammer.CurrentMeritFunction;
-                            long now = stopwatch.ElapsedMilliseconds;
-
-                            if (currentMerit < bestMerit)
+                            if (double.IsNaN(merit) || double.IsInfinity(merit))
+                                throw new InvalidOperationException("Hammer Optimization reported a non-finite current merit function.");
+                            double tolerance = Math.Max(1e-12, Math.Abs(bestObservedMerit) * 1e-12);
+                            if (merit < bestObservedMerit - tolerance)
                             {
-                                if (bestMerit < double.MaxValue)
-                                    improvements++;
-                                bestMerit = currentMerit;
-                                lastImprovedMs = now;
+                                bestObservedMerit = merit;
+                                improvements++;
                             }
-
-                            long idleMs = now - lastImprovedMs;
-
-                            // Stop if stagnated (no improvement for timeoutSeconds)
-                            // or if total runtime exceeds targetRuntimeMinutes
-                            if (idleMs >= timeoutMs)
-                            {
-                                terminationReason = improvements > 0 ? "Stagnation" : "NoImprovement";
-                                break;
-                            }
-
-                            if (now >= totalRuntimeMs)
-                            {
-                                terminationReason = "MaxRuntime";
-                                break;
-                            }
-                        }
-                        catch
-                        {
-                            // Hammer may throw while running; ignore and keep polling
-                        }
-                    }
-
-                    hammer.Cancel();
-                    hammer.WaitForCompletion();
-
+                        });
                     stopwatch.Stop();
-                    var finalMerit = hammer.CurrentMeritFunction;
+
+                    if (terminationReason == "Completed" && !hammer.Succeeded)
+                        throw new InvalidOperationException(string.IsNullOrWhiteSpace(hammer.ErrorMessage)
+                            ? "Hammer Optimization completed without success."
+                            : hammer.ErrorMessage);
+
+                    double finalMerit = hammer.CurrentMeritFunction;
+                    ValidateFiniteResult(finalMerit, "final merit function");
 
                     return new HammerResult(
-                        Success: true,
-                        Error: null,
-                        InitialMerit: initialMerit,
-                        FinalMerit: finalMerit,
-                        Improvement: initialMerit - finalMerit,
-                        Algorithm: algorithm,
-                        RuntimeSeconds: stopwatch.Elapsed.TotalSeconds,
-                        Variables: variables,
-                        Improvements: improvements,
-                        TerminationReason: terminationReason
-                    );
+                        true,
+                        null,
+                        initialMerit,
+                        finalMerit,
+                        initialMerit - finalMerit,
+                        algorithmValue.ToString(),
+                        stopwatch.Elapsed.TotalSeconds,
+                        variables,
+                        improvements,
+                        terminationReason);
                 }
                 finally
                 {
+                    CancelIfStillRunning(hammer);
                     hammer.Close();
                 }
-            });
-
-            return result;
+            }, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            return new HammerResult(false, ex.Message, 0, 0, 0, algorithm, 0, 0, 0, "Error");
+            return new HammerResult(false, ex.Message, 0, 0, 0, algorithmName, 0, 0, 0, "Error");
         }
+    }
+
+    private static string RunHammer(
+        IHammerOptimization hammer,
+        double timeoutSeconds,
+        CancellationToken cancellationToken,
+        Stopwatch stopwatch,
+        Action<double> observeMerit)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!hammer.Run())
+            throw new InvalidOperationException("OpticStudio failed to start Hammer Optimization.");
+
+        while (true)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                CancelAndDrain(hammer);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            if (stopwatch.Elapsed.TotalSeconds >= timeoutSeconds)
+            {
+                CancelAndDrain(hammer);
+                return "TimedOut";
+            }
+
+            double remaining = Math.Max(0.01, timeoutSeconds - stopwatch.Elapsed.TotalSeconds);
+            var status = hammer.WaitWithTimeout(Math.Min(0.5, remaining));
+            observeMerit(hammer.CurrentMeritFunction);
+            switch (status)
+            {
+                case RunStatus.Completed:
+                    return "Completed";
+                case RunStatus.TimedOut:
+                    continue;
+                case RunStatus.FailedToStart:
+                    throw new InvalidOperationException("Hammer Optimization failed to start.");
+                case RunStatus.InvalidTimeout:
+                    throw new InvalidOperationException("OpticStudio rejected the Hammer polling timeout.");
+                default:
+                    throw new InvalidOperationException($"Unexpected Hammer Optimization run status: {status}.");
+            }
+        }
+    }
+
+    private static OptimizationAlgorithm ParseAlgorithm(string algorithm) => algorithm.ToUpperInvariant() switch
+    {
+        "DLS" => OptimizationAlgorithm.DampedLeastSquares,
+        "ORTHOGONAL" => OptimizationAlgorithm.OrthogonalDescent,
+        _ => throw new ArgumentException("algorithm must be 'DLS' or 'Orthogonal'.", nameof(algorithm))
+    };
+
+    private static void ValidatePositiveFinite(double value, string name)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value) || value <= 0)
+            throw new ArgumentOutOfRangeException(name, $"{name} must be finite and > 0.");
+    }
+
+    private static void ValidateFiniteResult(double value, string label)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value))
+            throw new InvalidOperationException($"Hammer Optimization reported a non-finite {label}.");
+    }
+
+    private static void CancelAndDrain(IHammerOptimization hammer)
+    {
+        if (hammer.IsRunning && hammer.CanCancel && !hammer.Cancel())
+            throw new InvalidOperationException("OpticStudio rejected cancellation of Hammer Optimization.");
+        if (hammer.IsRunning && !hammer.WaitForCompletion())
+            throw new InvalidOperationException("Hammer Optimization did not drain after cancellation.");
+    }
+
+    private static void CancelIfStillRunning(IHammerOptimization hammer)
+    {
+        if (!hammer.IsRunning) return;
+        try
+        {
+            if (hammer.CanCancel) hammer.Cancel();
+            hammer.WaitForCompletion();
+        }
+        catch { }
     }
 }

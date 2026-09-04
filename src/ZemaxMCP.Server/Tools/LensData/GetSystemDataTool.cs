@@ -1,19 +1,19 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class GetSystemDataTool
 {
     private readonly IZemaxSession _session;
 
     public GetSystemDataTool(IZemaxSession session) => _session = session;
 
-    [McpServerTool(Name = "zemax_get_system")]
+    [ZemaxTool(Name = "zemax_get_system")]
     [Description("Get the current optical system data including surfaces, fields, and wavelengths")]
     public async Task<LensSystem> ExecuteAsync(
         [Description("Include all surface details")] bool includeSurfaces = true,

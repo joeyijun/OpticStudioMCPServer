@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class RemoveSurfaceTool
 {
     private readonly IZemaxSession _session;
@@ -17,7 +17,7 @@ public class RemoveSurfaceTool
         int RemovedSurfaceNumber = 0,
         int TotalSurfaces = 0);
 
-    [McpServerTool(Name = "zemax_remove_surface")]
+    [ZemaxTool(Name = "zemax_remove_surface")]
     [Description(
         "Delete a surface from the Lens Data Editor at the specified surface number. "
         + "Object (0) and Image (last) surfaces cannot be deleted. "

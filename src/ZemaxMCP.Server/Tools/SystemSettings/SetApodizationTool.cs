@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.SystemSettings;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetApodizationTool
 {
     private readonly IZemaxSession _session;
@@ -18,7 +18,7 @@ public class SetApodizationTool
         double ApodizationFactor
     );
 
-    [McpServerTool(Name = "zemax_set_apodization")]
+    [ZemaxTool(Name = "zemax_set_apodization")]
     [Description("Set the apodization type and/or factor")]
     public async Task<SetApodizationResult> ExecuteAsync(
         [Description("Apodization type: Uniform, Gaussian, CosineCubed")] string? apodizationType = null,

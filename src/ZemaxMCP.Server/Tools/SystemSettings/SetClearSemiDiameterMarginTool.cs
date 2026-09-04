@@ -1,10 +1,10 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 
 namespace ZemaxMCP.Server.Tools.SystemSettings;
 
-[McpServerToolType]
+[ZemaxToolType]
 public class SetClearSemiDiameterMarginTool
 {
     private readonly IZemaxSession _session;
@@ -18,7 +18,7 @@ public class SetClearSemiDiameterMarginTool
         double MarginPercent
     );
 
-    [McpServerTool(Name = "zemax_set_clear_semi_diameter_margin")]
+    [ZemaxTool(Name = "zemax_set_clear_semi_diameter_margin")]
     [Description("Set the clear semi-diameter margin (mm and/or %)")]
     public Task<SetClearSemiDiameterMarginResult> ExecuteAsync(
         [Description("Margin in millimeters (lens units)")] double? marginMillimeters = null,
