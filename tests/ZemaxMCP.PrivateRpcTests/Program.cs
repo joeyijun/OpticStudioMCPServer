@@ -26,6 +26,7 @@ internal static class Program
 
         try
         {
+            VerifyActivityOwnership();
             VerifyOriginBoundary();
             await VerifyContractMismatchRejectedAsync().ConfigureAwait(false);
             await VerifyPipeFaultRecoveryAsync().ConfigureAwait(false);
@@ -41,6 +42,29 @@ internal static class Program
             Console.Error.WriteLine(ex);
             return 1;
         }
+    }
+
+    private static void VerifyActivityOwnership()
+    {
+        var monitor = new McpActivityMonitor();
+        using var first = monitor.Begin("client:codex@1.0|remote:192.168.8.20", "zemax_get_system");
+        using (monitor.Begin("client:claude@1.0|remote:192.168.8.21", "zemax_status"))
+        {
+            var active = monitor.GetHealth();
+            if (active.ActiveRequests != 2 || active.ActiveOperations.Count != 2 ||
+                active.ActiveOperations[0].Client != "client:codex@1.0|remote:192.168.8.20" ||
+                active.ActiveOperations[0].Tool != "zemax_get_system" ||
+                active.ActiveOperations[1].Client != "client:claude@1.0|remote:192.168.8.21")
+                throw new InvalidOperationException("Concurrent MCP activity lost its client/tool ownership.");
+        }
+        var remaining = monitor.GetHealth();
+        if (remaining.ActiveRequests != 1 || remaining.ActiveOperations[0].Tool != "zemax_get_system")
+            throw new InvalidOperationException("Completed MCP activity was not removed independently.");
+        first.Dispose();
+        var completed = monitor.GetHealth();
+        if (completed.ActiveRequests != 0 || completed.LastClient != "client:codex@1.0|remote:192.168.8.20" ||
+            completed.LastTool != "zemax_get_system" || completed.LastRequestAt == null)
+            throw new InvalidOperationException("The latest completed call was attributed to the wrong AI client.");
     }
 
     private static void VerifyOriginBoundary()
@@ -254,6 +278,17 @@ internal static class Program
             using var heldResponse = await Send2026ToolCallAsync(client, endpoint, 4, "zemax_get_system", "client-a", "instance-a").ConfigureAwait(false);
             if (!heldResponse.IsSuccessStatusCode) throw new InvalidOperationException("The first client could not retain the control lease across tool names.");
             await Task.Delay(150).ConfigureAwait(false);
+            using (var activeHealthRequest = new HttpRequestMessage(HttpMethod.Get, endpoint + "/activity"))
+            {
+                activeHealthRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
+                using var activeHealthResponse = await client.SendAsync(activeHealthRequest).ConfigureAwait(false);
+                using var activeHealth = JsonDocument.Parse(await activeHealthResponse.Content.ReadAsStringAsync().ConfigureAwait(false));
+                var activeOperations = activeHealth.RootElement.GetProperty("activeOperations");
+                if (!activeHealthResponse.IsSuccessStatusCode || activeOperations.GetArrayLength() == 0 ||
+                    !activeOperations[0].GetProperty("client").GetString()!.Contains("client-a", StringComparison.Ordinal) ||
+                    activeOperations[0].GetProperty("tool").GetString() != "zemax_get_system")
+                    throw new InvalidOperationException("Remote activity did not identify the AI client and tool during an active call.");
+            }
             // Same clientInfo and same IP, but a different explicit instance ID.
             using var rejectedLease = await Send2026ToolCallAsync(client, endpoint, 5, "zemax_status", "client-a", "instance-b").ConfigureAwait(false);
             var rejectedLeaseBody = await ReadFirstMcpPayloadAsync(rejectedLease).ConfigureAwait(false);

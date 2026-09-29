@@ -156,6 +156,10 @@ internal static class Program
                 await next().ConfigureAwait(false);
             });
 
+            // Activity must remain observable even when a ZOS-API call delays
+            // the Worker's GetStatus RPC.
+            app.MapGet(options.McpPath + "/activity", () => Results.Json(activity.GetHealth()));
+
             app.MapGet(options.McpPath + "/health", async (CancellationToken cancellationToken) =>
             {
                 WorkerStatus? status = null;
@@ -189,10 +193,17 @@ internal static class Program
                     hardRecoveryTimeoutSeconds = options.HardRecoveryTimeoutSeconds,
                     cancellationWriteTimeoutSeconds = options.CancellationWriteTimeoutSeconds,
                     lastClient = activityHealth.LastClient,
+                    lastTool = activityHealth.LastTool,
                     lastRequestAt = activityHealth.LastRequestAt,
                     activeRequests = activityHealth.ActiveRequests,
-                    activeOperations = activityHealth.ActiveRequests == 0 ? Array.Empty<object>() : new[] { new { tool = activityHealth.LastTool, startedAt = activityHealth.ActiveSince } },
-                    clients = activityHealth.LastRequestAt == null ? Array.Empty<object>() : new[] { new { name = activityHealth.LastClient, lastRequestAt = activityHealth.LastRequestAt } },
+                    activeOperations = activityHealth.ActiveOperations.Select(operation => new
+                    {
+                        client = operation.Client,
+                        tool = operation.Tool,
+                        startedAt = operation.StartedAt,
+                        elapsedSeconds = Math.Max(0, (long)(DateTimeOffset.UtcNow - operation.StartedAt).TotalSeconds)
+                    }),
+                    clients = activityHealth.LastRequestAt == null ? Array.Empty<object>() : new[] { new { name = activityHealth.LastClient, lastRequestAt = activityHealth.LastRequestAt, lastMethod = activityHealth.LastTool } },
                     worker = worker.GetHealth(),
                     controlLease = controlLease.GetHealth(),
                     activity = activityHealth
