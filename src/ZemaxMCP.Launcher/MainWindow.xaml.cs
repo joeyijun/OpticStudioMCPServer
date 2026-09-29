@@ -411,7 +411,7 @@ public partial class MainWindow : Window
             else if (apiFiles) SetIndicator(ZosStateDot, ZosState, "Files found — not loaded yet", System.Windows.Media.Brushes.DarkOrange);
             else SetIndicator(ZosStateDot, ZosState, "ZOS-API files are missing", System.Windows.Media.Brushes.IndianRed);
             if (bridgeRunning && serverRunning) _bridgeRestartAttempts = 0;
-            LastStatusCheck.Text = "Updated " + DateTime.Now.ToString("HH:mm:ss") + " · automatic refresh every 5 seconds";
+            LastStatusCheck.Text = "Updated " + DateTime.Now.ToString("HH:mm:ss") + " · activity 1s / health 5s";
         }
         catch (Exception ex)
         {
@@ -426,7 +426,7 @@ public partial class MainWindow : Window
             else SetIndicator(ZosStateDot, ZosState, "ZOS-API files are missing", System.Windows.Media.Brushes.IndianRed);
             RefreshClientMenuIndicators();
             SetIndicator(AiStateDot, AiState, "AI activity unavailable while offline", System.Windows.Media.Brushes.SlateGray);
-            LastStatusCheck.Text = "Last checked " + DateTime.Now.ToString("HH:mm:ss") + " · endpoint unavailable; retrying automatically";
+            LastStatusCheck.Text = "Checked " + DateTime.Now.ToString("HH:mm:ss") + " · offline, retrying";
         }
         finally { _refreshingStatus = false; }
     }
