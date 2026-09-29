@@ -1,3 +1,37 @@
+# OpticStudio MCP Server
+
+**A GUI-first Windows MCP server for Zemax OpticStudio.** It detects installed OpticStudio versions, runs an HTTP MCP service locally or on a trusted LAN, and configures **Codex**, **Claude Desktop**, **Cursor**, **Google Antigravity**, **Kimi Code**, **WorkBuddy**, and **VS Code / GitHub Copilot**.
+
+![Zemax MCP launcher dashboard](docs/images/launcher-dashboard.png)
+
+## Windows quick start
+
+1. Download and extract `ZemaxMCP-win-x64.zip` from [Releases](https://github.com/joeyijun/OpticStudioMCPServer/releases).
+2. Run **Install.exe**. If Windows policy blocks it, run **Portable-Install.cmd** from the extracted folder instead.
+3. On the OpticStudio computer, select its installation. Use **Configure clients** wherever the AI client runs; for a separate AI computer, first paste the secure setup copied from the OpticStudio computer.
+4. Restart the configured AI client and make a tool call. The dashboard shows the calling client and tool, or the most recent completed call.
+
+No Node.js, Supergateway, source checkout, or manual ZOS-API DLL copying is required for normal use. The launcher checks full service health every five seconds and refreshes AI activity every second without resetting the status cards to “Checking.”
+
+For one- and two-computer setup, see [Windows Quick Start](docs/QUICKSTART_WINDOWS.md). For component ownership and security boundaries, see [Architecture](docs/ARCHITECTURE.md).
+
+## How it works
+
+```mermaid
+flowchart LR
+  A["OpticStudio computer\nInstall.exe or Portable-Install.cmd"] --> B["ZemaxMCP.Host (.NET 10)\nofficial MCP HTTP, static tools, auth + control lease"]
+  B -->|"private Named Pipe RPC v3\nPID + secret + manifest fingerprint"| C["ZemaxMCP.Worker (net48)\nsingle STA + ZOS-API"]
+  C --> F["Licensed OpticStudio"]
+  D["Codex / Claude / Cursor / Antigravity / Kimi / WorkBuddy / Copilot\nlocal or trusted LAN computer"] -->|"HTTP MCP"| B
+  B --> E["Launcher status\nMCP · ZOS-API · live AI activity"]
+```
+
+For a single computer, the AI client uses the local MCP address. For two computers, enable **Share with a trusted LAN computer** on the OpticStudio computer and choose **Copy secure setup**. On the AI computer, paste the complete bundle into the launcher's **Secure setup** field. The launcher extracts the endpoint and token, protects the token with Windows user-scope encryption, and configures supported AI clients. Deploy the same package on both computers to see the latest remote activity display.
+
+## Highlights
+
+- **Graphical install and update** — `Install.exe` installs or updates the per-user application. `Portable-Install.cmd` provides a fallback when organisation policy blocks the installer executable.
+- **Official .NET 10 MCP Host** — `ZemaxMCP.Host` uses stable `ModelContextProtocol.AspNetCore` 2.1 for Streamable HTTP, protocol negotiation, request IDs, SSE, cancellation, progress, and compatibility. The application does not maintain a hand-written MCP HTTP/JSON-RPC dispatcher.
 - **Static Host tool contract** — a build-time Roslyn generator produces the 126 tool names, descriptions, JSON schemas, domains, and impact levels. `tools/list` is answered by the Host without starting OpticStudio or the Worker.
 - **Hardened Host / Worker isolation** — MCP ends at the Host. The `net48` Worker accepts only private RPC v3, keeps STA/ZOS-API state, and never exposes a network transport. The Host verifies Worker PID, per-launch secret, RPC version, and the static manifest SHA-256 fingerprint before ZOS-API initialization or any OpticStudio COM operation.
 - **Transport-independent control lease** — modern MCP requests can be stateless while OpticStudio remains deliberately single-owner, single-STA, and serialized. Per-instance identity prevents supported same-machine clients from collapsing into one owner.
@@ -7,7 +41,7 @@
 - **Verified, clean updates** — release metadata is RSA-signed, the ZIP size and SHA-256 are checked before extraction, and the updater replaces superseded program files while retaining logs and snapshots; it restores the previous installation if replacement fails.
 - **Dedicated ZOS-API thread** — the Worker serializes every connection and tool operation on one long-lived STA thread to respect the COM threading model and avoid cross-thread session access.
 - **Long-job control** — POP, global search, and multistart optimization can return immediately with a job id. Use `zemax_job_status`, `zemax_job_list`, and `zemax_job_cancel` for queue position, live progress, result retrieval, and cooperative cancellation; the launcher also shows the active tool/job and elapsed time.
-- **Per-client live dashboard** — colour-coded cards distinguish installation, configuration, historical activity, and a real request made within the last five minutes. The launcher health check is excluded from AI activity.
+- **Live AI activity, including remote clients** — a lightweight authenticated activity endpoint reports each active client, tool, and elapsed time without waiting for Worker status. The launcher polls it every second, shows the most recent completed call when idle, and keeps client-configuration indicators separate from call activity. Its own health checks are not counted as AI calls.
 - **Multi-version OpticStudio detection** — detects classic Zemax and current `ANSYS Inc\v*` layouts from environment variables, both registry views, uninstall entries, and known Program Files locations. The launcher validates all three ZOS-API assemblies before offering a version.
 - **Cross-version ZOS-API release policy** — the Worker is explicitly x64 for legacy NetHelper compatibility. Release packages are compiled against an explicit oldest-supported OpticStudio/ZOS-API baseline and record that product/API version in `ZOSAPI_BUILD_INFO.txt`. Startup rejects a selected OpticStudio older than the compile baseline before loading Worker code that contains ZOS-API type references. Use `scripts/verify-zosapi-compatibility.ps1` to compile the complete Worker against every actual OpticStudio version that a release claims to support.
 - **Safe public package** — the ZIP does not redistribute proprietary ZOS-API DLLs. It uses the licensed OpticStudio installation at runtime on the Zemax computer.
@@ -75,16 +109,98 @@ For an unusual portable layout, set `ZEMAX_ROOT` to the program directory and op
 
 ## AI client configuration
 
-Use **Configure AI clients** in the launcher. Existing unrelated MCP entries are preserved and a backup is kept when an existing configuration is replaced. Supported HTTP clients receive both the endpoint and its Bearer header; Claude's packaged proxy receives the token without putting it in the server URL. If a token is rotated, reconfigure each client so its saved credential matches.
+Use **Configure clients** in the launcher. Existing unrelated MCP entries are preserved and a backup is kept when an existing configuration is replaced. Supported HTTP clients receive both the endpoint and its Bearer header; Claude's packaged proxy receives the token without putting it in the server URL. If a token is rotated, reconfigure each client so its saved credential matches. A green dot in the configuration menu means the local client configuration matches; the separate AI activity card turns green only while a tool call is in progress.
 
 | Client | Configuration used by the launcher | Connection confirmation |
 |---|---|
-| Codex | `$CODEX_HOME/config.toml`, or `~/.codex/config.toml` | The client card turns green after an actual request. |
-| Claude Desktop | `%APPDATA%/Claude/claude_desktop_config.json`; the packaged local stdio proxy reaches the HTTP/LAN endpoint and provides per-process client identity | The client card turns green after an actual request. |
-| Cursor | `~/.cursor/mcp.json` | The client card turns green after an actual request. |
+| Codex | `$CODEX_HOME/config.toml`, or `~/.codex/config.toml` | Make a tool call; the activity card reports the client and tool. |
+| Claude Desktop | `%APPDATA%/Claude/claude_desktop_config.json`; the packaged local stdio proxy reaches the HTTP/LAN endpoint and provides per-process client identity | Restart Claude, then make a tool call and check the activity card. |
+| Cursor | `~/.cursor/mcp.json` | Make a tool call and check the activity card. |
 | Google Antigravity | `~/.gemini/config/mcp_config.json` (an existing legacy Antigravity configuration is detected and preserved in place) | The launcher writes Antigravity's remote `serverUrl` plus the Bearer header. Restart Antigravity, then use its MCP Servers panel or `/mcp` to confirm the connection. |
-| Kimi Code | `$KIMI_CODE_HOME/mcp.json`, or `~/.kimi-code/mcp.json` | Run `/mcp` in Kimi Code or watch the launcher client card. See the [official Kimi MCP guide](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/mcp.html). |
+| Kimi Code | `$KIMI_CODE_HOME/mcp.json`, or `~/.kimi-code/mcp.json` | Run `/mcp` in Kimi Code, then make a tool call and check the activity card. See the [official Kimi MCP guide](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/mcp.html). |
 | WorkBuddy | `~/.workbuddy/mcp.json` | WorkBuddy shows its own green/red MCP status; the launcher also records real requests. See the [official WorkBuddy MCP guide](https://www.workbuddy.ai/docs/zh/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide). |
 | VS Code / Copilot | Native `vscode:mcp/install` review flow; status checks the default and profile-specific `mcp.json` files | Approve the server in VS Code, then make a request. |
 
 Clients capable of setting custom MCP request metadata may send `io.zemaxmcp/clientInstanceId`; HTTP clients may instead send `X-Zemax-MCP-Client-Instance`. The value must be 1–128 ASCII letters/digits plus `.`, `_`, or `-`. This is useful when multiple independent client instances share the same IP and the same standard `clientInfo`.
+
+## MCP capabilities
+
+The full-expert package contains 126 named tools; a narrower run configuration exposes only its permitted subset. AI clients discover the exact version-matched schemas through MCP `tools/list`; `zemax_tool_catalog` reads the same static manifest and returns each tool's domain, impact, description, and safety guidance. Use the installed package's `tools/list` as the authoritative source rather than treating this README as a complete API reference.
+
+### Tool navigation, run configurations, and safety
+
+The launcher can expose a smaller task-focused tool surface without renaming MCP tools. The Host enforces the selected profile for both `tools/list` and direct `tools/call`; the Worker checks it again before ZOS-API execution.
+
+| Launcher configuration | Enabled domains and impacts |
+|---|---|
+| **View & analyze** | System, Sequential editing, Analysis, Administration — Read-only impact only |
+| **Sequential design** | System, Sequential editing, Analysis, Polarization, Files, Administration — all impacts |
+| **Non-sequential & stray light** | System, Non-sequential, Analysis, Files, Administration — all impacts |
+| **Optimization & tolerancing** | System, Sequential editing, Analysis, Optimization, Tolerance, Polarization, Files, Administration — all impacts |
+| **Full expert** | All domains and impacts |
+
+Global **Read-only mode** and the task profile are separate controls. Global read-only blocks `HighImpact` operations while preserving `Caution` session/connection operations; **View & analyze** limits the profile itself to explicit `ReadOnly` impact.
+
+`zemax_tool_catalog` groups tools as follows:
+
+| Group | Use it for | Typical first step |
+|---|---|---|
+| **System** | System state, catalog information, and safe inspection. | Confirm `zemax_status` and inspect the active system. |
+| **Sequential editing** | Surfaces, fields, wavelengths, apertures, configurations, and solves. | Read the current data before changing one item. |
+| **Non-sequential** | NSC objects, detectors, and stray-light workflows. | Inspect NSC mode and objects before changing a model. |
+| **Analysis** | Spot, MTF, PSF, POP, rays, aberrations, illumination, and export. | Analyse the design and retain the result. |
+| **Optimization** | Merit functions, optimization, global search, and jobs. | Inspect variables and merit data before launching a long job. |
+| **Tolerance** | Tolerance setup and result inspection. | Inspect existing operands and bounds. |
+| **Polarization** | Polarization settings and inspection. | Inspect settings before changing amplitudes or phases. |
+| **Files** | Opening, saving, importing, and exporting artifacts. | Confirm the current system and destination path. |
+| **Administration** | Connection, session, and service management. | Verify the Worker connection before starting a task. |
+
+**High impact** operations can change lens data, saved files, or optimization state. Confirm the target system and intended change before calling one. In read/write mode, recognised ZOS-API mutations create a pre-change lens snapshot. **Caution** operations can change the active session, connection, or job state; **Read-only** operations are intended for inspection or calculation.
+
+A safe default workflow is: inspect the system → make the smallest necessary edit → run an analysis → save or export deliberately. For POP, global search, or multistart optimization, use the returned Job ID with `zemax_job_status` and `zemax_job_cancel` rather than waiting on a long synchronous request.
+
+Major tool areas include system/file operations; Lens Data Editor surfaces, fields, wavelengths, apertures, solves, and extra data; NSC objects and detectors; imaging and optical analyses; merit functions and optimization; multi-configuration, tolerance, polarization, system settings, and glass catalogs; and background job control.
+
+This fork includes these acceptance and validation tools:
+
+| Tool | Purpose |
+|---|---|
+| `zemax_set_surface_aperture` / `zemax_get_surface_aperture` | Set or inspect real circular apertures and obscurations. |
+| `zemax_set_off_axis_conic` | Set Off-Axis Conic Freeform offset and normalization radius. |
+| `zemax_get_global_matrix` | Read a surface local-to-global rotation matrix and vertex origin. |
+| `zemax_aperture_throughput` | Sample pupil throughput and identify vignette surfaces. |
+| `zemax_ray_trace_extended` | Trace a real ray with intercept, direction, intensity, error, and vignette data. |
+
+### Additional tools in this fork
+
+| Tool | Purpose |
+|---|---|
+| `zemax_get_nsc_objects` / `zemax_get_nsc_detector` / `zemax_get_nsc_object_parameters` | Inspect NSC objects, detector properties, and type-specific parameters. |
+| `zemax_get_tolerances` | Read Tolerance Data Editor operands safely, including unset bounds. |
+| `zemax_set_number_of_fields` / `zemax_set_number_of_wavelengths` | Resize the system field or wavelength lists. |
+| `zemax_get_apodization` / `zemax_set_apodization` | Inspect or set pupil apodization type and factor. |
+| `zemax_get_clear_semi_diameter_margin` / `zemax_set_clear_semi_diameter_margin` | Inspect or set Clear Semi-Diameter Margin; availability depends on ZOS-API version. |
+| `zemax_get_mtf_units` / `zemax_set_mtf_units` | Inspect or set MTF units. |
+| `zemax_get_system_metadata` / `zemax_set_system_metadata` | Read or update title, author, and notes without saving automatically. |
+| `zemax_get_environment` / `zemax_set_environment` | Inspect or set temperature, pressure, and refractive-index adjustment. |
+| `zemax_get_polarization` / `zemax_set_polarization` | Inspect or set polarization amplitudes, phases, and method. |
+| `zemax_get_units` / `zemax_get_system_files` | Inspect units and selected coating, scatter, ABg, and GRIN files. |
+| `zemax_get_aperture_settings` / `zemax_get_advanced_system_settings` | Inspect aperture and advanced system settings. |
+| `zemax_get_ray_aiming_settings` / `zemax_get_material_catalog_settings` | Inspect ray aiming and material catalog settings. |
+| `zemax_get_nonsequential_system_settings` | Inspect NSC ray limits, thresholds, splitting, and source-file settings. |
+| `zemax_get_stop_surface` / `zemax_set_stop_surface` | Inspect or change the sequential aperture stop. |
+| `zemax_get_first_order_data` | Calculate first-order optical properties. |
+| `zemax_get_vignetting` / `zemax_set_vignetting` / `zemax_clear_vignetting` | Inspect, calculate, or clear per-field vignetting factors. |
+| `zemax_get_field_settings` / `zemax_get_wavelength_settings` | Inspect field and wavelength settings. |
+| `zemax_quick_focus` | Run Quick Focus with a bounded timeout. |
+| `zemax_scale_lens` | Scale a sequential lens or convert its physical units. |
+
+## Fork and attribution
+
+This repository is a fork of the MIT-licensed **OpticStudio MCP Server** by Javier A Ruiz. This fork adds the packaged Windows launcher, GUI installer, official HTTP MCP Host, trusted-LAN workflow, live status dashboard, graphical AI-client configuration, contract/recovery hardening, and additional tools.
+
+The original copyright and MIT license are retained in [LICENSE](LICENSE). A valid Zemax OpticStudio licence is required for Worker-backed optical operations.
+
+## Release maintainers
+
+Build the public ZIP on a trusted Windows computer against the oldest OpticStudio/ZOS-API installation the release intends to support. Keep ZOS-API files outside source control and out of the public package. After uploading the ZIP to a GitHub Release, run the hosted **Sign Windows release package** workflow to attach the RSA-signed `release-manifest.json`; automatic updates require the repository secret `UPDATE_SIGNING_PRIVATE_KEY_B64`. See [Windows Quick Start](docs/QUICKSTART_WINDOWS.md#maintainers-publishing-an-update) and [Release Validation](docs/RELEASE_VALIDATION.md) for the offline-build and acceptance workflow.

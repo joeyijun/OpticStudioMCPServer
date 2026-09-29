@@ -25,6 +25,11 @@ public partial class MainWindow : Window
     private bool _exitRequested;
     private bool _clientSetupPrompted;
     private bool _refreshingStatus;
+    private bool _refreshingActivity;
+    private bool _healthReachable;
+    private bool _activityEndpointSupported = true;
+    private DateTimeOffset _activityEndpointRetryAfter;
+    private string _observedActivityEndpoint = "";
     private bool _windowLoaded;
     private string _localAccessToken = "";
     private string _remoteEndpoint = "";
@@ -32,6 +37,7 @@ public partial class MainWindow : Window
     private string _fullDiagnostics = "Status has not been checked yet.";
     private readonly Forms.NotifyIcon _trayIcon;
     private readonly DispatcherTimer _statusTimer;
+    private readonly DispatcherTimer _activityTimer;
     public MainWindow()
     {
         InitializeComponent();
@@ -49,6 +55,8 @@ public partial class MainWindow : Window
         _trayIcon.ContextMenuStrip = menu;
         _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _statusTimer.Tick += async (_, _) => await RefreshStatusAsync();
+        _activityTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _activityTimer.Tick += async (_, _) => await RefreshActivityAsync();
     }
 
     private static System.Drawing.Icon GetApplicationIcon()
@@ -87,6 +95,7 @@ public partial class MainWindow : Window
         if (installs.Count > 0 && !hasRemoteEndpoint) StartBridge();
         SetIndicatorsChecking();
         _statusTimer.Start();
+        _activityTimer.Start();
         RefreshClientDashboard(null);
         OfferFirstRunClientSetup();
     }
@@ -284,6 +293,34 @@ public partial class MainWindow : Window
         SetIndicator(AiStateDot, AiState, "No client activity while stopped", System.Windows.Media.Brushes.SlateGray);
     }
     private async void RefreshStatus_Click(object sender, RoutedEventArgs e) => await RefreshStatusAsync();
+    private async Task RefreshActivityAsync()
+    {
+        if (_refreshingActivity || !_healthReachable) return;
+        var endpoint = McpUrl;
+        if (!string.Equals(endpoint, _observedActivityEndpoint, StringComparison.OrdinalIgnoreCase))
+        {
+            _observedActivityEndpoint = endpoint;
+            _activityEndpointSupported = true;
+        }
+        if (!_activityEndpointSupported && DateTimeOffset.UtcNow < _activityEndpointRetryAfter) return;
+        _refreshingActivity = true;
+        var accessToken = McpToken;
+        try
+        {
+            var activity = await Task.Run(() => GetEndpointJson(endpoint, accessToken, "/activity", 2000));
+            _activityEndpointSupported = true;
+            if (_healthReachable && string.Equals(endpoint, McpUrl, StringComparison.OrdinalIgnoreCase))
+                RefreshClientDashboard(activity, refreshSetup: false);
+        }
+        catch (WebException ex) when ((ex.Response as HttpWebResponse)?.StatusCode == HttpStatusCode.NotFound)
+        {
+            // Older remote Hosts still provide activity through /health.
+            _activityEndpointSupported = false;
+            _activityEndpointRetryAfter = DateTimeOffset.UtcNow.AddMinutes(1);
+        }
+        catch (Exception) { /* The next full health check owns offline state. */ }
+        finally { _refreshingActivity = false; }
+    }
     private async Task RefreshStatusAsync()
     {
         if (_refreshingStatus) return;
@@ -296,11 +333,10 @@ public partial class MainWindow : Window
         var accessToken = McpToken;
         var apiFiles = Installation?.ApiFilesPresent == true;
         var localBridge = _bridge != null && !_bridge.HasExited;
-        ConnectionSummary.Text = "Checking " + endpoint + "…";
-        SetIndicatorsChecking();
         try
         {
             var health = await Task.Run(() => GetHealth(endpoint, accessToken));
+            _healthReachable = true;
             var apiLoaded = health["zosApiLoaded"]?.Value<bool>() == true;
             var apiConnected = health["zosApiConnected"]?.Value<bool>() == true;
             var licenseStatus = health["licenseStatus"]?.ToString() ?? "Not checked";
@@ -340,7 +376,7 @@ public partial class MainWindow : Window
             var reportedApi = health["zosApiFiles"] as JObject;
             var loadedApi = health["loadedZosApiFiles"] as JObject;
             var reportedData = health["zemaxDataDirectory"]?.ToString();
-            var activeClients = RefreshClientDashboard(health);
+            var activeCalls = RefreshClientDashboard(health);
             var pathDetails = FormatZemaxPaths(Installation, reportedRoot, reportedApi, loadedApi, reportedData);
             _fullDiagnostics = "MCP endpoint: reachable\n" +
                 "Bridge: " + (bridgeRunning ? "running" : "not running") +
@@ -358,7 +394,7 @@ public partial class MainWindow : Window
                 "Transport: " + (string.IsNullOrWhiteSpace(clientIsolation) ? "session policy not reported" : clientIsolation) +
                 (softTimeout.HasValue && hardTimeout.HasValue ? "; timeout " + softTimeout + "s / hard recovery " + hardTimeout + "s" : "") + "\n" +
                 pathDetails + "\n" +
-                "AI clients active recently: " + activeClients + "; requests in progress: " + activeRequests + activeOperationText + activeJobText +
+                "AI calls in progress: " + activeCalls + "; requests in progress: " + activeRequests + activeOperationText + activeJobText +
                 (string.IsNullOrWhiteSpace(lastServerError) ? "" : "\nLast MCP server error: " + lastServerError) +
                 (localBridge ? "\nLocal launcher bridge process: running" : "");
             var ready = bridgeRunning && serverRunning && apiConnected;
@@ -366,7 +402,7 @@ public partial class MainWindow : Window
                 (bridgeRunning && serverRunning ? "online" : "not ready") + " · OpticStudio " +
                 (apiConnected ? "connected" : apiLoaded ? "waiting" : "not connected") + " · " +
                 (authenticationRequired ? "token protected" : "unprotected") +
-                (activeClients > 0 ? " · " + activeClients + " active AI client(s)" : "");
+                (activeCalls > 0 ? " · " + activeCalls + " AI call(s) in progress" : "");
             if (bridgeRunning && serverRunning) SetIndicator(McpStateDot, McpState, "Online — MCP server is accepting connections", System.Windows.Media.Brushes.SeaGreen);
             else SetIndicator(McpStateDot, McpState, "Endpoint reachable, but a service is not running", System.Windows.Media.Brushes.DarkOrange);
             if (apiConnected) SetIndicator(ZosStateDot, ZosState, "Connected to OpticStudio", System.Windows.Media.Brushes.SeaGreen);
@@ -379,6 +415,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            _healthReachable = false;
             ConnectionSummary.Text = "Offline — MCP endpoint is not reachable\n" + endpoint;
             _fullDiagnostics = "MCP endpoint: not reachable\n" +
                 "ZOS-API files: " + (apiFiles ? "found" : root == null ? "remote endpoint" : "missing") +
@@ -387,8 +424,8 @@ public partial class MainWindow : Window
             if (root == null) SetIndicator(ZosStateDot, ZosState, "Status is available only from the Zemax computer", System.Windows.Media.Brushes.SlateGray);
             else if (apiFiles) SetIndicator(ZosStateDot, ZosState, "Files found — service is unavailable", System.Windows.Media.Brushes.DarkOrange);
             else SetIndicator(ZosStateDot, ZosState, "ZOS-API files are missing", System.Windows.Media.Brushes.IndianRed);
-            SetIndicator(AiStateDot, AiState, "Unknown until the MCP service responds", System.Windows.Media.Brushes.SlateGray);
-            RefreshClientDashboard(null);
+            RefreshClientMenuIndicators();
+            SetIndicator(AiStateDot, AiState, "AI activity unavailable while offline", System.Windows.Media.Brushes.SlateGray);
             LastStatusCheck.Text = "Last checked " + DateTime.Now.ToString("HH:mm:ss") + " · endpoint unavailable; retrying automatically";
         }
         finally { _refreshingStatus = false; }
@@ -401,28 +438,56 @@ public partial class MainWindow : Window
     }
     private static void SetIndicator(System.Windows.Shapes.Ellipse dot, System.Windows.Controls.TextBlock label, string text, System.Windows.Media.Brush brush)
     {
-        dot.Fill = brush;
-        label.Text = text;
-        label.Foreground = brush;
+        if (!ReferenceEquals(dot.Fill, brush)) dot.Fill = brush;
+        if (label.Text != text) label.Text = text;
+        if (!ReferenceEquals(label.Foreground, brush)) label.Foreground = brush;
     }
-    private int RefreshClientDashboard(JObject? health)
+    private int RefreshClientDashboard(JObject? health, bool refreshSetup = true)
     {
-        var activities = ReadClientActivities(health);
-        var activeNames = new List<string>();
-        var clientStatuses = Configurator.GetClientStatuses(McpUrl, McpToken);
-        RefreshClientMenuIndicators(clientStatuses);
-        foreach (var client in clientStatuses)
+        IReadOnlyCollection<ClientConfigurationStatus>? clientStatuses = null;
+        if (refreshSetup)
         {
-            var activity = activities.FirstOrDefault(x => client.Aliases.Any(alias => x.Name.IndexOf(alias, StringComparison.OrdinalIgnoreCase) >= 0));
-            var recent = activity != null && DateTime.Now - activity.LastRequest.ToLocalTime() < TimeSpan.FromMinutes(5);
-            if (recent) activeNames.Add(client.Name);
+            clientStatuses = Configurator.GetClientStatuses(McpUrl, McpToken);
+            RefreshClientMenuIndicators(clientStatuses);
         }
-        if (activeNames.Count > 0) SetIndicator(AiStateDot, AiState, activeNames.Count + " active: " + string.Join(", ", activeNames), System.Windows.Media.Brushes.SeaGreen);
-        else if (activities.Count > 0) SetIndicator(AiStateDot, AiState, "No recent AI call; " + activities.Count + " client(s) seen earlier", System.Windows.Media.Brushes.SteelBlue);
-        else if (clientStatuses.Any(x => x.Configured)) SetIndicator(AiStateDot, AiState, clientStatuses.Count(x => x.Configured) + " configured · waiting for a call", System.Windows.Media.Brushes.DarkOrange);
+        if (health != null)
+        {
+            var activeRequests = health["activeRequests"]?.Value<int>() ?? 0;
+            var operation = (health["activeOperations"] as JArray)?.FirstOrDefault();
+            if (activeRequests > 0)
+            {
+                var client = FormatClientName(operation?["client"]?.ToString() ?? health["lastClient"]?.ToString());
+                var tool = operation?["tool"]?.ToString() ?? health["lastTool"]?.ToString() ?? "MCP tool";
+                var elapsed = operation?["elapsedSeconds"]?.Value<long?>();
+                if (elapsed == null && DateTimeOffset.TryParse(operation?["startedAt"]?.ToString(), out var startedAt))
+                    elapsed = Math.Max(0, (long)(DateTimeOffset.UtcNow - startedAt).TotalSeconds);
+                SetIndicator(AiStateDot, AiState,
+                    "Calling now: " + client + " · " + tool + " (" + FormatUptime(elapsed) + ")" +
+                    (activeRequests > 1 ? " · +" + (activeRequests - 1) + " queued/active" : ""),
+                    System.Windows.Media.Brushes.SeaGreen);
+                return activeRequests;
+            }
+
+            var lastClient = health["lastClient"]?.ToString();
+            var lastTool = health["lastTool"]?.ToString() ?? health["activity"]?["lastTool"]?.ToString();
+            if (!string.IsNullOrWhiteSpace(lastClient) && !string.Equals(lastClient, "None yet", StringComparison.OrdinalIgnoreCase) &&
+                DateTimeOffset.TryParse(health["lastRequestAt"]?.ToString(), out var lastAt))
+            {
+                var age = DateTimeOffset.UtcNow - lastAt;
+                SetIndicator(AiStateDot, AiState,
+                    "Last call: " + FormatClientName(lastClient) +
+                    (string.IsNullOrWhiteSpace(lastTool) ? "" : " · " + lastTool) +
+                    " · " + FormatTimeAgo(age),
+                    age < TimeSpan.FromMinutes(5) ? System.Windows.Media.Brushes.SteelBlue : System.Windows.Media.Brushes.SlateGray);
+                return 0;
+            }
+        }
+        if (!refreshSetup) return 0;
+        clientStatuses ??= Configurator.GetClientStatuses(McpUrl, McpToken);
+        if (clientStatuses.Any(x => x.Configured)) SetIndicator(AiStateDot, AiState, clientStatuses.Count(x => x.Configured) + " configured · waiting for a call", System.Windows.Media.Brushes.DarkOrange);
         else if (clientStatuses.Any(x => x.Detected)) SetIndicator(AiStateDot, AiState, clientStatuses.Count(x => x.Detected) + " detected · setup needed", System.Windows.Media.Brushes.DarkOrange);
-        else SetIndicator(AiStateDot, AiState, "No AI client call recorded", System.Windows.Media.Brushes.SlateGray);
-        return activeNames.Count;
+        else SetIndicator(AiStateDot, AiState, "No AI client call in progress", System.Windows.Media.Brushes.SlateGray);
+        return 0;
     }
     private void RefreshClientMenuIndicators(IReadOnlyCollection<ClientConfigurationStatus>? statuses = null)
     {
@@ -442,29 +507,28 @@ public partial class MainWindow : Window
         var brush = status.Configured ? System.Windows.Media.Brushes.SeaGreen
             : status.Detected ? System.Windows.Media.Brushes.DarkOrange
             : System.Windows.Media.Brushes.SlateGray;
-        dot.Fill = brush;
-        label.Foreground = brush;
-        label.Text = status.Configured ? "Configured" : status.Detected ? "Setup needed" : "Not detected";
-        dot.ToolTip = name + ": " + label.Text.ToLowerInvariant();
+        if (!ReferenceEquals(dot.Fill, brush)) dot.Fill = brush;
+        if (!ReferenceEquals(label.Foreground, brush)) label.Foreground = brush;
+        var statusText = status.Configured ? "Configured" : status.Detected ? "Setup needed" : "Not detected";
+        if (label.Text != statusText) label.Text = statusText;
+        var tooltip = name + ": " + statusText.ToLowerInvariant();
+        if (!string.Equals(dot.ToolTip as string, tooltip, StringComparison.Ordinal)) dot.ToolTip = tooltip;
     }
-    private static List<ClientActivityView> ReadClientActivities(JObject? health)
+    private static string FormatClientName(string? identity)
     {
-        var result = new List<ClientActivityView>();
-        foreach (var item in health?["clients"] as JArray ?? new JArray())
-        {
-            var name = item["name"]?.ToString() ?? "";
-            if (string.IsNullOrWhiteSpace(name) || name.Equals("zemax-mcp-launcher", StringComparison.OrdinalIgnoreCase)) continue;
-            if (DateTime.TryParse(item["lastRequestAt"]?.ToString(), out var when))
-                result.Add(new ClientActivityView(name, when, item["lastMethod"]?.ToString() ?? "request"));
-        }
-        if (result.Count == 0)
-        {
-            var name = health?["lastClient"]?.ToString() ?? "";
-            if (!string.IsNullOrWhiteSpace(name) && !name.Equals("zemax-mcp-launcher", StringComparison.OrdinalIgnoreCase) && DateTime.TryParse(health?["lastRequestAt"]?.ToString(), out var when))
-                result.Add(new ClientActivityView(name, when, "request"));
-        }
-        return result;
+        if (string.IsNullOrWhiteSpace(identity)) return "AI client";
+        if (identity!.StartsWith("token:", StringComparison.OrdinalIgnoreCase)) return "authenticated client";
+        var name = identity.StartsWith("client:", StringComparison.OrdinalIgnoreCase) ? identity.Substring(7) : identity;
+        var suffix = name.IndexOfAny(new[] { '@', '|' });
+        if (suffix >= 0) name = name.Substring(0, suffix);
+        return string.IsNullOrWhiteSpace(name) || name.Equals("unknown", StringComparison.OrdinalIgnoreCase) ? "AI client" : name;
     }
+    private static string FormatTimeAgo(TimeSpan age) =>
+        age.TotalSeconds < 10 ? "just now" :
+        age.TotalMinutes < 1 ? (int)Math.Max(0, age.TotalSeconds) + "s ago" :
+        age.TotalHours < 1 ? (int)age.TotalMinutes + "m ago" :
+        age.TotalDays < 1 ? (int)age.TotalHours + "h ago" :
+        (int)age.TotalDays + "d ago";
     private static string FormatUptime(long? totalSeconds)
     {
         if (totalSeconds == null) return "unknown";
@@ -510,11 +574,14 @@ public partial class MainWindow : Window
             if (!string.IsNullOrWhiteSpace(path)) lines.Add(item.Item1 + ": " + path);
         }
     }
-    private static JObject GetHealth(string endpoint, string accessToken)
+    private static JObject GetHealth(string endpoint, string accessToken) =>
+        GetEndpointJson(endpoint, accessToken, "/health", 5000);
+
+    private static JObject GetEndpointJson(string endpoint, string accessToken, string path, int timeoutMilliseconds)
     {
-        var request = (HttpWebRequest)WebRequest.Create(endpoint.TrimEnd('/') + "/health");
+        var request = (HttpWebRequest)WebRequest.Create(endpoint.TrimEnd('/') + path);
         request.Method = "GET";
-        request.Timeout = 5000;
+        request.Timeout = timeoutMilliseconds;
         AddAuthorization(request, accessToken);
         using var response = (HttpWebResponse)request.GetResponse();
         using var reader = new StreamReader(response.GetResponseStream());
@@ -887,19 +954,12 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _statusTimer.Stop();
+        _activityTimer.Stop();
         StopBridge();
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
         base.OnClosed(e);
     }
-}
-
-internal sealed class ClientActivityView
-{
-    public ClientActivityView(string name, DateTime lastRequest, string lastMethod) { Name = name; LastRequest = lastRequest; LastMethod = lastMethod; }
-    public string Name { get; }
-    public DateTime LastRequest { get; }
-    public string LastMethod { get; }
 }
 
 internal static class FirewallRule

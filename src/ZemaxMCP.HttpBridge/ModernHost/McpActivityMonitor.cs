@@ -6,42 +6,61 @@ internal sealed class McpActivityMonitor
     private string _lastClient = "None yet";
     private string? _lastTool;
     private DateTimeOffset? _lastRequestAt;
-    private DateTimeOffset? _activeSince;
-    private int _activeRequests;
+    private readonly Dictionary<long, McpActiveOperation> _activeOperations = new();
+    private long _nextOperationId;
 
     public IDisposable Begin(string client, string tool)
     {
+        long operationId;
         lock (_sync)
         {
+            operationId = ++_nextOperationId;
             _lastClient = client;
             _lastTool = tool;
             _lastRequestAt = DateTimeOffset.UtcNow;
-            _activeSince ??= _lastRequestAt;
-            _activeRequests++;
+            _activeOperations.Add(operationId, new McpActiveOperation(client, tool, _lastRequestAt.Value));
         }
-        return new Releaser(this);
+        return new Releaser(this, operationId);
     }
 
     public McpActivitySnapshot GetHealth()
     {
-        lock (_sync) return new McpActivitySnapshot(_lastClient, _lastTool, _lastRequestAt, _activeSince, _activeRequests);
+        lock (_sync)
+            return new McpActivitySnapshot(_lastClient, _lastTool, _lastRequestAt,
+                _activeOperations.Values.OrderBy(operation => operation.StartedAt).ToArray());
     }
 
-    private void End()
+    private void End(long operationId)
     {
         lock (_sync)
         {
-            _activeRequests = Math.Max(0, _activeRequests - 1);
-            if (_activeRequests == 0) _activeSince = null;
+            if (_activeOperations.Remove(operationId, out var operation))
+            {
+                _lastClient = operation.Client;
+                _lastTool = operation.Tool;
+                _lastRequestAt = DateTimeOffset.UtcNow;
+            }
         }
     }
 
     private sealed class Releaser : IDisposable
     {
         private McpActivityMonitor? _monitor;
-        public Releaser(McpActivityMonitor monitor) => _monitor = monitor;
-        public void Dispose() => Interlocked.Exchange(ref _monitor, null)?.End();
+        private readonly long _operationId;
+        public Releaser(McpActivityMonitor monitor, long operationId)
+        {
+            _monitor = monitor;
+            _operationId = operationId;
+        }
+        public void Dispose() => Interlocked.Exchange(ref _monitor, null)?.End(_operationId);
     }
 }
 
-internal sealed record McpActivitySnapshot(string LastClient, string? LastTool, DateTimeOffset? LastRequestAt, DateTimeOffset? ActiveSince, int ActiveRequests);
+internal sealed record McpActiveOperation(string Client, string Tool, DateTimeOffset StartedAt);
+
+internal sealed record McpActivitySnapshot(string LastClient, string? LastTool, DateTimeOffset? LastRequestAt,
+    IReadOnlyList<McpActiveOperation> ActiveOperations)
+{
+    public int ActiveRequests => ActiveOperations.Count;
+    public DateTimeOffset? ActiveSince => ActiveOperations.Count == 0 ? null : ActiveOperations[0].StartedAt;
+}
