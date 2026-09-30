@@ -63,7 +63,7 @@ if ([string]::IsNullOrWhiteSpace($domainLookup) -or $domainLookup -match 'Starts
 $profileDomains = @{
     'basic-viewing' = @('system', 'sequential-editing', 'analysis', 'administration')
     'sequential-design' = @('system', 'sequential-editing', 'analysis', 'polarization', 'files', 'administration')
-    'nonsequential-stray-light' = @('system', 'non-sequential', 'analysis', 'files', 'administration')
+    'nonsequential-stray-light' = @('system', 'non-sequential', 'analysis', 'polarization', 'files', 'administration')
     'optimization-tolerance' = @('system', 'sequential-editing', 'analysis', 'optimization', 'tolerance', 'polarization', 'files', 'administration')
     'full-expert' = @('system', 'sequential-editing', 'non-sequential', 'analysis', 'optimization', 'tolerance', 'polarization', 'files', 'administration')
 }
@@ -84,8 +84,9 @@ $profiles = @{
 if ($toolset -notmatch 'public static IEnumerable<string> EnabledImpacts' -or $toolset -notmatch 'ToolImpact\.ReadOnly') {
     throw "Toolset profiles must declare their allowed impacts as well as their domains."
 }
-if (-not [regex]::IsMatch($toolset, 'EnabledImpacts\(profile\)[\s\S]*?GetImpact\(toolName!?', [Text.RegularExpressions.RegexOptions]::Singleline)) {
-    throw "Toolset admission must compose explicit domain and impact metadata."
+if (-not [regex]::IsMatch($toolset, 'EnabledImpacts\((?:profile|normalized)\)[\s\S]*?GetImpact\(toolName!?', [Text.RegularExpressions.RegexOptions]::Singleline) -or
+    $toolset -notmatch 'FocusedProfileTools') {
+    throw "Toolset admission must compose explicit domain/impact metadata with the reviewed focused-profile allowlists."
 }
 $domainByTool = @{}
 foreach ($match in $domainMatches) { $domainByTool[$match.Groups[1].Value] = $match.Groups[2].Value }
