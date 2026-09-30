@@ -41,7 +41,7 @@ internal static class ZosApiRuntimeCompatibility
         }
 
         var buildInfo = ReadKeyValueFile(markerPath);
-        string format;
+        string? format;
         if (!buildInfo.TryGetValue("format", out format) || format != "1")
             throw new InvalidDataException("Unsupported or malformed " + BuildInfoFileName + " format.");
 
@@ -49,7 +49,7 @@ internal static class ZosApiRuntimeCompatibility
         var incompatible = new List<string>();
         foreach (var component in Components)
         {
-            string runtimePath;
+            string? runtimePath;
             if (!runtimePaths.TryGetValue(component, out runtimePath) || string.IsNullOrWhiteSpace(runtimePath) || !File.Exists(runtimePath))
                 throw new FileNotFoundException("The selected OpticStudio installation did not expose the required compatibility component '" + component + "'.", runtimePath);
 
@@ -125,7 +125,7 @@ internal static class ZosApiRuntimeCompatibility
         // CLR assembly identities may remain stable across product releases.
         foreach (var suffix in new[] { "productVersion", "fileVersion", "assemblyVersion" })
         {
-            string value;
+            string? value;
             if (buildInfo.TryGetValue(component + "." + suffix, out value))
             {
                 var parsed = ParseComparableVersion(value);
