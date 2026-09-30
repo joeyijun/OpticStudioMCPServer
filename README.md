@@ -171,12 +171,16 @@ This fork includes these acceptance and validation tools:
 | `zemax_get_global_matrix` | Read a surface local-to-global rotation matrix and vertex origin. |
 | `zemax_aperture_throughput` | Sample pupil throughput and identify vignette surfaces. |
 | `zemax_ray_trace_extended` | Trace a real ray with intercept, direction, intensity, error, and vignette data. |
+| `zemax_ray_trace_diagnostics` | Sample a bounded field/pupil grid and localize problematic rays to the first surface that reports an error or vignette code. |
+| `zemax_batch_set_surfaces` | Atomically apply multiple sequential-surface edits with one safety snapshot, independent readback, and rollback on failure. |
 
 ### Additional tools in this fork
 
 | Tool | Purpose |
 |---|---|
 | `zemax_get_nsc_objects` / `zemax_get_nsc_detector` / `zemax_get_nsc_object_parameters` | Inspect NSC objects, detector properties, and type-specific parameters. |
+| `zemax_nsc_scene_summary` | Summarize NSC scene structure, object types, detectors, references, nesting, materials, and structural warnings. |
+| `zemax_tolerance_summary` | Summarize TDE operand types, active/ignored state, bounds, and structural warnings without pretending to run Monte Carlo. |
 | `zemax_get_tolerances` | Read Tolerance Data Editor operands safely, including unset bounds. |
 | `zemax_set_number_of_fields` / `zemax_set_number_of_wavelengths` | Resize the system field or wavelength lists. |
 | `zemax_get_apodization` / `zemax_set_apodization` | Inspect or set pupil apodization type and factor. |
