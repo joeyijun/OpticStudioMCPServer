@@ -11,7 +11,7 @@ public sealed class McpJobTools
     public McpJobTools(McpJobManager jobs) => _jobs = jobs;
 
     public record JobInfo(
-        string JobId, string ToolName, string State, int QueuePosition,
+        string JobId, string ToolName, string? ParentOperationId, string State, int QueuePosition,
         double? ProgressPercent, string Message, DateTimeOffset QueuedAt,
         DateTimeOffset? StartedAt, DateTimeOffset? CompletedAt, double? ElapsedSeconds, object? Result);
 
@@ -33,7 +33,7 @@ public sealed class McpJobTools
     }
 
     internal static JobInfo? ToInfo(McpJobSnapshot? job) => job == null ? null : new JobInfo(
-        job.JobId, job.ToolName, job.State.ToString(), job.QueuePosition,
+        job.JobId, job.ToolName, job.ParentOperationId, job.State.ToString(), job.QueuePosition,
         job.Progress is { } progress ? Math.Round(progress * 100, 1) : null,
         job.Message, job.QueuedAt, job.StartedAt, job.CompletedAt,
         job.Elapsed?.TotalSeconds is { } elapsed ? Math.Round(elapsed, 1) : null, job.Result);
