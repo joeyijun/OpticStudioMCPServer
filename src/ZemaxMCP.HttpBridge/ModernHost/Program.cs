@@ -94,7 +94,6 @@ internal static class Program
 
                     var clientId = ResolveControlIdentity(request);
                     using var call = activity.Begin(clientId, request.Params.Name);
-                    using var lease = await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false);
 
                     Func<OperationProgress, CancellationToken, Task>? progressHandler = null;
                     if (request.Params.ProgressToken is { } progressToken)
@@ -115,7 +114,15 @@ internal static class Program
                         };
                     }
 
-                    return await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
+                    CallToolResult result;
+                    using (await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false))
+                        result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
+
+                    if (string.Equals(request.Params.Name, "zemax_disconnect", StringComparison.Ordinal) &&
+                        result.IsError != true)
+                        controlLease.ReleaseOwnership(clientId);
+
+                    return result;
                 });
 
             var app = builder.Build();
