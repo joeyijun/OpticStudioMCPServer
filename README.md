@@ -173,6 +173,8 @@ This fork includes these acceptance and validation tools:
 | `zemax_ray_trace_extended` | Trace a real ray with intercept, direction, intensity, error, and vignette data. |
 | `zemax_ray_trace_diagnostics` | Sample a bounded field/pupil grid and localize problematic rays to the first surface that reports an error or vignette code. |
 | `zemax_batch_set_surfaces` | Atomically apply multiple sequential-surface edits with one safety snapshot, independent readback, and rollback on failure. |
+| `zemax_snapshot_list` / `zemax_snapshot_diff` | Browse safety snapshots and compare the current sequential LDE against a snapshot without replacing the active model. |
+| `zemax_snapshot_restore` | Restore a safety snapshot into a separate working copy after first protecting the current state with a new pre-restore snapshot. |
 
 ### Additional tools in this fork
 
