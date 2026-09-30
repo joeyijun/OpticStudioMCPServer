@@ -18,15 +18,25 @@ public sealed class McpJobManager : IDisposable
     private readonly Dictionary<string, JobEntry> _jobs = new(StringComparer.Ordinal);
     private readonly int _maxHistory;
     private readonly int _maxPending;
+    private readonly TimeSpan _cancellationGrace;
+    private readonly Action<McpJobSnapshot>? _hardRecoveryAction;
     private bool _processorRunning;
     private bool _disposed;
 
-    public McpJobManager(int maxHistory = DefaultMaxHistory, int maxPending = DefaultMaxPending)
+    public McpJobManager(
+        int maxHistory = DefaultMaxHistory,
+        int maxPending = DefaultMaxPending,
+        TimeSpan? cancellationGrace = null,
+        Action<McpJobSnapshot>? hardRecoveryAction = null)
     {
         if (maxHistory < 1) throw new ArgumentOutOfRangeException(nameof(maxHistory), "Job history limit must be at least 1.");
         if (maxPending < 1) throw new ArgumentOutOfRangeException(nameof(maxPending), "Pending job limit must be at least 1.");
         _maxHistory = maxHistory;
         _maxPending = maxPending;
+        _cancellationGrace = cancellationGrace ?? TimeSpan.FromSeconds(60);
+        if (_cancellationGrace <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(cancellationGrace), "Job cancellation grace must be positive.");
+        _hardRecoveryAction = hardRecoveryAction;
     }
 
     public event Action<McpJobSnapshot>? JobChanged;
@@ -139,15 +149,23 @@ public sealed class McpJobManager : IDisposable
                     : null;
                 if (timeoutSource != null) timeoutSource.CancelAfter(entry.Timeout!.Value);
                 var token = timeoutSource?.Token ?? entry.Cancellation.Token;
-                await entry.Operation(new McpJobContext(
-                    token,
-                    (progress, message) => PublishProgress(entry, progress, message),
-                    result => PublishResult(entry, result))).ConfigureAwait(false);
+                var drained = await ExecuteWithRecoveryAsync(entry, token).ConfigureAwait(false);
+                if (!drained) continue;
                 lock (_gate)
                 {
                     entry.CompletedAt = DateTimeOffset.UtcNow;
-                    entry.State = entry.Cancellation.IsCancellationRequested ? McpJobState.Cancelled : McpJobState.Completed;
-                    entry.Message = entry.Cancellation.IsCancellationRequested ? "Cancelled." : "Completed.";
+                    if (token.IsCancellationRequested)
+                    {
+                        entry.State = McpJobState.Cancelled;
+                        entry.Message = entry.Timeout is { } && timeoutSource?.IsCancellationRequested == true && !entry.Cancellation.IsCancellationRequested
+                            ? "Timed out and stopped during the cancellation grace period."
+                            : "Cancelled.";
+                    }
+                    else
+                    {
+                        entry.State = McpJobState.Completed;
+                        entry.Message = "Completed.";
+                    }
                 }
             }
             catch (OperationCanceledException)
@@ -179,6 +197,49 @@ public sealed class McpJobManager : IDisposable
             }
             Publish(terminal);
         }
+    }
+
+    private async Task<bool> ExecuteWithRecoveryAsync(JobEntry entry, CancellationToken cancellationToken)
+    {
+        var context = new McpJobContext(
+            cancellationToken,
+            (progress, message) => PublishProgress(entry, progress, message),
+            result => PublishResult(entry, result));
+
+        var operationTask = entry.Operation(context);
+        if (!cancellationToken.CanBeCanceled)
+        {
+            await operationTask.ConfigureAwait(false);
+            return true;
+        }
+
+        var cancellationSignal = Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        if (await Task.WhenAny(operationTask, cancellationSignal).ConfigureAwait(false) == operationTask)
+        {
+            await operationTask.ConfigureAwait(false);
+            return true;
+        }
+
+        var drainDeadline = Task.Delay(_cancellationGrace);
+        if (await Task.WhenAny(operationTask, drainDeadline).ConfigureAwait(false) == operationTask)
+        {
+            await operationTask.ConfigureAwait(false);
+            return true;
+        }
+
+        McpJobSnapshot snapshot;
+        lock (_gate)
+        {
+            entry.CompletedAt = DateTimeOffset.UtcNow;
+            entry.State = McpJobState.Failed;
+            entry.Message = $"Cancellation did not stop the background ZOS-API job within {_cancellationGrace.TotalSeconds:0} seconds; Worker hard recovery is required.";
+            snapshot = Snapshot(entry);
+            TrimHistoryLocked();
+        }
+        Publish(snapshot);
+        try { _hardRecoveryAction?.Invoke(snapshot); }
+        catch { /* The job state is already terminal; recovery observers must not corrupt it. */ }
+        return false;
     }
 
     private void TrimHistoryLocked()
