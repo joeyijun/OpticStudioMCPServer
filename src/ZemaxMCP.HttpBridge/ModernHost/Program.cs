@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using ModelContextProtocol;
 using ModelContextProtocol.AspNetCore;
@@ -119,7 +120,7 @@ internal static class Program
                         result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
 
                     if (string.Equals(request.Params.Name, "zemax_disconnect", StringComparison.Ordinal) &&
-                        result.IsError != true)
+                        IsSuccessfulDisconnect(result))
                         controlLease.ReleaseOwnership(clientId);
 
                     return result;
@@ -231,6 +232,25 @@ internal static class Program
             return 1;
         }
         finally { await Log.CloseAndFlushAsync().ConfigureAwait(false); }
+    }
+
+    private static bool IsSuccessfulDisconnect(CallToolResult result)
+    {
+        if (result.IsError == true) return false;
+        foreach (var content in result.Content.OfType<TextContentBlock>())
+        {
+            if (string.IsNullOrWhiteSpace(content.Text)) continue;
+            try
+            {
+                using var document = JsonDocument.Parse(content.Text);
+                if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                    document.RootElement.TryGetProperty("success", out var success) &&
+                    success.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                    return success.GetBoolean();
+            }
+            catch (JsonException) { }
+        }
+        return false;
     }
 
     private static bool HasValidToken(HttpContext context, string token)
