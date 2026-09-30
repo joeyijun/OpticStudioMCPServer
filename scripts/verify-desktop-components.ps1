@@ -16,7 +16,7 @@ $launcherCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Launcher\MainWin
 $proxyCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.ClientProxy\Program.cs")
 $solution = Get-Content -Raw (Join-Path $root "OpticStudioMCPServer.sln")
 $architectureDoc = Join-Path $root "docs\ARCHITECTURE.md"
-foreach ($marker in 'AiStateDot', 'Choose folder', 'Content="Start"', 'Content="Stop"', 'Copy secure setup', 'x:Name="ToolsetProfile"') {
+foreach ($marker in 'AiStateDot', 'Content="Browse…"', 'Click="ChooseZemaxFolder_Click"', 'Content="Start"', 'Content="Stop"', 'Copy secure setup', 'x:Name="ToolsetProfile"') {
   if ($launcherXaml -notmatch [regex]::Escape($marker)) { throw "The desktop UI contract is missing: $marker" }
 }
 if ($launcherCode -notmatch '"Host", "ZemaxMCP\.Host\.exe"' -or
