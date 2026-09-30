@@ -53,6 +53,23 @@ internal static class StaticToolManifestAssertions
             StaticToolManifest.IsAllowed("optimization-tolerance", "zemax_get_nsc_objects", readOnly: false))
             throw new InvalidOperationException("Focused profiles leaked unrelated editor domains back into tools/list.");
 
+        var batchSurfaces = StaticToolManifest.GetRequired("zemax_batch_set_surfaces").InputSchema;
+        var batchRequired = batchSurfaces.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
+        if (!batchRequired.SetEquals(new[] { "edits" }))
+            throw new InvalidOperationException("zemax_batch_set_surfaces must require only the edits array.");
+        var batchItems = batchSurfaces.GetProperty("properties").GetProperty("edits").GetProperty("items");
+        var batchItemRequired = batchItems.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
+        if (!batchItemRequired.SetEquals(new[] { "surfaceNumber" }) ||
+            !batchItems.GetProperty("properties").TryGetProperty("thickness", out _) ||
+            !batchItems.GetProperty("properties").TryGetProperty("isStop", out _))
+            throw new InvalidOperationException("Batch surface-edit schema must preserve required surfaceNumber and nullable edit fields.");
+
+        var rayDiagnostics = StaticToolManifest.GetRequired("zemax_ray_trace_diagnostics").InputSchema.GetProperty("properties");
+        if (rayDiagnostics.GetProperty("fieldSampling").GetProperty("default").GetInt32() != 5 ||
+            rayDiagnostics.GetProperty("pupilSampling").GetProperty("default").GetInt32() != 5 ||
+            rayDiagnostics.GetProperty("maxFailures").GetProperty("default").GetInt32() != 50)
+            throw new InvalidOperationException("Ray-trace diagnostics must preserve bounded sampling defaults.");
+
         var setFields = StaticToolManifest.GetRequired("zemax_set_fields").InputSchema;
         var setFieldsRequired = setFields.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
         if (!setFieldsRequired.SetEquals(new[] { "fields" }))
