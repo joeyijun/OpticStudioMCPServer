@@ -195,6 +195,10 @@ internal static class Program
                 {
                     bridgeRunning = true,
                     mcpServerRunning = status != null,
+                    hostVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown",
+                    workerVersion = status?.WorkerVersion,
+                    zosApiAssemblyVersion = status?.ZosApiAssemblyVersion,
+                    zosApiFileVersion = status?.ZosApiFileVersion,
                     rpcVersion = ZemaxRpcProtocol.Version,
                     manifestFingerprint = StaticToolManifest.ContractFingerprint,
                     workerRpcVersion = status?.RpcVersion,
