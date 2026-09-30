@@ -6,7 +6,6 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
-using System.Threading.Channels;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using Serilog;
@@ -30,12 +29,8 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     private readonly ConcurrentDictionary<string, TaskCompletionSource<ZemaxRpcEnvelope>> _pending = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Func<OperationProgress, CancellationToken, Task>> _progressHandlers = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, WorkerJobStatus> _eventJobs = new(StringComparer.Ordinal);
-    private readonly Channel<ZemaxRpcEnvelope> _eventQueue = Channel.CreateUnbounded<ZemaxRpcEnvelope>(new UnboundedChannelOptions
-    {
-        SingleReader = true,
-        SingleWriter = true,
-        AllowSynchronousContinuations = false
-    });
+    private readonly ConcurrentDictionary<string, ZemaxRpcEnvelope> _coalescedProgress = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _eventSignal = new(0);
     private readonly CancellationTokenSource _eventDispatchCancellation = new();
     private readonly Task _eventDispatchPump;
     private readonly JsonSerializerOptions _jsonOptions = McpJsonUtilities.DefaultOptions;
@@ -160,10 +155,11 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         var pump = _pump;
         CloseStaleConnection("The Worker RPC client is shutting down.");
         if (pump != null) { try { await pump.ConfigureAwait(false); } catch { } }
-        _eventQueue.Writer.TryComplete();
         _eventDispatchCancellation.Cancel();
+        try { _eventSignal.Release(); } catch { }
         try { await _eventDispatchPump.ConfigureAwait(false); } catch (OperationCanceledException) { }
         _eventDispatchCancellation.Dispose();
+        _eventSignal.Dispose();
         _executionGate.Dispose();
         _writeGate.Dispose();
         _startupGate.Dispose();
@@ -252,9 +248,16 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
                 switch (message.Kind)
                 {
                     case ZemaxRpcProtocol.Progress:
+                        if (string.IsNullOrWhiteSpace(message.OperationId))
+                            throw new InvalidDataException("The Worker returned progress without an operation ID.");
+                        if (_coalescedProgress.TryAdd(message.OperationId, message))
+                            _eventSignal.Release();
+                        else
+                            _coalescedProgress[message.OperationId] = message;
+                        break;
                     case ZemaxRpcProtocol.SnapshotCreated:
-                        if (!_eventQueue.Writer.TryWrite(message))
-                            Log.Warning("Dropping Worker event {Kind} because the Host event dispatcher is closed", message.Kind);
+                        _lastSnapshotPath = message.Payload.Deserialize<SnapshotCreatedEvent>(_jsonOptions)?.Path
+                            ?? throw new InvalidDataException("The Worker returned an invalid snapshot event.");
                         break;
                     case ZemaxRpcProtocol.Result:
                     case ZemaxRpcProtocol.Error:
@@ -275,10 +278,12 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     {
         try
         {
-            await foreach (var message in _eventQueue.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            while (!cancellationToken.IsCancellationRequested)
             {
-                if (string.Equals(message.Kind, ZemaxRpcProtocol.Progress, StringComparison.Ordinal))
+                await _eventSignal.WaitAsync(cancellationToken).ConfigureAwait(false);
+                foreach (var operationId in _coalescedProgress.Keys)
                 {
+                    if (!_coalescedProgress.TryRemove(operationId, out var message)) continue;
                     var progress = message.Payload.Deserialize<OperationProgress>(_jsonOptions)
                         ?? throw new InvalidDataException("The Worker returned an invalid progress event.");
                     _lastProgress = progress;
@@ -298,13 +303,6 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
                         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                         catch (Exception ex) { Log.Warning(ex, "Could not forward Worker progress for operation {OperationId}", progress.OperationId); }
                     }
-                    continue;
-                }
-
-                if (string.Equals(message.Kind, ZemaxRpcProtocol.SnapshotCreated, StringComparison.Ordinal))
-                {
-                    _lastSnapshotPath = message.Payload.Deserialize<SnapshotCreatedEvent>(_jsonOptions)?.Path
-                        ?? throw new InvalidDataException("The Worker returned an invalid snapshot event.");
                 }
             }
         }
@@ -361,13 +359,12 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
             }
             try
             {
-                await _writeGate.WaitAsync(lockToken).ConfigureAwait(false);
+                await WaitForWriteGateAsync(_writeGate, lockToken, cancellationToken, deadline).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (deadline?.IsCancellationRequested == true)
+            catch (TimeoutException ex)
             {
-                var timeout = new TimeoutException("The Worker RPC pipe did not accept a message before its write deadline.");
-                FaultWorkerConnection(timeout, expectedWriter: writer);
-                throw timeout;
+                FaultWorkerConnection(ex, expectedWriter: writer);
+                throw;
             }
             lockTaken = true;
             var write = writer.WriteLineAsync(JsonSerializer.Serialize(message, _jsonOptions));
@@ -400,6 +397,26 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         {
             if (lockTaken) _writeGate.Release();
             deadline?.Dispose();
+        }
+    }
+
+    internal static async Task WaitForWriteGateAsync(
+        SemaphoreSlim gate,
+        CancellationToken waitToken,
+        CancellationToken callerCancellation,
+        CancellationTokenSource? deadline)
+    {
+        try
+        {
+            await gate.WaitAsync(waitToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (callerCancellation.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(callerCancellation);
+        }
+        catch (OperationCanceledException) when (deadline?.IsCancellationRequested == true)
+        {
+            throw new TimeoutException("The Worker RPC pipe did not accept a message before its write deadline.");
         }
     }
 
