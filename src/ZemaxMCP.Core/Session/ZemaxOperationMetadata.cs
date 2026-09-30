@@ -63,9 +63,9 @@ public static class ZemaxOperationMetadata
             "zemax_relative_illumination", "zemax_rms_spot", "zemax_search_operands", "zemax_seidel_coefficients", "zemax_spot_diagram", "zemax_status",
             "zemax_tool_catalog"
             }),
-            new OperationPolicy(ZemaxOperationImpact.Caution, new[] { "NscRayTrace", "OpenFile" }, new[]
+            new OperationPolicy(ZemaxOperationImpact.Caution, new[] { "NscRayTrace", "OpenFile", "RunTolerancing" }, new[]
             {
-            "zemax_connect", "zemax_disconnect", "zemax_job_cancel", "zemax_multistart_stop", "zemax_open_file", "zemax_restart", "zemax_run_nsc_ray_trace"
+            "zemax_connect", "zemax_disconnect", "zemax_job_cancel", "zemax_multistart_stop", "zemax_open_file", "zemax_restart", "zemax_run_nsc_ray_trace", "zemax_run_tolerancing"
             }),
             new OperationPolicy(ZemaxOperationImpact.HighImpact, new[]
             {
