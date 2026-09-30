@@ -240,7 +240,7 @@ public sealed class RayTraceDiagnosticsTool
             field.Y,
             pupil.X,
             pupil.Y,
-            true,
+            false,
             out var error,
             out var vignette,
             out var x,
