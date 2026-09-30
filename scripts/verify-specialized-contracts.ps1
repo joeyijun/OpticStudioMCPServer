@@ -43,11 +43,21 @@ if ($rayDiagnostics -notmatch 'MaximumSampledRays' -or
     throw "zemax_ray_trace_diagnostics must remain bounded, cancellable, based on actual batch-ray error/vignette codes, and localize problem rays by progressive surface tracing."
 }
 
+$nscRayTrace = Get-Content -LiteralPath (Join-Path $nscRoot "RunNscRayTraceTool.cs") -Raw
 $detector = Get-Content -LiteralPath (Join-Path $nscRoot "GetNscDetectorTool.cs") -Raw
 if ($detector -notmatch 'out var rows, out var columns' -or
     $detector -notmatch 'expectedPixels = checked\(\(ulong\)rows \* columns\)' -or
     $detector -notmatch 'CancellationToken cancellationToken') {
     throw "zemax_get_nsc_detector must retain official Rows/Cols ordering, size cross-check, and cancellation."
+}
+
+if ($nscRayTrace -notmatch 'OpenNSCRayTrace\(\)' -or
+    $nscRayTrace -notmatch 'trace\.SaveRays = false' -or
+    $nscRayTrace -notmatch 'RunBounded\(' -or
+    $nscRayTrace -notmatch 'CancelAndDrain\(' -or
+    $nscRayTrace -notmatch 'McpJobManager' -or
+    $nscRayTrace -notmatch 'timeoutSeconds \+ 30') {
+    throw "zemax_run_nsc_ray_trace must use the official NSC trace tool, avoid unreviewed ZRD output, remain bounded/cancellable, and support managed background Jobs."
 }
 
 $objects = Get-Content -LiteralPath (Join-Path $nscRoot "GetNscObjectsTool.cs") -Raw
