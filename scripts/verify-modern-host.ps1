@@ -178,6 +178,9 @@ if ($functionalLiveVerifier -notmatch 'FixturePath' -or
     $functionalLiveVerifier -notmatch 'VerifyBackgroundJobs' -or
     $functionalLiveVerifier -notmatch 'ParentOperationId' -or
     $functionalLiveVerifier -notmatch 'zemax_batch_set_surfaces' -or
+    $functionalLiveVerifier -notmatch 'zemax_snapshot_list' -or
+    $functionalLiveVerifier -notmatch 'zemax_snapshot_diff' -or
+    $functionalLiveVerifier -notmatch 'zemax_snapshot_restore' -or
     $functionalLiveVerifier -notmatch 'zemax_ray_trace_diagnostics' -or
     $functionalLiveVerifier -notmatch 'zemax_nsc_scene_summary' -or
     $functionalLiveVerifier -notmatch 'zemax_run_nsc_ray_trace' -or
@@ -187,7 +190,7 @@ if ($functionalLiveVerifier -notmatch 'FixturePath' -or
     $functionalLiveVerifier -notmatch 'sensitivityCriteria' -or
     $functionalLiveVerifier -notmatch 'ConvertTo-Json' -or
     $functionalLiveVerifier -notmatch 'workingCopy') {
-  throw "Functional live acceptance must use a temporary fixture copy, cover batch edit/readback, ray diagnostics, background-job correlation, real NSC/tolerancing execution, structured result checks, and emit a JSON report."
+  throw "Functional live acceptance must use a temporary fixture copy, cover batch edit/readback, snapshot list/diff/restore, ray diagnostics, background-job correlation, real NSC/tolerancing execution, structured result checks, and emit a JSON report."
 }
 $listIndex = $liveVerifier.IndexOf('Invoke-ModernMcpRequest -Method "tools/list"', [StringComparison]::Ordinal)
 $healthIndex = $liveVerifier.IndexOf('$health = Get-McpHealth', [StringComparison]::Ordinal)
