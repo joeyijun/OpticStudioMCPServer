@@ -16,6 +16,7 @@ internal static class Program
             await VerifyStaDispatcherAsync();
             await VerifyJobManagerAsync();
             await VerifyJobLimitsAsync();
+            await VerifyJobHardRecoveryAsync();
             Console.WriteLine("Core safety abstraction, scientific-number truthfulness, glass-catalog integrity, STA dispatcher, and bounded server job simulation tests passed.");
             return 0;
         }
@@ -223,6 +224,32 @@ internal static class Program
             Assert(retained.Count == 3, "Completed job history must be trimmed to the configured retention limit.");
             Assert(retained.All(job => job.State == McpJobState.Completed), "Retained job history unexpectedly contains non-terminal jobs.");
         }
+    }
+
+    private static async Task VerifyJobHardRecoveryAsync()
+    {
+        var recovery = new TaskCompletionSource<McpJobSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var jobs = new McpJobManager(
+            maxHistory: 4,
+            maxPending: 2,
+            cancellationGrace: TimeSpan.FromMilliseconds(75),
+            hardRecoveryAction: snapshot => recovery.TrySetResult(snapshot));
+
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var never = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var job = jobs.Enqueue("hung-background-job", async _ =>
+        {
+            started.TrySetResult();
+            await never.Task;
+        });
+
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert(jobs.Cancel(job.JobId, out _), "A running background job could not enter cancellation.");
+        var hardFailure = await recovery.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert(hardFailure.JobId == job.JobId && hardFailure.State == McpJobState.Failed,
+            "A non-draining background job did not transition to failed hard-recovery state.");
+        Assert(hardFailure.Message.Contains("hard recovery", StringComparison.OrdinalIgnoreCase),
+            "Hard-recovery failure did not explain why the Worker generation must be replaced.");
     }
 
     private static void Assert(bool condition, string message)
