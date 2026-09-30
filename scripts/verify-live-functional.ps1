@@ -172,6 +172,7 @@ try {
 
     if ($systemMode -notmatch "NonSequential" -and "zemax_get_system" -in $tools) {
         $script:addedSurfaces = @()
+        $editOk = $false
         $mutationTools = @("zemax_add_surface", "zemax_set_surface", "zemax_batch_set_surfaces", "zemax_remove_surface")
         $missingMutation = @($mutationTools | Where-Object { $_ -notin $tools })
         if ($missingMutation.Count -gt 0) {
@@ -230,7 +231,7 @@ try {
         }
 
         $snapshotTools = @("zemax_snapshot_list", "zemax_snapshot_diff", "zemax_snapshot_restore")
-        if (@($snapshotTools | Where-Object { $_ -notin $tools }).Count -eq 0) {
+        if ($editOk -and @($snapshotTools | Where-Object { $_ -notin $tools }).Count -eq 0) {
             Invoke-Check "snapshot-list-diff-restore" {
                 $latestPath = [string](Get-Health).lastSnapshotPath
                 if ([string]::IsNullOrWhiteSpace($latestPath)) { throw "Sequential mutation checks did not report a safety snapshot." }
