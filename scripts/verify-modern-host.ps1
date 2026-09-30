@@ -177,11 +177,13 @@ if ($liveVerifier -notmatch '2026-07-28' -or $liveVerifier -notmatch 'MCP-Protoc
 if ($functionalLiveVerifier -notmatch 'FixturePath' -or
     $functionalLiveVerifier -notmatch 'VerifyBackgroundJobs' -or
     $functionalLiveVerifier -notmatch 'ParentOperationId' -or
+    $functionalLiveVerifier -notmatch 'zemax_batch_set_surfaces' -or
+    $functionalLiveVerifier -notmatch 'zemax_ray_trace_diagnostics' -or
     $functionalLiveVerifier -notmatch 'zemax_nsc_scene_summary' -or
     $functionalLiveVerifier -notmatch 'zemax_tolerance_summary' -or
     $functionalLiveVerifier -notmatch 'ConvertTo-Json' -or
     $functionalLiveVerifier -notmatch 'workingCopy') {
-  throw "Functional live acceptance must operate on a temporary fixture copy, cover background-job correlation and NSC/tolerance diagnostics, and emit a structured JSON report."
+  throw "Functional live acceptance must use a temporary fixture copy, cover batch edit/readback, ray diagnostics, background-job correlation, NSC/tolerance diagnostics, and emit a structured JSON report."
 }
 $listIndex = $liveVerifier.IndexOf('Invoke-ModernMcpRequest -Method "tools/list"', [StringComparison]::Ordinal)
 $healthIndex = $liveVerifier.IndexOf('$health = Get-McpHealth', [StringComparison]::Ordinal)
