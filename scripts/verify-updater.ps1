@@ -5,9 +5,14 @@ $root = Split-Path $PSScriptRoot -Parent
 $updater = Join-Path $root "src\ZemaxMCP.Updater\bin\$Configuration\net48\ZemaxMCP.Updater.exe"
 $updaterSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Updater\Program.cs")
 if (-not (Test-Path -LiteralPath $updater)) { throw "Updater build output is missing." }
-if ($updaterSource -notmatch 'cleanupBackup' -or
+if ($updaterSource -notmatch 'var cleanupBackup = false' -or
+    $updaterSource -notmatch 'cleanupBackup = true' -or
+    $updaterSource -notmatch 'cleanupBackup = false' -or
     $updaterSource -notmatch 'backup has been preserved at' -or
-    $updaterSource -match 'finally[\s\S]{0,300}Directory\.Delete\(backup, true\)') {
+    -not [regex]::IsMatch(
+        $updaterSource,
+        'finally\s*\{[\s\S]*?if\s*\(cleanupBackup\s*&&[\s\S]*?Directory\.Delete\(backup, true\)',
+        [Text.RegularExpressions.RegexOptions]::Singleline)) {
   throw "Updater rollback failures must preserve the previous-installation backup and report its recovery path."
 }
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("ZemaxMCP-updater-test-" + [guid]::NewGuid().ToString("N"))
