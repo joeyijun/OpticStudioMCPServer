@@ -307,8 +307,8 @@ public sealed class SnapshotTools
         if (current == snapshot) return;
         AddDifference(
             output, limit, ref observed, surfaceNumber, property,
-            current.ToString(CultureInfo.InvariantCulture),
-            snapshot.ToString(CultureInfo.InvariantCulture));
+            current ? "true" : "false",
+            snapshot ? "true" : "false");
     }
 
     private static void AddDifference(
