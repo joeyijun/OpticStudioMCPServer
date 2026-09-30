@@ -21,8 +21,30 @@ public sealed class McpJobTools
         ToInfo(_jobs.Get(jobId));
 
     [ZemaxTool(Name = "zemax_job_list")]
-    [Description("List recent background Zemax jobs, including queued, running, completed, cancelled, and failed jobs.")]
-    public IReadOnlyList<JobInfo> List() => _jobs.List().Select(ToInfo).Where(x => x != null).Cast<JobInfo>().ToArray();
+    [Description("List recent background Zemax jobs with bounded output. Optionally filter by lifecycle state.")]
+    public IReadOnlyList<JobInfo> List(
+        [Description("Maximum jobs to return (1-128), newest first")] int limit = 50,
+        [Description("Optional state filter: Queued, Running, Cancelling, Completed, Cancelled, or Failed")] string? state = null)
+    {
+        if (limit is < 1 or > McpJobManager.DefaultMaxHistory)
+            throw new ArgumentOutOfRangeException(nameof(limit), $"limit must be between 1 and {McpJobManager.DefaultMaxHistory}.");
+
+        McpJobState? filter = null;
+        if (!string.IsNullOrWhiteSpace(state))
+        {
+            if (!Enum.TryParse<McpJobState>(state.Trim(), ignoreCase: true, out var parsed))
+                throw new ArgumentException("state must be Queued, Running, Cancelling, Completed, Cancelled, or Failed.", nameof(state));
+            filter = parsed;
+        }
+
+        return _jobs.List()
+            .Where(job => !filter.HasValue || job.State == filter.Value)
+            .Take(limit)
+            .Select(ToInfo)
+            .Where(info => info != null)
+            .Cast<JobInfo>()
+            .ToArray();
+    }
 
     [ZemaxTool(Name = "zemax_job_cancel")]
     [Description("Request cooperative cancellation of a queued or running Zemax job. A running ZOS-API call stops at its next safe cancellation point without restarting the MCP server.")]
