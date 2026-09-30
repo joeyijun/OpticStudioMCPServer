@@ -50,6 +50,8 @@ internal static class Program
             var workerClient = new WorkerRpcClient(options);
             builder.Services.AddSingleton(workerClient);
             var controlLease = new OpticStudioControlLease();
+            workerClient.JobStateChanged += controlLease.ObserveJob;
+            workerClient.GenerationEnded += controlLease.ReleaseGeneration;
             builder.Services.AddSingleton(controlLease);
             var activity = new McpActivityMonitor();
             builder.Services.AddSingleton(activity);
@@ -118,6 +120,9 @@ internal static class Program
                     CallToolResult result;
                     using (await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false))
                         result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
+
+                    if (TryGetStartedJobId(request.Params.Name, result, out var jobId))
+                        controlLease.RetainForJob(clientId, jobId, workerClient.CurrentGeneration);
 
                     if (string.Equals(request.Params.Name, "zemax_disconnect", StringComparison.Ordinal) &&
                         IsSuccessfulDisconnect(result))
@@ -199,6 +204,7 @@ internal static class Program
                     requestTimeoutSeconds = options.RequestTimeoutSeconds,
                     requestWriteTimeoutSeconds = options.RequestWriteTimeoutSeconds,
                     hardRecoveryTimeoutSeconds = options.HardRecoveryTimeoutSeconds,
+                    jobRecoveryTimeoutSeconds = options.JobRecoveryTimeoutSeconds,
                     cancellationWriteTimeoutSeconds = options.CancellationWriteTimeoutSeconds,
                     lastClient = activityHealth.LastClient,
                     lastTool = activityHealth.LastTool,
@@ -232,6 +238,37 @@ internal static class Program
             return 1;
         }
         finally { await Log.CloseAndFlushAsync().ConfigureAwait(false); }
+    }
+
+    private static bool TryGetStartedJobId(string toolName, CallToolResult result, out string jobId)
+    {
+        jobId = string.Empty;
+        if (result.IsError == true ||
+            toolName is "zemax_job_status" or "zemax_job_list" or "zemax_job_cancel" or
+                        "zemax_multistart_status" or "zemax_multistart_stop")
+            return false;
+
+        foreach (var content in result.Content.OfType<TextContentBlock>())
+        {
+            if (string.IsNullOrWhiteSpace(content.Text)) continue;
+            try
+            {
+                using var document = JsonDocument.Parse(content.Text);
+                if (document.RootElement.ValueKind != JsonValueKind.Object) continue;
+                if (document.RootElement.TryGetProperty("success", out var success) &&
+                    success.ValueKind == JsonValueKind.False)
+                    return false;
+                if (document.RootElement.TryGetProperty("jobId", out var id) &&
+                    id.ValueKind == JsonValueKind.String &&
+                    !string.IsNullOrWhiteSpace(id.GetString()))
+                {
+                    jobId = id.GetString()!;
+                    return true;
+                }
+            }
+            catch (JsonException) { }
+        }
+        return false;
     }
 
     private static bool IsSuccessfulDisconnect(CallToolResult result)
