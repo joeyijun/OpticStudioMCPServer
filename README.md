@@ -134,7 +134,7 @@ The launcher can expose a smaller task-focused tool surface without renaming MCP
 
 | Launcher configuration | Enabled domains and impacts |
 |---|---|
-| **View & analyze** | 33 explicitly selected read-only inspection/analysis tools |
+| **View & analyze** | 34 explicitly selected read-only inspection/analysis tools |
 | **Sequential design** | 74 explicitly selected sequential edit, system, file, polarization, and analysis tools |
 | **Non-sequential & stray light** | 18 explicitly selected NSC inspection, system/file, polarization, and diagnostic tools |
 | **Optimization & tolerancing** | 60 explicitly selected optimization, job, tolerance, core sequential, file, and verification tools |
