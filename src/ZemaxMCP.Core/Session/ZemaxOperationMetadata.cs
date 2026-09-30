@@ -69,7 +69,7 @@ public static class ZemaxOperationMetadata
             }),
             new OperationPolicy(ZemaxOperationImpact.HighImpact, new[]
             {
-                "AddConfigurationOperand", "AddOperand", "AddSurface", "calculate", "clear", "ConstrainedOptimize", "DeleteConfigurationOperand",
+                "AddConfigurationOperand", "AddOperand", "AddSurface", "BatchSetSurfaces", "calculate", "clear", "ConstrainedOptimize", "DeleteConfigurationOperand",
                 "ExportAnalysis", "ForbesMeritFunction", "GlobalSearch", "Hammer", "LoadMeritFunctionFile", "MultistartOptimize", "NewSystem",
                 "OptimizationWizard", "Optimize", "Pop", "QuickFocus", "RemoveOperand", "RemoveSurface", "SaveFile", "SaveMeritFunctionFile", "ScaleLens",
                 "SetAfocalMode", "SetAperture", "SetApodization", "SetAsphericSurface", "SetConfigurationOperandValue", "SetCurrentConfiguration",
@@ -78,7 +78,7 @@ public static class ZemaxOperationMetadata
                 "SetVariableConstraints", "SetWavelengths"
             }, new[]
             {
-            "zemax_add_configuration_operand", "zemax_add_operand", "zemax_add_surface", "zemax_clear_vignetting", "zemax_constrained_optimize",
+            "zemax_add_configuration_operand", "zemax_add_operand", "zemax_add_surface", "zemax_batch_set_surfaces", "zemax_clear_vignetting", "zemax_constrained_optimize",
             "zemax_delete_configuration_operand", "zemax_export_analysis", "zemax_export_glass_catalog", "zemax_forbes_merit_function", "zemax_global_search",
             "zemax_hammer", "zemax_load_merit_function_file", "zemax_multistart_optimize", "zemax_new_system", "zemax_optimization_wizard", "zemax_optimize",
             "zemax_pop", "zemax_quick_focus", "zemax_remove_operand", "zemax_remove_surface", "zemax_save_file", "zemax_save_merit_function_file", "zemax_scale_lens",
