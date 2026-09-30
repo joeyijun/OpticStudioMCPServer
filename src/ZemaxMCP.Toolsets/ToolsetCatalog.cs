@@ -151,6 +151,7 @@ public static class ToolsetCatalog
         ["zemax_remove_operand"] = "optimization",
         ["zemax_remove_surface"] = "sequential-editing",
         ["zemax_restart"] = "administration",
+        ["zemax_run_nsc_ray_trace"] = "non-sequential",
         ["zemax_rms_spot"] = "analysis",
         ["zemax_save_file"] = "files",
         ["zemax_save_merit_function_file"] = "files",
@@ -211,7 +212,7 @@ public static class ToolsetCatalog
 
     private static readonly HashSet<string> CautionTools = new HashSet<string>(StringComparer.Ordinal)
     {
-        "zemax_connect", "zemax_disconnect", "zemax_job_cancel", "zemax_multistart_stop", "zemax_open_file", "zemax_restart"
+        "zemax_connect", "zemax_disconnect", "zemax_job_cancel", "zemax_multistart_stop", "zemax_open_file", "zemax_restart", "zemax_run_nsc_ray_trace"
     };
 
     private static readonly HashSet<string> HighImpactTools = new HashSet<string>(StringComparer.Ordinal)
@@ -277,7 +278,7 @@ public static class ToolsetCatalog
                 "zemax_get_system_metadata", "zemax_get_environment", "zemax_get_material_catalog_settings",
                 "zemax_get_polarization", "zemax_get_nonsequential_system_settings",
                 "zemax_get_nsc_objects", "zemax_get_nsc_object_parameters", "zemax_get_nsc_detector",
-                "zemax_nsc_scene_summary", "zemax_export_analysis"),
+                "zemax_nsc_scene_summary", "zemax_run_nsc_ray_trace", "zemax_export_analysis"),
 
             [OptimizationTolerance] = NewToolSet(
                 "zemax_status", "zemax_tool_catalog", "zemax_connect", "zemax_disconnect",
