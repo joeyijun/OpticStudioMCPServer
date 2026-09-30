@@ -29,6 +29,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     private readonly ConcurrentDictionary<string, TaskCompletionSource<ZemaxRpcEnvelope>> _pending = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Func<OperationProgress, CancellationToken, Task>> _progressHandlers = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, WorkerJobStatus> _eventJobs = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, long> _eventJobGenerations = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, CoalescedProgressEvent> _coalescedProgress = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _eventSignal = new(0);
     private readonly CancellationTokenSource _eventDispatchCancellation = new();
@@ -59,6 +60,16 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     internal long CurrentGeneration
     {
         get { lock (_connectionGate) return _activeGeneration; }
+    }
+
+    internal bool TryGetJobStatus(long generation, string jobId, out WorkerJobStatus? status)
+    {
+        status = null;
+        if (generation <= 0 || string.IsNullOrWhiteSpace(jobId)) return false;
+        if (!_eventJobs.TryGetValue(jobId, out var current)) return false;
+        if (!_eventJobGenerations.TryGetValue(jobId, out var currentGeneration) || currentGeneration != generation) return false;
+        status = current;
+        return true;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -312,6 +323,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
                         QueuePosition = progress.QueuePosition,
                         Message = progress.Message
                     };
+                    _eventJobGenerations[progress.OperationId] = pendingProgress.Generation;
                     TrimEventJobs();
                     try { JobStateChanged?.Invoke(pendingProgress.Generation, _eventJobs[progress.OperationId]); }
                     catch (Exception ex) { Log.Warning(ex, "Host job-state observer failed for {OperationId}", progress.OperationId); }
@@ -335,7 +347,10 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     {
         if (_eventJobs.Count <= 128) return;
         foreach (var key in _eventJobs.Keys.Take(_eventJobs.Count - 128))
+        {
             _eventJobs.TryRemove(key, out _);
+            _eventJobGenerations.TryRemove(key, out _);
+        }
     }
 
     private bool IsRunning
