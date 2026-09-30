@@ -76,6 +76,10 @@ public class RayTraceExtendedTool
                     finally { ray.Close(); }
                 }, cancellationToken);
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             return new Result(false, ex.Message, SurfaceNumber: surface);
