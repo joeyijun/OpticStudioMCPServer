@@ -69,8 +69,10 @@ if ($batchSetSurfaces -notmatch 'Distinct\(\)\.Count\(\) != edits\.Count' -or
     $batchSetSurfaces -notmatch 'originals = edits\.ToDictionary' -or
     $batchSetSurfaces -notmatch 'VerifyReadback\(' -or
     $batchSetSurfaces -notmatch 'RestoreState\(' -or
+    $batchSetSurfaces -notmatch 'rolledBack = true' -or
+    $batchSetSurfaces -notmatch 'new Result\(false, ex\.Message, edits\?\.Count \?\? 0, 0, rolledBack' -or
     $batchSetSurfaces -notmatch 'catch \(OperationCanceledException\)') {
-    throw "zemax_batch_set_surfaces must prevalidate the whole batch, use one transactional operation, independently read back writes, rollback touched surfaces, and preserve cancellation."
+    throw "zemax_batch_set_surfaces must prevalidate the whole batch, use one transactional operation, independently read back writes, report rollback truthfully, rollback touched surfaces, and preserve cancellation."
 }
 
 foreach ($rayFile in @("RayTraceTool.cs", "RayTraceExtendedTool.cs")) {
