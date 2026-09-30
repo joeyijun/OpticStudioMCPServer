@@ -63,6 +63,7 @@ public sealed class RunTolerancingTool
         int RequestedMonteCarloRuns,
         double RuntimeSeconds,
         string? Summary,
+        bool SummaryTruncated,
         int MonteCarloRows,
         int MonteCarloColumns,
         IReadOnlyList<ColumnStatistics> MonteCarloStatistics,
@@ -367,6 +368,10 @@ public sealed class RunTolerancingTool
                 }
             }
 
+            var summaryText = viewer.Summary;
+            var summaryTruncated = !string.IsNullOrEmpty(summaryText) && summaryText.Length > 12000;
+            if (summaryTruncated) summaryText = summaryText!.Substring(0, 12000);
+
             return new Result(
                 true,
                 null,
@@ -378,7 +383,8 @@ public sealed class RunTolerancingTool
                 monteCarloStatistic.ToString(),
                 monteCarloRuns,
                 runtimeSeconds,
-                string.IsNullOrWhiteSpace(viewer.Summary) ? null : viewer.Summary,
+                string.IsNullOrWhiteSpace(summaryText) ? null : summaryText,
+                summaryTruncated,
                 rows,
                 cols,
                 statistics,
@@ -557,7 +563,7 @@ public sealed class RunTolerancingTool
     private static T ParseNamedEnum<T>(
         string value,
         string parameterName,
-        IReadOnlySet<string> allowed) where T : struct, Enum
+        HashSet<string> allowed) where T : struct, Enum
     {
         if (string.IsNullOrWhiteSpace(value) || int.TryParse(value, out _) || !allowed.Contains(value.Trim()))
             throw new ArgumentException(
@@ -597,6 +603,7 @@ public sealed class RunTolerancingTool
             monteCarloRuns,
             0,
             null,
+            false,
             0,
             0,
             Array.Empty<ColumnStatistics>(),
@@ -607,7 +614,7 @@ public sealed class RunTolerancingTool
             null,
             jobId);
 
-    private static readonly IReadOnlySet<string> SequentialCriteria = new HashSet<string>(StringComparer.Ordinal)
+    private static readonly HashSet<string> SequentialCriteria = new HashSet<string>(StringComparer.Ordinal)
     {
         "RMSSpotRadius", "RMSSpotX", "RMSSpotY", "RMSWavefront", "MeritFunction",
         "GeometricMTFAverage", "GeometricMTFTan", "GeometricMTFSag",
@@ -615,17 +622,17 @@ public sealed class RunTolerancingTool
         "RMSAngularRadius", "RMSAngularX", "RMSAngularY"
     };
 
-    private static readonly IReadOnlySet<string> SequentialComps = new HashSet<string>(StringComparer.Ordinal)
+    private static readonly HashSet<string> SequentialComps = new HashSet<string>(StringComparer.Ordinal)
     {
         "OptimizeAll_DLS", "ParaxialFocus", "None", "OptimizeAll_OD"
     };
 
-    private static readonly IReadOnlySet<string> SequentialFields = new HashSet<string>(StringComparer.Ordinal)
+    private static readonly HashSet<string> SequentialFields = new HashSet<string>(StringComparer.Ordinal)
     {
         "Y_Symmetric", "XY_Symmetric", "UserDefined"
     };
 
-    private static readonly IReadOnlySet<string> MonteCarloStatisticsNames = new HashSet<string>(StringComparer.Ordinal)
+    private static readonly HashSet<string> MonteCarloStatisticsNames = new HashSet<string>(StringComparer.Ordinal)
     {
         "Normal", "Uniform", "Parabolic"
     };
