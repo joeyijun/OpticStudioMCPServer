@@ -312,7 +312,7 @@ public static class ToolsetCatalog
     {
         BasicViewing => new[] { "system", "sequential-editing", "analysis", "administration" },
         SequentialDesign => new[] { "system", "sequential-editing", "analysis", "polarization", "files", "administration" },
-        NonSequentialStrayLight => new[] { "system", "non-sequential", "analysis", "files", "administration" },
+        NonSequentialStrayLight => new[] { "system", "non-sequential", "analysis", "polarization", "files", "administration" },
         OptimizationTolerance => new[] { "system", "sequential-editing", "analysis", "optimization", "tolerance", "polarization", "files", "administration" },
         _ => Domains.Select(domain => domain.Id)
     };
