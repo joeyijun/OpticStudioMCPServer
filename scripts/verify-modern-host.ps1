@@ -94,6 +94,14 @@ if ($hostSource -notmatch 'StaticToolManifest\.All' -or $hostSource -notmatch 'S
 if ($workerRegistry -notmatch 'StaticToolManifest\.GetRequired' -or $workerRegistry -match 'BuildSchema\(|BuildTypeSchema\(') {
   throw "Worker execution must consume the shared manifest rather than maintain a second schema generator."
 }
+$statusContracts = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Rpc\Contracts\StatusContracts.cs")
+if ($statusContracts -notmatch 'WorkerVersion' -or
+    $statusContracts -notmatch 'ZosApiAssemblyVersion' -or
+    $statusContracts -notmatch 'ZosApiFileVersion' -or
+    $hostSource -notmatch 'hostVersion = typeof\(Program\)\.Assembly' -or
+    $hostSource -notmatch 'workerVersion = status\?\.WorkerVersion') {
+  throw "Health/status must expose Host, Worker, and ZOS-API version identities for auditable live acceptance."
+}
 if ($workerRpc -notmatch 'IsExplicitToolFailure' -or
     $workerRpc -notmatch 'isError = IsExplicitToolFailure' -or
     $workerRpc -notmatch 'ParentOperationId') {
@@ -188,6 +196,10 @@ if ($functionalLiveVerifier -notmatch 'FixturePath' -or
     $functionalLiveVerifier -notmatch 'zemax_run_tolerancing' -or
     $functionalLiveVerifier -notmatch 'monteCarloRows' -or
     $functionalLiveVerifier -notmatch 'sensitivityCriteria' -or
+    $functionalLiveVerifier -notmatch 'hostVersion' -or
+    $functionalLiveVerifier -notmatch 'workerVersion' -or
+    $functionalLiveVerifier -notmatch 'zosApiAssemblyVersion' -or
+    $functionalLiveVerifier -notmatch 'zosApiFileVersion' -or
     $functionalLiveVerifier -notmatch 'ConvertTo-Json' -or
     $functionalLiveVerifier -notmatch 'workingCopy') {
   throw "Functional live acceptance must use a temporary fixture copy, cover batch edit/readback, snapshot list/diff/restore, ray diagnostics, background-job correlation, real NSC/tolerancing execution, structured result checks, and emit a JSON report."
