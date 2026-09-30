@@ -14,6 +14,7 @@ $bootstrapSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Bootst
 $workerRpc = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Rpc\WorkerRpcServer.cs")
 $workerProject = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\ZemaxMCP.Server.csproj")
 $workerRegistry = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Tooling\ZemaxToolAttributes.cs")
+$jobManager = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Services\Jobs\McpJobManager.cs")
 $workerTools = Get-ChildItem (Join-Path $root "src\ZemaxMCP.Server\Tools") -Recurse -Filter *.cs | ForEach-Object { Get-Content -Raw $_.FullName } | Out-String
 $setSurfaceSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Tools\LensData\SetSurfaceTool.cs")
 $manifestProject = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.ToolManifest\ZemaxMCP.ToolManifest.csproj")
@@ -101,11 +102,11 @@ if ($rpcClient -notmatch 'PipeSecurity' -or $rpcClient -notmatch 'ZEMAX_MCP_PIPE
     $workerSource -notmatch 'WorkerHandshake' -or $workerSource -notmatch 'StaticToolManifest\.ContractFingerprint') {
   throw "The Host/Worker startup handshake must authenticate PID/secret and reject RPC or manifest contract mismatches before ZOS-API execution."
 }
-if ($workerRpc -notmatch 'ConcurrentQueue<ZemaxRpcEnvelope>' -or $workerRpc -notmatch 'PumpEventsAsync' -or
-    $workerRpc -match '_ = WriteProgressAsync|_ = WriteSnapshotCreatedAsync' -or
-    $rpcClient -notmatch 'Channel<ZemaxRpcEnvelope>' -or $rpcClient -notmatch 'DispatchEventsAsync' -or
+if ($workerRpc -notmatch '_coalescedProgress' -or $workerRpc -notmatch '_snapshotEvents' -or
+    $workerRpc -notmatch 'PumpEventsAsync' -or $workerRpc -match '_ = WriteProgressAsync|_ = WriteSnapshotCreatedAsync' -or
+    $rpcClient -notmatch '_coalescedProgress' -or $rpcClient -notmatch 'DispatchEventsAsync' -or
     $rpcClient -notmatch '_progressHandlers' -or $hostSource -notmatch 'NotifyProgressAsync') {
-  throw "Worker progress/snapshot events must use a serialized outbound queue and an independent Host dispatcher with MCP progress forwarding."
+  throw "Worker/Host progress must be coalesced by operation while snapshot events remain durable and MCP progress forwarding remains serialized."
 }
 if ($hostSource -notmatch 'io\.zemaxmcp/clientInstanceId' -or $hostSource -notmatch 'X-Zemax-MCP-Client-Instance' -or
     $hostSource -notmatch 'IsSafeClientInstanceId' -or $originPolicy -notmatch 'X-Zemax-MCP-Client-Instance') {
@@ -120,11 +121,23 @@ if ($hostSource -notmatch '"zemax_disconnect"' -or $hostSource -notmatch 'Releas
     $privateRpcTest -notmatch 'immediate handoff') {
   throw "A successful zemax_disconnect must release the owning client lease and the MCP E2E suite must verify immediate handoff."
 }
+if ($hostSource -notmatch 'RetainForJob\(clientId' -or $hostSource -notmatch 'JobStateChanged' -or
+    $rpcClient -notmatch 'GenerationEnded' -or $privateRpcTest -notmatch 'VerifyBackgroundJobLeaseRetentionAsync') {
+  throw "Background jobs must retain client control ownership and be scoped to the Worker generation that created them."
+}
 if ($rpcClient -notmatch 'HardRecoveryTimeoutSeconds' -or $rpcClient -notmatch 'FaultWorkerConnection' -or
     $rpcClient -notmatch 'CancelOperation' -or $rpcClient -notmatch 'CancellationWriteTimeoutSeconds' -or
     $rpcClient -notmatch 'RequestWriteTimeoutSeconds' -or $rpcClient -notmatch 'hardDeadline' -or
-    $rpcClient -notmatch 'RecoverCancelledOperationAsync') {
-  throw "Worker RPC must retain bounded request/cancellation writes, soft cancellation, hard recovery, and one fault-recovery path."
+    $rpcClient -notmatch 'RecoverCancelledOperationAsync' -or $rpcClient -notmatch 'WaitForWriteGateAsync') {
+  throw "Worker RPC must retain bounded request/cancellation writes, correct caller-cancellation classification, soft cancellation, hard recovery, and one fault-recovery path."
+}
+if ($jobManager -notmatch 'DefaultMaxHistory' -or $jobManager -notmatch 'DefaultMaxPending' -or
+    $jobManager -notmatch 'ExecuteWithRecoveryAsync' -or $jobManager -notmatch 'hard recovery' -or
+    $workerSource -notmatch 'ZEMAX_MCP_JOB_RECOVERY_TIMEOUT_SECONDS') {
+  throw "Background jobs must have bounded queue/history retention and an independent cancellation hard-recovery deadline."
+}
+if ($privateRpcTest -notmatch 'VerifyWriteGateCancellationClassificationAsync') {
+  throw "Private RPC tests must distinguish caller cancellation while waiting for the write lock from a genuine write timeout."
 }
 $callToolBody = [regex]::Match($rpcClient,
     'public async Task<CallToolResult> CallToolAsync[\s\S]*?(?<body>\{[\s\S]*?)\r?\n    public async Task<WorkerStatus>').Groups['body'].Value
