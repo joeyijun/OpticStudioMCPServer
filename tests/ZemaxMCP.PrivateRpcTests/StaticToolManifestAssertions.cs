@@ -53,6 +53,13 @@ internal static class StaticToolManifestAssertions
             StaticToolManifest.IsAllowed("optimization-tolerance", "zemax_get_nsc_objects", readOnly: false))
             throw new InvalidOperationException("Focused profiles leaked unrelated editor domains back into tools/list.");
 
+        var tolerancing = StaticToolManifest.GetRequired("zemax_run_tolerancing").InputSchema.GetProperty("properties");
+        if (tolerancing.GetProperty("criterion").GetProperty("default").GetString() != "RMSSpotRadius" ||
+            tolerancing.GetProperty("monteCarloRuns").GetProperty("default").GetInt32() != 20 ||
+            tolerancing.GetProperty("timeoutSeconds").GetProperty("default").GetDouble() != 300 ||
+            tolerancing.GetProperty("runInBackground").GetProperty("default").GetBoolean() != true)
+            throw new InvalidOperationException("Structured tolerancing must preserve bounded criterion, Monte Carlo, timeout, and background defaults.");
+
         var nscTrace = StaticToolManifest.GetRequired("zemax_run_nsc_ray_trace").InputSchema.GetProperty("properties");
         if (nscTrace.GetProperty("clearDetectors").GetProperty("default").GetBoolean() != true ||
             nscTrace.GetProperty("timeoutSeconds").GetProperty("default").GetDouble() != 60 ||
