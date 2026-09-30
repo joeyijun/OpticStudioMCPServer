@@ -4,29 +4,50 @@
         Title="Zemax MCP Setup" Icon="Assets/ZemaxMCP.ico"
         Width="1040" Height="860" MinWidth="860" MinHeight="660"
         WindowStartupLocation="CenterScreen" Loaded="OnLoaded"
-        Background="#F4F6FA" FontFamily="Segoe UI" FontSize="13"
+        Background="{DynamicResource WorkspaceSurface}" FontFamily="Segoe UI Variable, Segoe UI" FontSize="13"
         TextOptions.TextFormattingMode="Display" UseLayoutRounding="True">
   <Window.Resources>
-    <SolidColorBrush x:Key="HeadingBrush" Color="#182B45"/>
-    <SolidColorBrush x:Key="BodyBrush" Color="#42546B"/>
-    <SolidColorBrush x:Key="MutedBrush" Color="#63748B"/>
-    <SolidColorBrush x:Key="AccentBrush" Color="#2563EB"/>
+    <!-- Native DWM provides the window backdrop; this brush is the startup/offline-preview fallback. -->
+    <LinearGradientBrush x:Key="WorkspaceSurface" StartPoint="0,0" EndPoint="1,1">
+      <GradientStop Color="#E5EDF8" Offset="0"/>
+      <GradientStop Color="#F0EFF7" Offset="0.45"/>
+      <GradientStop Color="#EAF2F3" Offset="1"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="GlassSurface" StartPoint="0,0" EndPoint="0.65,1">
+      <GradientStop Color="#DEFFFFFF" Offset="0"/>
+      <GradientStop Color="#BFFFFFFF" Offset="1"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="GlassEdge" StartPoint="0,0" EndPoint="0.4,1">
+      <GradientStop Color="#FFFFFF" Offset="0"/>
+      <GradientStop Color="#B8C9D5E4" Offset="1"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="ControlSurface" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Color="#FCFFFFFF" Offset="0"/>
+      <GradientStop Color="#E6EDF1F7" Offset="1"/>
+    </LinearGradientBrush>
+    <SolidColorBrush x:Key="HeadingBrush" Color="#1D1D1F"/>
+    <SolidColorBrush x:Key="BodyBrush" Color="#454549"/>
+    <SolidColorBrush x:Key="MutedBrush" Color="#6E6E73"/>
+    <SolidColorBrush x:Key="AccentBrush" Color="#006ADC"/>
 
     <Style x:Key="Card" TargetType="Border">
-      <Setter Property="Background" Value="#FFFFFF"/>
-      <Setter Property="BorderBrush" Value="#DFE6EF"/>
+      <Setter Property="Background" Value="{StaticResource GlassSurface}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource GlassEdge}"/>
       <Setter Property="BorderThickness" Value="1"/>
-      <Setter Property="CornerRadius" Value="12"/>
-      <Setter Property="Padding" Value="20"/>
+      <Setter Property="CornerRadius" Value="18"/>
+      <Setter Property="Padding" Value="22"/>
       <Setter Property="SnapsToDevicePixels" Value="True"/>
+      <Setter Property="Effect">
+        <Setter.Value><DropShadowEffect Color="#526585" BlurRadius="16" ShadowDepth="3" Direction="270" Opacity="0.08"/></Setter.Value>
+      </Setter>
     </Style>
 
     <Style x:Key="InputBox" TargetType="TextBox">
       <Setter Property="Height" Value="38"/>
       <Setter Property="Padding" Value="10,5"/>
-      <Setter Property="Background" Value="#F8FAFD"/>
+      <Setter Property="Background" Value="#F5F5F7"/>
       <Setter Property="Foreground" Value="{StaticResource HeadingBrush}"/>
-      <Setter Property="BorderBrush" Value="#C9D4E2"/>
+      <Setter Property="BorderBrush" Value="#DEDEE3"/>
       <Setter Property="BorderThickness" Value="1"/>
       <Setter Property="VerticalContentAlignment" Value="Center"/>
       <Setter Property="FontSize" Value="13"/>
@@ -51,7 +72,7 @@
       <Setter Property="Padding" Value="10,5"/>
       <Setter Property="Background" Value="#FBFCFE"/>
       <Setter Property="Foreground" Value="{StaticResource HeadingBrush}"/>
-      <Setter Property="BorderBrush" Value="#C9D4E2"/>
+      <Setter Property="BorderBrush" Value="#DEDEE3"/>
       <Setter Property="BorderThickness" Value="1"/>
       <Setter Property="VerticalContentAlignment" Value="Center"/>
       <Setter Property="FontSize" Value="13"/>
@@ -62,7 +83,7 @@
       <Setter Property="Padding" Value="8,4"/>
       <Setter Property="Background" Value="#FBFCFE"/>
       <Setter Property="Foreground" Value="{StaticResource HeadingBrush}"/>
-      <Setter Property="BorderBrush" Value="#C9D4E2"/>
+      <Setter Property="BorderBrush" Value="#DEDEE3"/>
       <Setter Property="FontSize" Value="13"/>
       <Setter Property="VerticalContentAlignment" Value="Center"/>
       <Setter Property="Template">
@@ -73,13 +94,13 @@
                             IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
                 <ToggleButton.Template>
                   <ControlTemplate TargetType="ToggleButton">
-                    <Border x:Name="ComboChrome" Background="#F8FAFD" BorderBrush="#C9D4E2" BorderThickness="1" CornerRadius="6">
-                      <Path Data="M 0 0 L 4 4 L 8 0" Stroke="#63748B" StrokeThickness="1.5"
+                    <Border x:Name="ComboChrome" Background="#F5F5F7" BorderBrush="#DEDEE3" BorderThickness="1" CornerRadius="6">
+                      <Path Data="M 0 0 L 4 4 L 8 0" Stroke="#6E6E73" StrokeThickness="1.5"
                             HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0"/>
                     </Border>
                     <ControlTemplate.Triggers>
-                      <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ComboChrome" Property="BorderBrush" Value="#2563EB"/></Trigger>
-                      <Trigger Property="IsChecked" Value="True"><Setter TargetName="ComboChrome" Property="BorderBrush" Value="#2563EB"/></Trigger>
+                      <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ComboChrome" Property="BorderBrush" Value="#006ADC"/></Trigger>
+                      <Trigger Property="IsChecked" Value="True"><Setter TargetName="ComboChrome" Property="BorderBrush" Value="#006ADC"/></Trigger>
                     </ControlTemplate.Triggers>
                   </ControlTemplate>
                 </ToggleButton.Template>
@@ -90,7 +111,7 @@
               <Border x:Name="ComboFocus" BorderBrush="Transparent" BorderThickness="1" CornerRadius="6" IsHitTestVisible="False"/>
               <Popup x:Name="PART_Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}"
                      AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
-                <Border Background="White" BorderBrush="#C9D4E2" BorderThickness="1" CornerRadius="7" Padding="4" Margin="0,4,0,0"
+                <Border Background="White" BorderBrush="#DEDEE3" BorderThickness="1" CornerRadius="7" Padding="4" Margin="0,4,0,0"
                         MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}">
                   <ScrollViewer MaxHeight="280" CanContentScroll="True"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/></ScrollViewer>
                 </Border>
@@ -113,16 +134,39 @@
     <Style TargetType="CheckBox">
       <Setter Property="Foreground" Value="{StaticResource BodyBrush}"/>
       <Setter Property="FontSize" Value="13"/>
-      <Setter Property="VerticalContentAlignment" Value="Center"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="CheckBox">
+            <Grid Background="Transparent" MinHeight="24">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="42"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <Border x:Name="SwitchTrack" Width="34" Height="20" CornerRadius="10" Background="#D2D2D7"
+                      HorizontalAlignment="Left" VerticalAlignment="Center" BorderThickness="1" BorderBrush="Transparent">
+                <Ellipse x:Name="SwitchThumb" Width="16" Height="16" Fill="White" Margin="1,0" HorizontalAlignment="Left"/>
+              </Border>
+              <ContentPresenter Grid.Column="1" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="SwitchTrack" Property="Background" Value="{StaticResource AccentBrush}"/>
+                <Setter TargetName="SwitchThumb" Property="HorizontalAlignment" Value="Right"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="SwitchTrack" Property="BorderBrush" Value="{StaticResource HeadingBrush}"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
 
     <Style x:Key="ActionButton" TargetType="Button">
       <Setter Property="Height" Value="36"/>
       <Setter Property="MinWidth" Value="84"/>
       <Setter Property="Padding" Value="14,6"/>
-      <Setter Property="Background" Value="#F8FAFC"/>
-      <Setter Property="Foreground" Value="#334155"/>
-      <Setter Property="BorderBrush" Value="#C9D4E2"/>
+      <Setter Property="Background" Value="{StaticResource ControlSurface}"/>
+      <Setter Property="Foreground" Value="#343438"/>
+      <Setter Property="BorderBrush" Value="#DEDEE3"/>
       <Setter Property="BorderThickness" Value="1"/>
       <Setter Property="FontSize" Value="13"/>
       <Setter Property="FontWeight" Value="SemiBold"/>
@@ -132,13 +176,13 @@
           <ControlTemplate TargetType="Button">
             <Border x:Name="ButtonChrome" Background="{TemplateBinding Background}"
                     BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
-                    CornerRadius="7" Padding="{TemplateBinding Padding}">
+                    CornerRadius="9" Padding="{TemplateBinding Padding}">
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ButtonChrome" Property="Opacity" Value="0.88"/></Trigger>
               <Trigger Property="IsPressed" Value="True"><Setter TargetName="ButtonChrome" Property="Opacity" Value="0.72"/></Trigger>
-              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="ButtonChrome" Property="BorderBrush" Value="#F59E0B"/><Setter TargetName="ButtonChrome" Property="BorderThickness" Value="2"/></Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="ButtonChrome" Property="BorderBrush" Value="#1D1D1F"/><Setter TargetName="ButtonChrome" Property="BorderThickness" Value="2"/></Trigger>
               <Trigger Property="IsEnabled" Value="False"><Setter TargetName="ButtonChrome" Property="Opacity" Value="0.45"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -161,9 +205,9 @@
     </Style>
 
     <Style x:Key="StopButton" TargetType="Button" BasedOn="{StaticResource ActionButton}">
-      <Setter Property="Background" Value="#FFF8ED"/>
-      <Setter Property="Foreground" Value="#9A4A00"/>
-      <Setter Property="BorderBrush" Value="#E8B878"/>
+      <Setter Property="Background" Value="#F0F0F3"/>
+      <Setter Property="Foreground" Value="#454549"/>
+      <Setter Property="BorderBrush" Value="#E7E7EB"/>
       <Setter Property="MinWidth" Value="96"/>
     </Style>
 
@@ -171,9 +215,9 @@
       <Setter Property="Height" Value="38"/>
       <Setter Property="MinWidth" Value="112"/>
       <Setter Property="Padding" Value="17,7"/>
-      <Setter Property="Background" Value="#B42318"/>
-      <Setter Property="Foreground" Value="White"/>
-      <Setter Property="BorderBrush" Value="#9F1F16"/>
+      <Setter Property="Background" Value="#FFF0EF"/>
+      <Setter Property="Foreground" Value="#BA3028"/>
+      <Setter Property="BorderBrush" Value="#F1D6D3"/>
     </Style>
 
     <Style x:Key="SectionLabel" TargetType="TextBlock">
@@ -240,7 +284,7 @@
   </Window.Resources>
 
   <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-    <Grid Margin="24,22,24,20">
+    <Grid Margin="28,20,28,24">
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto"/>
         <RowDefinition Height="Auto"/>
@@ -250,19 +294,14 @@
       </Grid.RowDefinitions>
 
       <Grid>
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <StackPanel>
+        <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
           <TextBlock Text="Zemax MCP" FontSize="28" FontWeight="SemiBold" Foreground="{StaticResource HeadingBrush}"/>
-          <TextBlock Text="OpticStudio, connected to your AI workspace." Style="{StaticResource HelperText}" Margin="0,4,0,0"/>
+          <TextBlock x:Name="LastStatusCheck" Text="Checking service…" Foreground="{StaticResource MutedBrush}" FontSize="11.5" Margin="1,4,0,0"
+                     ToolTip="Updates automatically: AI activity every second; service health every 5 seconds. This timestamp records the last health check, not a software update."/>
         </StackPanel>
-          <Border Grid.Column="1" Background="#EAF0FF" CornerRadius="8" Padding="10,7" VerticalAlignment="Center" Margin="16,0,0,0" MaxWidth="330">
-            <StackPanel Orientation="Horizontal">
-              <Ellipse Width="7" Height="7" Fill="{StaticResource AccentBrush}" Margin="0,0,7,0" VerticalAlignment="Center"/>
-              <TextBlock x:Name="LastStatusCheck" Text="Status updates automatically" Foreground="#365A9A" FontSize="11.5"/>
-            </StackPanel>
-          </Border>
-        <StackPanel Grid.Row="1" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+        <Border Grid.Column="1" Style="{StaticResource Card}" HorizontalAlignment="Right" VerticalAlignment="Center" Padding="6" CornerRadius="16">
+        <StackPanel Orientation="Horizontal">
           <Button Content="Start" Style="{StaticResource PrimaryButton}" MinWidth="76" Height="34" Padding="10,5" Margin="0,0,7,0"
                   ToolTip="Start the local MCP service" Click="Start_Click"/>
           <Button Content="Stop" Style="{StaticResource StopButton}" MinWidth="70" Height="34" Padding="10,5" Margin="0,0,7,0"
@@ -274,9 +313,10 @@
           <Button Content="Exit service" Style="{StaticResource ExitButton}" VerticalAlignment="Center"
                   ToolTip="Stop the MCP service and close the launcher" Click="Exit_Click"/>
         </StackPanel>
+        </Border>
       </Grid>
 
-      <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,16,0,0">
+      <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,16,0,0">
         <Grid>
           <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="32"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
           <StackPanel>
@@ -320,7 +360,7 @@
         </Grid>
       </Border>
 
-      <Grid Grid.Row="2" Margin="0,14,0,0">
+      <Grid Grid.Row="3" Margin="0,16,0,0">
         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
         <Border Style="{StaticResource Card}">
           <StackPanel>
@@ -332,13 +372,13 @@
                        ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
               <Button Grid.Column="1" Content="Copy" Style="{StaticResource ActionButton}" MinWidth="70" Margin="9,0,0,0" Click="CopyEndpoint_Click"/>
             </Grid>
-            <TextBlock Text="For another computer, copy secure setup above to include the access token." Style="{StaticResource HelperText}" Margin="0,10,0,0"/>
+            <TextBlock Text="Use Copy secure setup to connect another computer." Style="{StaticResource HelperText}" Margin="0,10,0,0"/>
           </StackPanel>
         </Border>
         <Border Grid.Column="2" Style="{StaticResource Card}">
           <StackPanel>
             <TextBlock Text="AI computer" Style="{StaticResource SectionLabel}" Margin="0,0,0,6"/>
-            <Border Background="#F1F5FB" BorderBrush="#E0E7F0" BorderThickness="1" CornerRadius="7" Padding="9,6" Margin="0,0,0,8">
+            <Border Background="#F5F5F7" BorderBrush="#E8E8ED" BorderThickness="1" CornerRadius="7" Padding="9,6" Margin="0,0,0,8">
               <Grid>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                 <Ellipse x:Name="RemoteSetupDot" Width="9" Height="9" Fill="#94A3B8" Margin="0,3,8,0" VerticalAlignment="Top"/>
@@ -359,11 +399,11 @@
         </Border>
       </Grid>
 
-      <Grid Grid.Row="3" Margin="0,14,0,0">
+      <Grid Grid.Row="1" Margin="0,20,0,0">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="1.25*"/>
         </Grid.ColumnDefinitions>
-        <Border Style="{StaticResource Card}" MinHeight="152" BorderBrush="#D6E2F5">
+        <Border Style="{StaticResource Card}" MinHeight="152">
           <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <Ellipse x:Name="McpStateDot" Width="12" Height="12" Fill="#94A3B8" Margin="0,3,10,0" VerticalAlignment="Top"/>
@@ -467,6 +507,13 @@
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <TextBlock Text="Status overview" Style="{StaticResource StatusHeading}" VerticalAlignment="Center"/>
             <StackPanel Grid.Column="1" Orientation="Horizontal">
+              <ComboBox x:Name="MaterialChoice" Width="112" Height="32" Margin="0,0,10,0" SelectedIndex="0"
+                        AutomationProperties.Name="Window material" SelectionChanged="MaterialChoice_SelectionChanged"
+                        ToolTip="Choose a window material. Native Mica and Acrylic require Windows 11 22H2 or later.">
+                <ComboBoxItem Tag="mica">Mica</ComboBoxItem>
+                <ComboBoxItem Tag="acrylic">Acrylic</ComboBoxItem>
+                <ComboBoxItem Tag="solid">Solid</ComboBoxItem>
+              </ComboBox>
               <Button Content="Logs" Style="{StaticResource SmallButton}" Margin="0,0,7,0" Click="OpenLogs_Click"/>
               <Button Content="Updates" Style="{StaticResource SmallButton}" Margin="0,0,7,0" Click="Update_Click"/>
               <Button Content="Copy diagnostics" Style="{StaticResource SmallButton}" Click="CopyDiagnostics_Click"/>
@@ -476,8 +523,8 @@
                      TextTrimming="CharacterEllipsis" Height="36" ToolTip="{Binding Text, ElementName=ConnectionSummary}"
                      Foreground="{StaticResource BodyBrush}" FontSize="13" LineHeight="18"/>
           <TextBox x:Name="Status" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
-                   Height="44" Margin="0,8,0,0" Padding="10,6" Background="#F7F9FC" Foreground="#536277"
-                   BorderBrush="#DCE4EE" BorderThickness="1" FontFamily="Consolas" FontSize="12"/>
+                   Height="44" Margin="0,8,0,0" Padding="10,6" Background="#F5F5F7" Foreground="#6E6E73"
+                   BorderBrush="#E8E8ED" BorderThickness="1" FontFamily="Consolas" FontSize="12"/>
         </StackPanel>
       </Border>
     </Grid>

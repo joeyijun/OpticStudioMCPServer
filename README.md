@@ -30,6 +30,7 @@ For a single computer, the AI client uses the local MCP address. For two compute
 
 ## Highlights
 
+- **Refined Windows interface (1.4.2)** — a compact dashboard, matching installer, and rounded Start / Stop / Exit tray menu. Choose **Mica**, **Acrylic**, or **Solid** from the dashboard's bottom toolbar. Native Mica and Acrylic require Windows 11 22H2 or later with transparency effects enabled; Remote Desktop, high contrast, and unsupported systems use a solid fallback. Hover over the material selector to see the actual mode or fallback reason. Mica provides a subtle wallpaper tint; Acrylic provides a frosted desktop backdrop.
 - **Graphical install and update** — `Install.exe` installs or updates the per-user application. `Portable-Install.cmd` provides a fallback when organisation policy blocks the installer executable.
 - **Official .NET 10 MCP Host** — `ZemaxMCP.Host` uses stable `ModelContextProtocol.AspNetCore` 2.1 for Streamable HTTP, protocol negotiation, request IDs, SSE, cancellation, progress, and compatibility. The application does not maintain a hand-written MCP HTTP/JSON-RPC dispatcher.
 - **Static Host tool contract** — a build-time Roslyn generator produces the 126 tool names, descriptions, JSON schemas, domains, and impact levels. `tools/list` is answered by the Host without starting OpticStudio or the Worker.

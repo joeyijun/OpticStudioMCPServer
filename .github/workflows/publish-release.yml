@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing GitHub Release tag containing ZemaxMCP-win-x64.zip (for example v1.4.1; 1.4.1 is also accepted)
+        description: Existing GitHub Release tag containing ZemaxMCP-win-x64.zip (for example v1.4.2; 1.4.2 is also accepted)
         required: true
         type: string
 
