@@ -36,6 +36,21 @@ internal sealed class OpticStudioControlLease
         return new Releaser(this, clientId);
     }
 
+    public bool ReleaseOwnership(string clientId)
+    {
+        if (string.IsNullOrWhiteSpace(clientId)) return false;
+        lock (_sync)
+        {
+            if (_activeOperation != null ||
+                !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
+                return false;
+
+            _ownerClientId = null;
+            _lastActivity = DateTimeOffset.UtcNow;
+            return true;
+        }
+    }
+
     public object GetHealth()
     {
         lock (_sync) return new
