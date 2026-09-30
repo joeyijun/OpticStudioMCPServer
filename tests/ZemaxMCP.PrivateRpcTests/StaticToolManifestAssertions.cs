@@ -53,6 +53,22 @@ internal static class StaticToolManifestAssertions
             StaticToolManifest.IsAllowed("optimization-tolerance", "zemax_get_nsc_objects", readOnly: false))
             throw new InvalidOperationException("Focused profiles leaked unrelated editor domains back into tools/list.");
 
+        var snapshotList = StaticToolManifest.GetRequired("zemax_snapshot_list").InputSchema.GetProperty("properties");
+        if (snapshotList.GetProperty("limit").GetProperty("default").GetInt32() != 25)
+            throw new InvalidOperationException("Snapshot listing must preserve its bounded newest-first default.");
+
+        var snapshotDiff = StaticToolManifest.GetRequired("zemax_snapshot_diff").InputSchema;
+        var snapshotDiffRequired = snapshotDiff.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
+        if (!snapshotDiffRequired.SetEquals(new[] { "snapshotFileName" }) ||
+            snapshotDiff.GetProperty("properties").GetProperty("maxDifferences").GetProperty("default").GetInt32() != 50 ||
+            snapshotDiff.GetProperty("properties").GetProperty("maxSurfaces").GetProperty("default").GetInt32() != 500)
+            throw new InvalidOperationException("Snapshot diff must require only a snapshot file name and preserve bounded output defaults.");
+
+        var snapshotRestore = StaticToolManifest.GetRequired("zemax_snapshot_restore").InputSchema;
+        var snapshotRestoreRequired = snapshotRestore.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
+        if (!snapshotRestoreRequired.SetEquals(new[] { "snapshotFileName" }))
+            throw new InvalidOperationException("Snapshot restore must accept only the snapshot file name as its required public argument.");
+
         var tolerancing = StaticToolManifest.GetRequired("zemax_run_tolerancing").InputSchema.GetProperty("properties");
         if (tolerancing.GetProperty("criterion").GetProperty("default").GetString() != "RMSSpotRadius" ||
             tolerancing.GetProperty("monteCarloRuns").GetProperty("default").GetInt32() != 20 ||
