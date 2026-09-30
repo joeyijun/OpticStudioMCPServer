@@ -57,12 +57,20 @@ foreach ($requiredTool in @("SpotDiagramTool.cs", "RmsSpotTool.cs", "CardinalPoi
 
 # These Stage A/B/C fixes are release-safety contracts rather than style. Keep
 # explicit false/empty semantics, normalized ray bounds and cancellation wired.
+$batchSetSurfaces = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Server\Tools\LensData\BatchSetSurfacesTool.cs") -Raw
 $setSurface = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Server\Tools\LensData\SetSurfaceTool.cs") -Raw
 if ($setSurface -notmatch 'material is not null' -or
     $setSurface -notmatch 'comment is not null' -or
     $setSurface -notmatch 'surface\.IsStop = isStop\.Value' -or
     $setSurface -notmatch 'MakeSolveFixed\(\)') {
     throw "zemax_set_surface must preserve omitted-vs-explicit-clear semantics."
+}
+if ($batchSetSurfaces -notmatch 'Distinct\(\)\.Count\(\) != edits\.Count' -or
+    $batchSetSurfaces -notmatch 'originals = edits\.ToDictionary' -or
+    $batchSetSurfaces -notmatch 'VerifyReadback\(' -or
+    $batchSetSurfaces -notmatch 'RestoreState\(' -or
+    $batchSetSurfaces -notmatch 'catch \(OperationCanceledException\)') {
+    throw "zemax_batch_set_surfaces must prevalidate the whole batch, use one transactional operation, independently read back writes, rollback touched surfaces, and preserve cancellation."
 }
 
 foreach ($rayFile in @("RayTraceTool.cs", "RayTraceExtendedTool.cs")) {
