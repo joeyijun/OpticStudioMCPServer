@@ -181,6 +181,7 @@ This fork includes these acceptance and validation tools:
 | `zemax_get_nsc_objects` / `zemax_get_nsc_detector` / `zemax_get_nsc_object_parameters` | Inspect NSC objects, detector properties, and type-specific parameters. |
 | `zemax_nsc_scene_summary` | Summarize NSC scene structure, object types, detectors, references, nesting, materials, and structural warnings. |
 | `zemax_tolerance_summary` | Summarize TDE operand types, active/ignored state, bounds, and structural warnings without pretending to run Monte Carlo. |
+| `zemax_run_tolerancing` | Run bounded sequential Sensitivity + Monte Carlo tolerancing, read the generated ZTD through Tolerance Data Viewer, return structured column statistics and worst sensitivity operands, and optionally evaluate a caller-defined pass threshold/direction. |
 | `zemax_get_tolerances` | Read Tolerance Data Editor operands safely, including unset bounds. |
 | `zemax_set_number_of_fields` / `zemax_set_number_of_wavelengths` | Resize the system field or wavelength lists. |
 | `zemax_get_apodization` / `zemax_set_apodization` | Inspect or set pupil apodization type and factor. |
