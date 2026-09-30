@@ -72,7 +72,7 @@ Use purpose-built fixtures for subsystem-specific acceptance:
 ./scripts/verify-live-functional.ps1 -FixturePath "C:\ZemaxValidation\tolerance-fixture.zmx" -VerifyTolerance
 ```
 
-The NSC path checks the structured scene summary/object inspection and executes a bounded real NSC ray trace. The tolerance path checks the TDE summary/operands and executes a small real Sensitivity + Monte Carlo run through `zemax_run_tolerancing`, requiring structured Monte Carlo and sensitivity results. The harness emits a JSON record containing protocol/toolset/fingerprint/license context, Worker generation before/after, and PASS/FAIL/SKIPPED results so acceptance can be archived with release evidence.
+The NSC path checks the structured scene summary/object inspection and executes a bounded real NSC ray trace. The tolerance path checks the TDE summary/operands and executes a small real Sensitivity + Monte Carlo run through `zemax_run_tolerancing`, requiring structured Monte Carlo and sensitivity results. The harness emits a JSON record containing protocol/toolset/fingerprint/license context, Host/Worker/ZOS-API assembly and file versions, Worker generation before/after, and PASS/FAIL/SKIPPED results so acceptance can be archived with release evidence.
 
 ## 4. Safety acceptance
 
