@@ -15,6 +15,7 @@ internal sealed class HostOptions
     public int RequestTimeoutSeconds { get; private set; } = 300;
     public int RequestWriteTimeoutSeconds { get; private set; } = 10;
     public int HardRecoveryTimeoutSeconds { get; private set; } = 360;
+    public int JobRecoveryTimeoutSeconds { get; private set; } = 60;
     public int CancellationWriteTimeoutSeconds { get; private set; } = 5;
     public bool ReadOnly { get; private set; }
     public string Toolset { get; private set; } = "full-expert";
@@ -48,6 +49,7 @@ internal sealed class HostOptions
                 case "--request-timeout-seconds": options.RequestTimeoutSeconds = ParseRange(value, option, 10, 3600); break;
                 case "--request-write-timeout-seconds": options.RequestWriteTimeoutSeconds = ParseRange(value, option, 1, 60); break;
                 case "--hard-recovery-timeout-seconds": options.HardRecoveryTimeoutSeconds = ParseRange(value, option, 20, 7200); break;
+                case "--job-recovery-timeout-seconds": options.JobRecoveryTimeoutSeconds = ParseRange(value, option, 5, 1800); break;
                 case "--cancellation-write-timeout-seconds": options.CancellationWriteTimeoutSeconds = ParseRange(value, option, 1, 30); break;
                 case "--allowed-origin": options._allowedOrigins.Add(OriginRule.Parse(value)); break;
                 case "--allowed-host": options._allowedHosts.Add(ParseHost(value, option)); break;
