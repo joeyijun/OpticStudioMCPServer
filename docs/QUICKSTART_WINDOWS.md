@@ -1,7 +1,7 @@
 # Zemax MCP Windows quick start
 
 1. Download and extract `ZemaxMCP-win-x64.zip` on the computer that has OpticStudio installed.
-2. Double-click **Install.exe**. It installs into your user profile, creates a **Start Zemax MCP** desktop shortcut, and starts the service. No command line or administrator permission is needed for a local connection.
+2. Double-click **Install.exe**. It installs into your user profile, creates a **Start Zemax MCP** desktop shortcut, and starts the service. No command line or administrator permission is needed for a local connection. If an installation already exists, the GUI now delegates replacement to the same Updater used by in-app updates, including stale-file cleanup and rollback protection.
 3. On later use, double-click **Start-Zemax-MCP.exe** (or the desktop shortcut). The newest detected OpticStudio version is selected and the local endpoint starts automatically; the window lets you switch versions if needed. A second launch simply shows that the app is already running.
 4. At first launch, confirm the detected AI-client setup prompt. Alternatively, use **Configure AI clients** and choose Codex, Claude Desktop, Cursor, Google Antigravity, Kimi Code, WorkBuddy, or VS Code / Copilot. Restart the configured AI client once.
 5. The dashboard checks MCP, ZOS-API/OpticStudio, and each AI client's activity automatically every 5 seconds. **Refresh** is available for an immediate check.
@@ -47,6 +47,8 @@ Release maintainers create the ZIP on a Windows computer that has OpticStudio in
 ```
 
 The script writes `artifacts/ZemaxMCP-win-x64.zip`.
+
+`Portable-Install.cmd` also reuses `ZemaxMCP.Updater.exe` when it finds an existing local installation. A successful install/update launches the copy under `%LOCALAPPDATA%\ZemaxMCP`; if replacement cannot be completed, the script says so explicitly before launching the extracted folder in portable mode instead of silently mixing versions.
 
 After deploying the package, maintainers can verify Host health, the complete tool catalog, and a read-only smoke-test set from another trusted LAN computer:
 
