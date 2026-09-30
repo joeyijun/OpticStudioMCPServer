@@ -16,6 +16,8 @@ $launcherCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Launcher\MainWin
 $proxyCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.ClientProxy\Program.cs")
 $solution = Get-Content -Raw (Join-Path $root "OpticStudioMCPServer.sln")
 $architectureDoc = Join-Path $root "docs\ARCHITECTURE.md"
+$releaseWorkflow = Get-Content -Raw (Join-Path $root ".github\workflows\release.yml")
+$publishReleaseWorkflow = Get-Content -Raw (Join-Path $root ".github\workflows\publish-release.yml")
 foreach ($marker in 'AiStateDot', 'Content="Browse…"', 'Click="ChooseZemaxFolder_Click"', 'Content="Start"', 'Content="Stop"', 'Copy secure setup', 'x:Name="ToolsetProfile"') {
   if ($launcherXaml -notmatch [regex]::Escape($marker)) { throw "The desktop UI contract is missing: $marker" }
 }
@@ -42,4 +44,10 @@ if ($publish -notmatch 'dotnet publish.*--self-contained true' -or
     $publish -notmatch 'ZOSAPI\*\.dll') {
   throw "The portable package must contain a self-contained Host and no redistributed ZOS-API DLLs."
 }
-Write-Host "Desktop component, client identity, project organization, and self-contained Host packaging verification passed."
+if ($releaseWorkflow -notmatch 'test-launcher-materials\.ps1' -or
+    $publishReleaseWorkflow -notmatch 'actions:\s*read' -or
+    $publishReleaseWorkflow -notmatch 'head_sha=\$sha' -or
+    $publishReleaseWorkflow -notmatch 'Release signing is blocked') {
+  throw "Release workflows must smoke-test the current launcher UI and refuse signing without successful CI at the exact tagged commit."
+}
+Write-Host "Desktop component, release-gate, client identity, project organization, and self-contained Host packaging verification passed."
