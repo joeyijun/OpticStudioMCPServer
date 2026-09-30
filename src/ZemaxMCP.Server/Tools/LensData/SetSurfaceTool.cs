@@ -142,6 +142,10 @@ public class SetSurfaceTool
 
             return result;
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             return new SetSurfaceResult(
