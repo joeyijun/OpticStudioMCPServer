@@ -180,6 +180,7 @@ if ($functionalLiveVerifier -notmatch 'FixturePath' -or
     $functionalLiveVerifier -notmatch 'zemax_batch_set_surfaces' -or
     $functionalLiveVerifier -notmatch 'zemax_ray_trace_diagnostics' -or
     $functionalLiveVerifier -notmatch 'zemax_nsc_scene_summary' -or
+    $functionalLiveVerifier -notmatch 'zemax_run_nsc_ray_trace' -or
     $functionalLiveVerifier -notmatch 'zemax_tolerance_summary' -or
     $functionalLiveVerifier -notmatch 'ConvertTo-Json' -or
     $functionalLiveVerifier -notmatch 'workingCopy') {
