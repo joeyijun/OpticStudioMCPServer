@@ -86,6 +86,9 @@ if ($runTolerancing -notmatch 'OpenTolerancing\(\)' -or
     $runTolerancing -notmatch 'MonteCarloData' -or
     $runTolerancing -notmatch 'SensitivityData' -or
     $runTolerancing -notmatch 'thresholdDirection must be LessOrEqual or GreaterOrEqual' -or
+    $runTolerancing -notmatch 'CanonicalCriterionName' -or
+    $runTolerancing -notmatch 'CanonicalCompName' -or
+    $runTolerancing -notmatch 'CanonicalFieldName' -or
     $runTolerancing -notmatch 'FiniteOrNull' -or
     $runTolerancing -notmatch 'McpJobManager' -or
     $runTolerancing -notmatch 'RunBounded\(') {
