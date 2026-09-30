@@ -157,14 +157,23 @@ internal sealed class WorkerRpcServer
     {
         var session = _services.GetRequiredService<IZemaxSession>();
         var jobs = _services.GetRequiredService<McpJobManager>();
+        var workerAssembly = typeof(WorkerRpcServer).Assembly;
+        var zosAssembly = typeof(ZOSAPI.ZOSAPI_Connection).Assembly;
+        var zosLocation = zosAssembly.Location;
+        string? zosFileVersion = null;
+        try { zosFileVersion = System.Diagnostics.FileVersionInfo.GetVersionInfo(zosLocation).FileVersion; } catch { }
+
         return new WorkerStatus
         {
             RpcVersion = ZemaxRpcProtocol.Version,
             ManifestFingerprint = StaticToolManifest.ContractFingerprint,
             ZosApiLoaded = true,
+            WorkerVersion = workerAssembly.GetName().Version?.ToString() ?? "unknown",
+            ZosApiAssemblyVersion = zosAssembly.GetName().Version?.ToString(),
+            ZosApiFileVersion = zosFileVersion,
             Connected = session.IsConnected,
             ConnectionMode = session.CurrentMode?.ToString() ?? "not-connected",
-            ZosApiAssembly = typeof(ZOSAPI.ZOSAPI_Connection).Assembly.Location,
+            ZosApiAssembly = zosLocation,
             OpticStudioDataDirectory = session.ZemaxDataDir,
             CurrentLicenseStatus = session.CurrentLicenseStatus,
             LastLicenseStatus = session.LastLicenseStatus,
