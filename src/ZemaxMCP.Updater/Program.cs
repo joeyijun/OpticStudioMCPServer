@@ -35,7 +35,7 @@ internal static class Program
             {
                 ClearDirectory(options.Install, preserveRuntimeData: true);
                 CopyDirectory(options.Staging, options.Install, skipRuntimeData: true,
-                    excludedNames: new[] { "release.zip", "release-manifest.json" });
+                    excludedNames: new[] { "release.zip", "release-manifest.json", "Install.exe", "Portable-Install.cmd" });
                 var launcher = Path.Combine(options.Install, "Start-Zemax-MCP.exe");
                 if (!File.Exists(launcher)) throw new FileNotFoundException("Updated launcher is missing.", launcher);
                 cleanupBackup = true;
