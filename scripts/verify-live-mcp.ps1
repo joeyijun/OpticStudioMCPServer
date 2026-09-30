@@ -197,8 +197,7 @@ if (-not $SkipReadOnlyCalls) {
         "zemax_get_polarization", "zemax_get_units", "zemax_get_stop_surface", "zemax_get_first_order_data",
         "zemax_get_vignetting", "zemax_get_field_settings", "zemax_get_wavelength_settings",
         "zemax_get_system_files", "zemax_get_aperture_settings", "zemax_get_advanced_system_settings",
-        "zemax_get_ray_aiming_settings", "zemax_get_material_catalog_settings",
-        "zemax_nsc_scene_summary", "zemax_tolerance_summary"
+        "zemax_get_ray_aiming_settings", "zemax_get_material_catalog_settings"
     )
     foreach ($toolName in $readOnlyTools) {
         if ($toolName -notin $names) {
