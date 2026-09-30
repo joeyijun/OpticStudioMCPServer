@@ -25,6 +25,7 @@ if ($export -notmatch 'AnalysisBmpHelper\.TryExportBmp\(results, tempImagePath, 
     throw "zemax_export_analysis must propagate cancellation into BMP rendering, check TXT export truthfully, use atomic commits, and never fall back to a different requested format."
 }
 
+$rayDiagnostics = Get-Content -LiteralPath (Join-Path $analysisRoot "RayTraceDiagnosticsTool.cs") -Raw
 $pop = Get-Content -LiteralPath (Join-Path $analysisRoot "PopTool.cs") -Raw
 if ($pop -notmatch 'RestoreTemporaryResampling' -or
     $pop -notmatch 'analysis\.Terminate\(\)' -or
@@ -33,6 +34,13 @@ if ($pop -notmatch 'RestoreTemporaryResampling' -or
     $pop -notmatch 'overwriteOutputFiles' -or
     $pop -match '\bdynamic\b') {
     throw "zemax_pop must retain typed result retrieval, cancellable analysis/BMP execution, temporary LDE-state restoration, and explicit output overwrite policy."
+}
+if ($rayDiagnostics -notmatch 'MaximumSampledRays' -or
+    $rayDiagnostics -notmatch 'LocateFirstProblemSurface' -or
+    $rayDiagnostics -notmatch 'SingleRayNormUnpol' -or
+    $rayDiagnostics -notmatch 'CancellationToken cancellationToken' -or
+    $rayDiagnostics -notmatch 'ValidateFiniteTrace') {
+    throw "zemax_ray_trace_diagnostics must remain bounded, cancellable, based on actual batch-ray error/vignette codes, and localize problem rays by progressive surface tracing."
 }
 
 $detector = Get-Content -LiteralPath (Join-Path $nscRoot "GetNscDetectorTool.cs") -Raw
