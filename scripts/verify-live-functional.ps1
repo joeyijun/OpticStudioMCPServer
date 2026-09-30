@@ -171,33 +171,76 @@ try {
     } | Out-Null
 
     if ($systemMode -notmatch "NonSequential" -and "zemax_get_system" -in $tools) {
-        $script:addedSurface = 0
-        $mutationTools = @("zemax_add_surface", "zemax_set_surface", "zemax_remove_surface")
+        $script:addedSurfaces = @()
+        $mutationTools = @("zemax_add_surface", "zemax_set_surface", "zemax_batch_set_surfaces", "zemax_remove_surface")
         $missingMutation = @($mutationTools | Where-Object { $_ -notin $tools })
         if ($missingMutation.Count -gt 0) {
             Add-Result "sequential-edit-readback" "SKIPPED" ("Active profile omits: " + ($missingMutation -join ", "))
         }
         else {
             $editOk = Invoke-Check "sequential-edit-readback" {
-                $added = Get-ToolPayload (Invoke-Tool "zemax_add_surface" @{ insertAt = 0; radius = 0.0; thickness = 1.0; comment = "ZemaxMCP live validation" })
-                $script:addedSurface = [int]$added.surfaceNumber
-                if ([int]$added.totalSurfaces -ne $surfaceCountBefore + 1) { throw "Surface count did not increase by one." }
+                $addedA = Get-ToolPayload (Invoke-Tool "zemax_add_surface" @{ insertAt = 0; radius = 0.0; thickness = 1.0; comment = "ZemaxMCP live A" })
+                $script:addedSurfaces += [int]$addedA.surfaceNumber
+                if ([int]$addedA.totalSurfaces -ne $surfaceCountBefore + 1) { throw "First surface count did not increase by one." }
 
-                $set = Get-ToolPayload (Invoke-Tool "zemax_set_surface" @{ surfaceNumber = $script:addedSurface; thickness = 1.25; comment = "ZemaxMCP live validation updated" })
-                if ([string]$set.updatedSurface.comment -ne "ZemaxMCP live validation updated") { throw "SetSurface readback did not preserve the comment." }
+                $addedB = Get-ToolPayload (Invoke-Tool "zemax_add_surface" @{ insertAt = 0; radius = 0.0; thickness = 2.0; comment = "ZemaxMCP live B" })
+                $script:addedSurfaces += [int]$addedB.surfaceNumber
+                if ([int]$addedB.totalSurfaces -ne $surfaceCountBefore + 2) { throw "Second surface count did not increase by one." }
+
+                $first = [int]$script:addedSurfaces[0]
+                $second = [int]$script:addedSurfaces[1]
+                Get-ToolPayload (Invoke-Tool "zemax_set_surface" @{
+                    surfaceNumber = $first; thickness = 1.1; comment = "ZemaxMCP live single-set"
+                }) | Out-Null
+
+                $batch = Get-ToolPayload (Invoke-Tool "zemax_batch_set_surfaces" @{
+                    edits = @(
+                        @{ surfaceNumber = $first; thickness = 1.25; comment = "ZemaxMCP batch A" },
+                        @{ surfaceNumber = $second; thickness = 2.5; comment = "ZemaxMCP batch B" }
+                    )
+                })
+                if ([int]$batch.appliedEdits -ne 2 -or $batch.rolledBack -eq $true) {
+                    throw "Batch surface edit did not report two committed edits."
+                }
 
                 $readback = Get-ToolPayload (Invoke-Tool "zemax_get_system")
-                $match = @($readback.surfaces | Where-Object { [int]$_.number -eq $script:addedSurface } | Select-Object -First 1)
-                if ($match.Count -ne 1 -or [Math]::Abs([double]$match[0].thickness - 1.25) -gt 1e-9) { throw "Independent GetSystem readback did not observe the edited thickness." }
+                $matchA = @($readback.surfaces | Where-Object { [int]$_.number -eq $first } | Select-Object -First 1)
+                $matchB = @($readback.surfaces | Where-Object { [int]$_.number -eq $second } | Select-Object -First 1)
+                if ($matchA.Count -ne 1 -or [Math]::Abs([double]$matchA[0].thickness - 1.25) -gt 1e-9) {
+                    throw "Independent GetSystem readback did not observe batch edit A."
+                }
+                if ($matchB.Count -ne 1 -or [Math]::Abs([double]$matchB[0].thickness - 2.5) -gt 1e-9) {
+                    throw "Independent GetSystem readback did not observe batch edit B."
+                }
 
-                $removed = Get-ToolPayload (Invoke-Tool "zemax_remove_surface" @{ surfaceNumber = $script:addedSurface })
-                if ([int]$removed.totalSurfaces -ne $surfaceCountBefore) { throw "Surface count did not return to baseline." }
-                $script:addedSurface = 0
-                "add/set/read/remove verified"
+                foreach ($surfaceNumber in @($script:addedSurfaces | Sort-Object -Descending)) {
+                    Get-ToolPayload (Invoke-Tool "zemax_remove_surface" @{ surfaceNumber = [int]$surfaceNumber }) | Out-Null
+                }
+                $script:addedSurfaces = @()
+                $final = Get-ToolPayload (Invoke-Tool "zemax_get_system")
+                if ([int]$final.numberOfSurfaces -ne $surfaceCountBefore) { throw "Surface count did not return to baseline." }
+                "add/single-set/batch-set/readback/remove verified"
             }
-            if (-not $editOk -and $script:addedSurface -gt 0) {
-                try { Get-ToolPayload (Invoke-Tool "zemax_remove_surface" @{ surfaceNumber = $script:addedSurface }) | Out-Null } catch { }
+            if (-not $editOk -and $script:addedSurfaces.Count -gt 0) {
+                foreach ($surfaceNumber in @($script:addedSurfaces | Sort-Object -Descending)) {
+                    try { Get-ToolPayload (Invoke-Tool "zemax_remove_surface" @{ surfaceNumber = [int]$surfaceNumber }) | Out-Null } catch { }
+                }
+                $script:addedSurfaces = @()
             }
+        }
+
+        if ("zemax_ray_trace_diagnostics" -in $tools) {
+            Invoke-Check "sequential-ray-diagnostics" {
+                $diagnostics = Get-ToolPayload (Invoke-Tool "zemax_ray_trace_diagnostics" @{
+                    fieldSampling = 1; pupilSampling = 5; allWavelengths = $false; surface = 0; maxFailures = 10
+                })
+                if ([int]$diagnostics.totalRays -ne 5) { throw "Expected five diagnostic rays for 1x5 sampling." }
+                if ([int]$diagnostics.clearRays -gt [int]$diagnostics.validRays -or
+                    [int]$diagnostics.validRays -gt [int]$diagnostics.totalRays) {
+                    throw "Ray diagnostic counts are internally inconsistent."
+                }
+                "total=$($diagnostics.totalRays), clear=$($diagnostics.clearRays), problems=$($diagnostics.problemRays)"
+            } | Out-Null
         }
 
         if ("zemax_cardinal_points" -in $tools) {
