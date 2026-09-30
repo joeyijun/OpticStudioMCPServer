@@ -610,7 +610,7 @@ public sealed class RunTolerancingTool
             throw new ArgumentException(
                 $"{parameterName} must be one of: {string.Join(", ", allowed.OrderBy(item => item, StringComparer.Ordinal))}.",
                 parameterName);
-        return Enum.Parse<T>(value.Trim(), ignoreCase: false);
+        return (T)Enum.Parse(typeof(T), value.Trim(), ignoreCase: false);
     }
 
     private static double? FiniteOrNull(double value) =>
