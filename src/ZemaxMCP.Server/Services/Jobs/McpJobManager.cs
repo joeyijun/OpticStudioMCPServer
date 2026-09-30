@@ -10,11 +10,24 @@ namespace ZemaxMCP.Server.Services.Jobs;
 /// </summary>
 public sealed class McpJobManager : IDisposable
 {
+    public const int DefaultMaxHistory = 128;
+    public const int DefaultMaxPending = 64;
+
     private readonly object _gate = new();
     private readonly Queue<JobEntry> _pending = new();
     private readonly Dictionary<string, JobEntry> _jobs = new(StringComparer.Ordinal);
+    private readonly int _maxHistory;
+    private readonly int _maxPending;
     private bool _processorRunning;
     private bool _disposed;
+
+    public McpJobManager(int maxHistory = DefaultMaxHistory, int maxPending = DefaultMaxPending)
+    {
+        if (maxHistory < 1) throw new ArgumentOutOfRangeException(nameof(maxHistory), "Job history limit must be at least 1.");
+        if (maxPending < 1) throw new ArgumentOutOfRangeException(nameof(maxPending), "Pending job limit must be at least 1.");
+        _maxHistory = maxHistory;
+        _maxPending = maxPending;
+    }
 
     public event Action<McpJobSnapshot>? JobChanged;
 
@@ -28,6 +41,8 @@ public sealed class McpJobManager : IDisposable
         lock (_gate)
         {
             ThrowIfDisposed();
+            if (_pending.Count >= _maxPending)
+                throw new InvalidOperationException($"The background job queue is full ({_maxPending} pending jobs). Wait for a job to finish or cancel one before starting another.");
             entry = new JobEntry(Guid.NewGuid().ToString("N"), toolName, operation, timeout);
             _pending.Enqueue(entry);
             _jobs.Add(entry.Id, entry);
@@ -100,6 +115,7 @@ public sealed class McpJobManager : IDisposable
                     entry.CompletedAt = DateTimeOffset.UtcNow;
                     entry.Message = "Cancelled before execution.";
                     cancelledBeforeExecution = Snapshot(entry);
+                    TrimHistoryLocked();
                 }
                 else
                 {
@@ -155,7 +171,29 @@ public sealed class McpJobManager : IDisposable
                 }
             }
             finally { timeoutSource?.Dispose(); }
-            Publish(Snapshot(entry));
+            McpJobSnapshot terminal;
+            lock (_gate)
+            {
+                terminal = Snapshot(entry);
+                TrimHistoryLocked();
+            }
+            Publish(terminal);
+        }
+    }
+
+    private void TrimHistoryLocked()
+    {
+        var overflow = _jobs.Values
+            .Where(entry => entry.State is McpJobState.Completed or McpJobState.Cancelled or McpJobState.Failed)
+            .OrderByDescending(entry => entry.CompletedAt ?? DateTimeOffset.MaxValue)
+            .Skip(_maxHistory)
+            .ToArray();
+
+        foreach (var entry in overflow)
+        {
+            if (!_jobs.Remove(entry.Id)) continue;
+            entry.Result = null;
+            entry.Cancellation.Dispose();
         }
     }
 
@@ -207,7 +245,13 @@ public sealed class McpJobManager : IDisposable
         {
             if (_disposed) return;
             _disposed = true;
-            foreach (var entry in _jobs.Values) entry.Cancellation.Cancel();
+            foreach (var entry in _jobs.Values)
+            {
+                if (entry.State is McpJobState.Completed or McpJobState.Cancelled or McpJobState.Failed)
+                    entry.Cancellation.Dispose();
+                else
+                    entry.Cancellation.Cancel();
+            }
         }
     }
 
