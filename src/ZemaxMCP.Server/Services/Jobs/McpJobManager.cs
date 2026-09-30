@@ -10,6 +10,8 @@ namespace ZemaxMCP.Server.Services.Jobs;
 /// </summary>
 public sealed class McpJobManager : IDisposable
 {
+    private static readonly AsyncLocal<string?> ParentOperation = new();
+
     public const int DefaultMaxHistory = 128;
     public const int DefaultMaxPending = 64;
 
@@ -41,6 +43,13 @@ public sealed class McpJobManager : IDisposable
 
     public event Action<McpJobSnapshot>? JobChanged;
 
+    internal static IDisposable PushParentOperation(string? operationId)
+    {
+        var previous = ParentOperation.Value;
+        ParentOperation.Value = string.IsNullOrWhiteSpace(operationId) ? null : operationId;
+        return new ParentOperationScope(previous);
+    }
+
     public McpJobSnapshot Enqueue(string toolName, Func<McpJobContext, Task> operation, TimeSpan? timeout = null)
     {
         if (string.IsNullOrWhiteSpace(toolName)) throw new ArgumentException("A tool name is required.", nameof(toolName));
@@ -53,7 +62,7 @@ public sealed class McpJobManager : IDisposable
             ThrowIfDisposed();
             if (_pending.Count >= _maxPending)
                 throw new InvalidOperationException($"The background job queue is full ({_maxPending} pending jobs). Wait for a job to finish or cancel one before starting another.");
-            entry = new JobEntry(Guid.NewGuid().ToString("N"), toolName, operation, timeout);
+            entry = new JobEntry(Guid.NewGuid().ToString("N"), toolName, ParentOperation.Value, operation, timeout);
             _pending.Enqueue(entry);
             _jobs.Add(entry.Id, entry);
             snapshot = Snapshot(entry);
@@ -275,7 +284,7 @@ public sealed class McpJobManager : IDisposable
     }
 
     private McpJobSnapshot Snapshot(JobEntry entry) => new(
-        entry.Id, entry.ToolName, entry.State, entry.QueuedAt, entry.StartedAt, entry.CompletedAt,
+        entry.Id, entry.ToolName, entry.ParentOperationId, entry.State, entry.QueuedAt, entry.StartedAt, entry.CompletedAt,
         entry.Progress, entry.Message, QueuePosition(entry), entry.StartedAt == null ? null : DateTimeOffset.UtcNow - entry.StartedAt.Value, entry.Result);
 
     private int QueuePosition(JobEntry entry)
@@ -316,18 +325,33 @@ public sealed class McpJobManager : IDisposable
         }
     }
 
+    private sealed class ParentOperationScope : IDisposable
+    {
+        private readonly string? _previous;
+        private bool _disposed;
+        public ParentOperationScope(string? previous) => _previous = previous;
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            ParentOperation.Value = _previous;
+        }
+    }
+
     private sealed class JobEntry
     {
-        public JobEntry(string id, string toolName, Func<McpJobContext, Task> operation, TimeSpan? timeout)
+        public JobEntry(string id, string toolName, string? parentOperationId, Func<McpJobContext, Task> operation, TimeSpan? timeout)
         {
             Id = id;
             ToolName = toolName;
+            ParentOperationId = parentOperationId;
             Operation = operation;
             Timeout = timeout;
         }
 
         public string Id { get; }
         public string ToolName { get; }
+        public string? ParentOperationId { get; }
         public Func<McpJobContext, Task> Operation { get; }
         public TimeSpan? Timeout { get; }
         public CancellationTokenSource Cancellation { get; } = new();
@@ -363,6 +387,7 @@ public enum McpJobState { Queued, Running, Cancelling, Completed, Cancelled, Fai
 public sealed record McpJobSnapshot(
     string JobId,
     string ToolName,
+    string? ParentOperationId,
     McpJobState State,
     DateTimeOffset QueuedAt,
     DateTimeOffset? StartedAt,
