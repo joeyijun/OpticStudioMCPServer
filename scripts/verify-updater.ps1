@@ -3,7 +3,13 @@ param([string]$Configuration = "Release")
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 $updater = Join-Path $root "src\ZemaxMCP.Updater\bin\$Configuration\net48\ZemaxMCP.Updater.exe"
+$updaterSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Updater\Program.cs")
 if (-not (Test-Path -LiteralPath $updater)) { throw "Updater build output is missing." }
+if ($updaterSource -notmatch 'cleanupBackup' -or
+    $updaterSource -notmatch 'backup has been preserved at' -or
+    $updaterSource -match 'finally[\s\S]{0,300}Directory\.Delete\(backup, true\)') {
+  throw "Updater rollback failures must preserve the previous-installation backup and report its recovery path."
+}
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("ZemaxMCP-updater-test-" + [guid]::NewGuid().ToString("N"))
 $install = Join-Path $testRoot "install"
 $staging = Join-Path $testRoot "staging"
@@ -38,7 +44,7 @@ try {
 finally {
   if (Test-Path -LiteralPath $testRoot) { Remove-Item -LiteralPath $testRoot -Recurse -Force }
 }
-Write-Host "Updater apply and rollback behavior verified."
+Write-Host "Updater apply, successful rollback, and rollback-backup preservation contracts verified."
 # The rollback scenario intentionally executes the updater once with exit code
 # 1. All assertions above have verified that failure and its recovery, so do
 # not leak the expected native exit code into the hosting PowerShell process.
