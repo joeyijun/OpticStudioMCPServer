@@ -157,11 +157,11 @@ public sealed class RunTolerancingTool
             new Dictionary<string, object?>
             {
                 ["includeSensitivity"] = includeSensitivity,
-                ["criterion"] = criterion.ToString(),
+                ["criterion"] = CanonicalCriterionName(criterion),
                 ["criterionSampling"] = criterionSampling,
-                ["criterionComp"] = criterionComp.ToString(),
+                ["criterionComp"] = CanonicalCompName(criterionComp),
                 ["criterionCycle"] = criterionCycle,
-                ["criterionField"] = criterionField.ToString(),
+                ["criterionField"] = CanonicalFieldName(criterionField),
                 ["monteCarloRuns"] = monteCarloRuns,
                 ["monteCarloStatistic"] = monteCarloStatistic.ToString(),
                 ["passThreshold"] = passThreshold,
@@ -377,9 +377,9 @@ public sealed class RunTolerancingTool
                 null,
                 "Completed",
                 includeSensitivity ? SetupModes.Sensitivity.ToString() : SetupModes.SkipSensitivity.ToString(),
-                criterion.ToString(),
-                criterionComp.ToString(),
-                criterionField.ToString(),
+                CanonicalCriterionName(criterion),
+                CanonicalCompName(criterionComp),
+                CanonicalFieldName(criterionField),
                 monteCarloStatistic.ToString(),
                 monteCarloRuns,
                 runtimeSeconds,
@@ -441,6 +441,43 @@ public sealed class RunTolerancingTool
             if (sensitivity.GetCriterion(index).Name == criterion) return index;
         return -1;
     }
+
+    private static string CanonicalCriterionName(Criterions criterion) => ((int)criterion) switch
+    {
+        0 => "RMSSpotRadius",
+        1 => "RMSSpotX",
+        2 => "RMSSpotY",
+        3 => "RMSWavefront",
+        4 => "MeritFunction",
+        5 => "GeometricMTFAverage",
+        6 => "GeometricMTFTan",
+        7 => "GeometricMTFSag",
+        8 => "DiffMTFAverage",
+        9 => "DiffMTFTan",
+        10 => "DiffMTFSag",
+        11 => "BoresightError",
+        12 => "RMSAngularRadius",
+        13 => "RMSAngularX",
+        14 => "RMSAngularY",
+        _ => throw new ArgumentOutOfRangeException(nameof(criterion), "Unsupported sequential tolerancing criterion.")
+    };
+
+    private static string CanonicalCompName(CriterionComps comp) => ((int)comp) switch
+    {
+        0 => "OptimizeAll_DLS",
+        1 => "ParaxialFocus",
+        2 => "None",
+        3 => "OptimizeAll_OD",
+        _ => throw new ArgumentOutOfRangeException(nameof(comp), "Unsupported sequential tolerancing compensation mode.")
+    };
+
+    private static string CanonicalFieldName(CriterionFields field) => ((int)field) switch
+    {
+        0 => "Y_Symmetric",
+        1 => "XY_Symmetric",
+        2 => "UserDefined",
+        _ => throw new ArgumentOutOfRangeException(nameof(field), "Unsupported sequential tolerancing field mode.")
+    };
 
     private static TolerancingColumnName ExpectedColumnName(Criterions criterion) => criterion switch
     {
