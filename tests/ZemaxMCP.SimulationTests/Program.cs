@@ -203,7 +203,7 @@ internal static class Program
             release.TrySetResult();
         }
 
-        using (var boundedHistory = new McpJobManager(maxHistory: 3, maxPending: 8))
+        using (var boundedHistory = new McpJobManager(maxHistory: 3, maxPending: 8, maxResultHistory: 2))
         {
             var completedCount = 0;
             var allCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -216,13 +216,24 @@ internal static class Program
             };
 
             for (var index = 0; index < 5; index++)
-                boundedHistory.Enqueue("history-" + index, _ => Task.CompletedTask);
+            {
+                var resultValue = index;
+                boundedHistory.Enqueue("history-" + index, context =>
+                {
+                    context.SetResult(new string('x', 1024) + resultValue);
+                    return Task.CompletedTask;
+                });
+            }
 
             await allCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await Task.Delay(50);
             var retained = boundedHistory.List();
             Assert(retained.Count == 3, "Completed job history must be trimmed to the configured retention limit.");
             Assert(retained.All(job => job.State == McpJobState.Completed), "Retained job history unexpectedly contains non-terminal jobs.");
+            Assert(retained.Count(job => !job.ResultExpired && job.Result != null) == 2,
+                "Only the configured newest result payloads should remain resident.");
+            Assert(retained.Count(job => job.ResultExpired && job.Result == null) == 1,
+                "Older retained job metadata must explicitly mark its discarded result payload.");
         }
     }
 
