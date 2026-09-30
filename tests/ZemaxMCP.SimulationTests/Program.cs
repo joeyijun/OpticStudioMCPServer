@@ -15,7 +15,8 @@ internal static class Program
             VerifyGlassCatalogSafety();
             await VerifyStaDispatcherAsync();
             await VerifyJobManagerAsync();
-            Console.WriteLine("Core safety abstraction, scientific-number truthfulness, glass-catalog integrity, STA dispatcher, and server job simulation tests passed.");
+            await VerifyJobLimitsAsync();
+            Console.WriteLine("Core safety abstraction, scientific-number truthfulness, glass-catalog integrity, STA dispatcher, and bounded server job simulation tests passed.");
             return 0;
         }
         catch (Exception exception)
@@ -178,6 +179,50 @@ internal static class Program
         Assert(jobs.Cancel(queued.JobId, out _), "Queued/running job could not be cancelled.");
         var terminal = await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert(terminal.State == McpJobState.Cancelled, "Cancelled job did not reach a terminal cancelled state.");
+    }
+
+    private static async Task VerifyJobLimitsAsync()
+    {
+        using (var boundedQueue = new McpJobManager(maxHistory: 4, maxPending: 2))
+        {
+            var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            boundedQueue.Enqueue("blocking", async context =>
+            {
+                started.TrySetResult();
+                await release.Task.WaitAsync(context.CancellationToken);
+            });
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            boundedQueue.Enqueue("queued-1", _ => Task.CompletedTask);
+            boundedQueue.Enqueue("queued-2", _ => Task.CompletedTask);
+            AssertThrows<InvalidOperationException>(
+                () => boundedQueue.Enqueue("queued-overflow", _ => Task.CompletedTask),
+                "Background jobs beyond the configured pending limit must be rejected.");
+            release.TrySetResult();
+        }
+
+        using (var boundedHistory = new McpJobManager(maxHistory: 3, maxPending: 8))
+        {
+            var completedCount = 0;
+            var allCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            boundedHistory.JobChanged += snapshot =>
+            {
+                if (snapshot.State == McpJobState.Completed &&
+                    snapshot.ToolName.StartsWith("history-", StringComparison.Ordinal) &&
+                    Interlocked.Increment(ref completedCount) == 5)
+                    allCompleted.TrySetResult();
+            };
+
+            for (var index = 0; index < 5; index++)
+                boundedHistory.Enqueue("history-" + index, _ => Task.CompletedTask);
+
+            await allCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Task.Delay(50);
+            var retained = boundedHistory.List();
+            Assert(retained.Count == 3, "Completed job history must be trimmed to the configured retention limit.");
+            Assert(retained.All(job => job.State == McpJobState.Completed), "Retained job history unexpectedly contains non-terminal jobs.");
+        }
     }
 
     private static void Assert(bool condition, string message)
