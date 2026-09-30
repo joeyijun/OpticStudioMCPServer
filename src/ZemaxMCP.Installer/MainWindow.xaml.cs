@@ -23,16 +23,22 @@ public partial class MainWindow : Window
                 StringComparison.OrdinalIgnoreCase);
             if (!alreadyInstalled)
             {
-                Status.Text = Directory.Exists(target) && Directory.EnumerateFileSystemEntries(target).Any()
+                var existingLauncher = Path.Combine(target, "Start-Zemax-MCP.exe");
+                var hasExistingInstall = File.Exists(existingLauncher);
+                Status.Text = hasExistingInstall
                     ? "Updating the existing installation. Stopping the old launcher…"
                     : "Installing Zemax MCP…";
                 StopExistingProcesses();
-                foreach (var file in Directory.GetFiles(source))
+
+                if (hasExistingInstall)
                 {
-                    var name = Path.GetFileName(file);
-                    if (!name.StartsWith("Install", StringComparison.OrdinalIgnoreCase)) File.Copy(file, Path.Combine(target, name), true);
+                    Status.Text = "Updating with verified replacement and rollback…";
+                    RunUpdater(source, target);
                 }
-                foreach (var directory in Directory.GetDirectories(source)) CopyDirectory(directory, Path.Combine(target, Path.GetFileName(directory)));
+                else
+                {
+                    CopyInitialInstall(source, target);
+                }
             }
             var launcher = Path.Combine(target, "Start-Zemax-MCP.exe");
             if (!File.Exists(launcher)) throw new FileNotFoundException("The release package is missing Start-Zemax-MCP.exe.");
@@ -43,11 +49,54 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) { Status.Text = "Installation failed: " + ex.Message; }
     }
-    private static void CopyDirectory(string source, string target)
+    private static void CopyInitialInstall(string source, string target)
     {
         Directory.CreateDirectory(target);
-        foreach (var file in Directory.GetFiles(source)) File.Copy(file, Path.Combine(target, Path.GetFileName(file)), true);
-        foreach (var folder in Directory.GetDirectories(source)) CopyDirectory(folder, Path.Combine(target, Path.GetFileName(folder)));
+        foreach (var file in Directory.GetFiles(source))
+        {
+            var name = Path.GetFileName(file);
+            if (IsPackageOnlyFile(name)) continue;
+            File.Copy(file, Path.Combine(target, name), true);
+        }
+        foreach (var folder in Directory.GetDirectories(source))
+        {
+            var name = Path.GetFileName(folder);
+            if (name.Equals("logs", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("snapshots", StringComparison.OrdinalIgnoreCase)) continue;
+            CopyInitialInstall(folder, Path.Combine(target, name));
+        }
+    }
+
+    private static bool IsPackageOnlyFile(string name) =>
+        name.Equals("Install.exe", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("Portable-Install.cmd", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("release.zip", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("release-manifest.json", StringComparison.OrdinalIgnoreCase);
+
+    private static void RunUpdater(string source, string target)
+    {
+        var updater = Path.Combine(source, "ZemaxMCP.Updater.exe");
+        if (!File.Exists(updater))
+            throw new FileNotFoundException("The release package is missing ZemaxMCP.Updater.exe.", updater);
+
+        var arguments =
+            "--staging \"" + source.TrimEnd(Path.DirectorySeparatorChar) +
+            "\" --install \"" + target.TrimEnd(Path.DirectorySeparatorChar) +
+            "\" --parent-pid 0 --restart false";
+        using var process = Process.Start(new ProcessStartInfo(updater, arguments)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true
+        }) ?? throw new InvalidOperationException("Could not start ZemaxMCP.Updater.exe.");
+
+        if (!process.WaitForExit(120000))
+        {
+            try { process.Kill(); } catch { }
+            throw new TimeoutException("Zemax MCP update did not finish within 120 seconds.");
+        }
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException(
+                "The update could not be applied or rolled back cleanly. Check %LOCALAPPDATA%\\ZemaxMCP\\update.log; any preserved recovery backup path is recorded there.");
     }
     private static void StopExistingProcesses()
     {
