@@ -101,6 +101,10 @@ public class SetSurfaceSolveTool
 
             return result;
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             return new SetSurfaceSolveResult(false, ex.Message, null);
