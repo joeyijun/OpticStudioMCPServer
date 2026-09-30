@@ -92,6 +92,10 @@ public class RayTraceTool
 
             return result;
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             return new RayTraceResult
