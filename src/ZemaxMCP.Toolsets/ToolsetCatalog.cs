@@ -152,6 +152,7 @@ public static class ToolsetCatalog
         ["zemax_remove_surface"] = "sequential-editing",
         ["zemax_restart"] = "administration",
         ["zemax_run_nsc_ray_trace"] = "non-sequential",
+        ["zemax_run_tolerancing"] = "tolerance",
         ["zemax_rms_spot"] = "analysis",
         ["zemax_save_file"] = "files",
         ["zemax_save_merit_function_file"] = "files",
@@ -212,7 +213,7 @@ public static class ToolsetCatalog
 
     private static readonly HashSet<string> CautionTools = new HashSet<string>(StringComparer.Ordinal)
     {
-        "zemax_connect", "zemax_disconnect", "zemax_job_cancel", "zemax_multistart_stop", "zemax_open_file", "zemax_restart", "zemax_run_nsc_ray_trace"
+        "zemax_connect", "zemax_disconnect", "zemax_job_cancel", "zemax_multistart_stop", "zemax_open_file", "zemax_restart", "zemax_run_nsc_ray_trace", "zemax_run_tolerancing"
     };
 
     private static readonly HashSet<string> HighImpactTools = new HashSet<string>(StringComparer.Ordinal)
@@ -293,7 +294,7 @@ public static class ToolsetCatalog
                 "zemax_constrained_optimize", "zemax_global_search", "zemax_hammer", "zemax_multistart_optimize",
                 "zemax_multistart_status", "zemax_multistart_stop", "zemax_set_variable_constraints",
                 "zemax_forbes_merit_function", "zemax_load_merit_function_file", "zemax_save_merit_function_file",
-                "zemax_job_status", "zemax_job_list", "zemax_job_cancel", "zemax_get_tolerances", "zemax_tolerance_summary",
+                "zemax_job_status", "zemax_job_list", "zemax_job_cancel", "zemax_get_tolerances", "zemax_tolerance_summary", "zemax_run_tolerancing",
                 "zemax_cardinal_points", "zemax_fft_mtf", "zemax_fft_mtf_vs_field", "zemax_fft_psf",
                 "zemax_spot_diagram", "zemax_rms_spot", "zemax_ray_fan", "zemax_opd_fan",
                 "zemax_ray_trace", "zemax_ray_trace_diagnostics", "zemax_field_curvature_distortion", "zemax_chromatic_focal_shift",
