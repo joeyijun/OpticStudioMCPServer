@@ -30,6 +30,7 @@ internal static class Program
         {
             VerifyActivityOwnership();
             VerifyOriginBoundary();
+            await VerifyBackgroundJobLeaseRetentionAsync().ConfigureAwait(false);
             VerifyStrictArgumentBinding();
             await VerifyWriteGateCancellationClassificationAsync().ConfigureAwait(false);
             await VerifyContractMismatchRejectedAsync().ConfigureAwait(false);
@@ -87,6 +88,35 @@ internal static class Program
         if (!OriginPolicy.IsAllowed(new Uri("http://192.168.8.20:3000"), lanRules) ||
             OriginPolicy.IsAllowed(new Uri("http://192.168.8.20:3001"), lanRules))
             throw new InvalidOperationException("An explicit LAN Origin must not inherit a wildcard port.");
+    }
+
+    private static async Task VerifyBackgroundJobLeaseRetentionAsync()
+    {
+        var lease = new OpticStudioControlLease(TimeSpan.FromMilliseconds(50));
+        using (await lease.AcquireAsync("client-a", "zemax_global_search", CancellationToken.None).ConfigureAwait(false)) { }
+        if (!lease.RetainForJob("client-a", "job-1", generation: 7))
+            throw new InvalidOperationException("The owning client could not retain control for its background job.");
+
+        await Task.Delay(80).ConfigureAwait(false);
+        try
+        {
+            using var _ = await lease.AcquireAsync("client-b", "zemax_status", CancellationToken.None).ConfigureAwait(false);
+            throw new InvalidOperationException("A background job did not prevent lease expiry and cross-client takeover.");
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("currently leased", StringComparison.OrdinalIgnoreCase)) { }
+
+        lease.ObserveJob(8, new WorkerJobStatus { JobId = "job-1", State = "Completed" });
+        await Task.Delay(80).ConfigureAwait(false);
+        try
+        {
+            using var _ = await lease.AcquireAsync("client-b", "zemax_status", CancellationToken.None).ConfigureAwait(false);
+            throw new InvalidOperationException("A terminal event from the wrong Worker generation released the job lease.");
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("currently leased", StringComparison.OrdinalIgnoreCase)) { }
+
+        lease.ReleaseGeneration(7);
+        await Task.Delay(80).ConfigureAwait(false);
+        using var handedOff = await lease.AcquireAsync("client-b", "zemax_status", CancellationToken.None).ConfigureAwait(false);
     }
 
     private static void VerifyStrictArgumentBinding()
