@@ -31,6 +31,7 @@ internal static class Program
             VerifyActivityOwnership();
             VerifyOriginBoundary();
             VerifyStrictArgumentBinding();
+            await VerifyWriteGateCancellationClassificationAsync().ConfigureAwait(false);
             await VerifyContractMismatchRejectedAsync().ConfigureAwait(false);
             await VerifyPipeFaultRecoveryAsync().ConfigureAwait(false);
             await VerifyHardTimeoutRecoveryAsync().ConfigureAwait(false);
@@ -126,6 +127,33 @@ internal static class Program
     }
 
     private static void StrictBinderFixture(string required, int optional = 7, CancellationToken cancellationToken = default) { }
+
+    private static async Task VerifyWriteGateCancellationClassificationAsync()
+    {
+        using var blockedGate = new SemaphoreSlim(0, 1);
+        using var caller = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        using var callerDeadline = CancellationTokenSource.CreateLinkedTokenSource(caller.Token);
+        callerDeadline.CancelAfter(TimeSpan.FromSeconds(2));
+        try
+        {
+            await WorkerRpcClient.WaitForWriteGateAsync(blockedGate, callerDeadline.Token, caller.Token, callerDeadline).ConfigureAwait(false);
+            throw new InvalidOperationException("A caller-cancelled write-lock wait unexpectedly acquired the gate.");
+        }
+        catch (OperationCanceledException) when (caller.IsCancellationRequested) { }
+        catch (TimeoutException)
+        {
+            throw new InvalidOperationException("Caller cancellation while waiting for the RPC write lock was misclassified as a write timeout.");
+        }
+
+        using var timeoutGate = new SemaphoreSlim(0, 1);
+        using var writeDeadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        try
+        {
+            await WorkerRpcClient.WaitForWriteGateAsync(timeoutGate, writeDeadline.Token, CancellationToken.None, writeDeadline).ConfigureAwait(false);
+            throw new InvalidOperationException("An expired write deadline unexpectedly acquired the gate.");
+        }
+        catch (TimeoutException) { }
+    }
 
     private static async Task VerifyContractMismatchRejectedAsync()
     {
