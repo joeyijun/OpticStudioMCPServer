@@ -286,12 +286,23 @@ try {
     if ($VerifyNsc) {
         Invoke-Check "nsc-structural-summary" {
             if ($systemMode -notmatch "NonSequential") { throw "Fixture is not a non-sequential system." }
-            foreach ($required in @("zemax_nsc_scene_summary", "zemax_get_nsc_objects")) {
+            foreach ($required in @("zemax_nsc_scene_summary", "zemax_get_nsc_objects", "zemax_run_nsc_ray_trace")) {
                 if ($required -notin $tools) { throw "Active profile does not expose $required." }
             }
             $summary = Get-ToolPayload (Invoke-Tool "zemax_nsc_scene_summary")
             $objects = Get-ToolPayload (Invoke-Tool "zemax_get_nsc_objects" @{ startObject = 1; maxObjects = 100 })
-            "objects=$($summary.numberOfObjects), detectors=$($summary.detectorObjects), returned=$(@($objects.objects).Count)"
+            $trace = Get-ToolPayload (Invoke-Tool "zemax_run_nsc_ray_trace" @{
+                clearDetectors = $true
+                detectorObject = 0
+                splitRays = $false
+                scatterRays = $false
+                usePolarization = $false
+                ignoreErrors = $true
+                timeoutSeconds = 60.0
+                runInBackground = $false
+            })
+            if ($trace.state -ne "Completed") { throw "NSC ray trace did not complete." }
+            "objects=$($summary.numberOfObjects), detectors=$($summary.detectorObjects), returned=$(@($objects.objects).Count), traceSeconds=$($trace.runtimeSeconds)"
         } | Out-Null
     }
 
