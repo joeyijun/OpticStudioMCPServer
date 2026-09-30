@@ -63,7 +63,7 @@ The transport smoke test above is intentionally small. For real ZOS-API behavior
   -ReportPath ".\artifacts\live-functional-2024R1.json"
 ```
 
-The script copies the supplied ZMX/ZOS file to a temporary working directory before opening it. The original fixture is never intentionally edited. On a sequential fixture it verifies open/read, surface add → set → independent readback → remove, structured analysis, save, and optionally a bounded Local Optimize plus background-Job start/cancel/status lifecycle. Background Job status must preserve the originating Worker operation ID.
+The script copies the supplied ZMX/ZOS file to a temporary working directory before opening it. The original fixture is never intentionally edited. On a sequential fixture it verifies open/read, two-surface add → single edit → atomic batch edit → independent readback → cleanup, structured ray-trace diagnostics, structured analysis, save, and optionally a bounded Local Optimize plus background-Job start/cancel/status lifecycle. Background Job status must preserve the originating Worker operation ID.
 
 Use purpose-built fixtures for subsystem-specific acceptance:
 
@@ -139,6 +139,7 @@ For each public tool, review:
 ### Stage B — Sequential editing
 
 - Surface setters preserve omitted-vs-explicit-clear semantics for material/comment/stop and fixed/variable solves.
+- `zemax_batch_set_surfaces` validates the entire request before the first write, creates one HighImpact safety snapshot, independently verifies each edited surface, and restores all touched surfaces if any write/readback fails.
 - Surface solve/XDAT/PARM/aperture setters validate ranges, finite values, referenced surfaces, and enum vocabulary before mutation.
 - Pure parameter reads use an explicitly ReadOnly execution command rather than accidentally creating HighImpact snapshots.
 - Field, wavelength, system-aperture, vignetting, and common settings operations propagate cancellation.
@@ -147,6 +148,7 @@ For each public tool, review:
 ### Stage C — structured read-only analysis
 
 - Normalized ray inputs, field/wavelength/surface ranges, sampling, frequency, and named settings are validated before analysis execution.
+- `zemax_ray_trace_diagnostics` keeps sampling bounded, reports actual batch-ray error/vignette codes, and progressively retraces problem rays to identify the first surface where an anomaly is observed.
 - Fan/aberration/MTF/PSF/text parsers fail explicitly when required sections are missing or malformed instead of filling missing values with zero.
 - `zemax_spot_diagram`, `zemax_rms_spot`, and `zemax_cardinal_points` use side-effect-free `IMeritFunctionEditor.GetOperandValue`; analysis tools are guarded against structural MFE mutation.
 - Relative illumination, encircled energy, aperture throughput, GIA, and remaining structured analyses require real primary data and propagate cancellation.
