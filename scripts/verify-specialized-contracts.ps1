@@ -71,11 +71,25 @@ if ($objects -notmatch 'startObject > numberOfObjects' -or $objects -notmatch 'V
 }
 
 $tolerances = Get-Content -LiteralPath (Join-Path $toleranceRoot "GetTolerancesTool.cs") -Raw
+$runTolerancing = Get-Content -LiteralPath (Join-Path $toleranceRoot "RunTolerancingTool.cs") -Raw
 if ($tolerances -notmatch 'ReadUsedFinite' -or
     $tolerances -notmatch 'row\.IsParam1Used' -or
     $tolerances -notmatch 'startRow > numberOfOperands' -or
     $tolerances -notmatch 'CancellationToken cancellationToken') {
     throw "zemax_get_tolerances must retain used-field semantics, strict pagination/finite bounds, and cancellation."
+}
+if ($runTolerancing -notmatch 'OpenTolerancing\(\)' -or
+    $runTolerancing -notmatch 'SaveTolDataFile = true' -or
+    $runTolerancing -notmatch 'TolDataFile = ztdPath' -or
+    $runTolerancing -notmatch 'NumberToSave = 0' -or
+    $runTolerancing -notmatch 'OpenToleranceDataViewer\(\)' -or
+    $runTolerancing -notmatch 'MonteCarloData' -or
+    $runTolerancing -notmatch 'SensitivityData' -or
+    $runTolerancing -notmatch 'thresholdDirection must be LessOrEqual or GreaterOrEqual' -or
+    $runTolerancing -notmatch 'FiniteOrNull' -or
+    $runTolerancing -notmatch 'McpJobManager' -or
+    $runTolerancing -notmatch 'RunBounded\(') {
+    throw "zemax_run_tolerancing must use the official Tolerancing/ZTD/DataViewer path, avoid Monte Carlo lens-file output, preserve non-finite truthfulness, require explicit yield direction, remain bounded/cancellable, and support managed Jobs."
 }
 
 Write-Host "Stage F specialized contract guards passed: POP, NSC, tolerancing, BMP rendering, and generic exports retain reviewed safety/data-integrity behavior."
