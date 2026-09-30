@@ -133,15 +133,23 @@ internal sealed class WorkerRpcServer
             try
             {
                 var result = await _tools.InvokeAsync(invocation.Command, invocation.Arguments, operation.Token).ConfigureAwait(false);
+                var resultJson = JsonSerializer.SerializeToElement(result, _jsonOptions);
                 await WriteResultAsync(writer, message.RequestId, message.OperationId, new
                 {
-                    content = new[] { new { type = "text", text = JsonSerializer.Serialize(result, _jsonOptions) } },
-                    isError = false
+                    content = new[] { new { type = "text", text = resultJson.GetRawText() } },
+                    isError = IsExplicitToolFailure(resultJson)
                 }).ConfigureAwait(false);
             }
             finally { _executionGate.Release(); }
         }
         finally { _operations.TryRemove(message.OperationId, out _); }
+    }
+
+    internal static bool IsExplicitToolFailure(JsonElement result)
+    {
+        return result.ValueKind == JsonValueKind.Object &&
+               result.TryGetProperty("success", out var success) &&
+               success.ValueKind == JsonValueKind.False;
     }
 
     private WorkerStatus CreateStatus()
