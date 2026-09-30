@@ -53,6 +53,12 @@ internal static class StaticToolManifestAssertions
             StaticToolManifest.IsAllowed("optimization-tolerance", "zemax_get_nsc_objects", readOnly: false))
             throw new InvalidOperationException("Focused profiles leaked unrelated editor domains back into tools/list.");
 
+        var nscTrace = StaticToolManifest.GetRequired("zemax_run_nsc_ray_trace").InputSchema.GetProperty("properties");
+        if (nscTrace.GetProperty("clearDetectors").GetProperty("default").GetBoolean() != true ||
+            nscTrace.GetProperty("timeoutSeconds").GetProperty("default").GetDouble() != 60 ||
+            nscTrace.GetProperty("runInBackground").GetProperty("default").GetBoolean() != true)
+            throw new InvalidOperationException("Managed NSC ray trace must preserve safe detector clearing, timeout, and background defaults.");
+
         var batchSurfaces = StaticToolManifest.GetRequired("zemax_batch_set_surfaces").InputSchema;
         var batchRequired = batchSurfaces.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
         if (!batchRequired.SetEquals(new[] { "edits" }))
