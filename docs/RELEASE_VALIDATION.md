@@ -63,7 +63,7 @@ The transport smoke test above is intentionally small. For real ZOS-API behavior
   -ReportPath ".\artifacts\live-functional-2024R1.json"
 ```
 
-The script copies the supplied ZMX/ZOS file to a temporary working directory before opening it. The original fixture is never intentionally edited. On a sequential fixture it verifies open/read, two-surface add → single edit → atomic batch edit → independent readback → cleanup, structured ray-trace diagnostics, structured analysis, save, and optionally a bounded Local Optimize plus background-Job start/cancel/status lifecycle. Background Job status must preserve the originating Worker operation ID.
+The script copies the supplied ZMX/ZOS file to a temporary working directory before opening it. The original fixture is never intentionally edited. On a sequential fixture it verifies open/read, two-surface add → single edit → atomic batch edit → independent readback → cleanup, snapshot list/diff/controlled restore, structured ray-trace diagnostics, structured analysis, save, and optionally a bounded Local Optimize plus background-Job start/cancel/status lifecycle. Background Job status must preserve the originating Worker operation ID.
 
 Use purpose-built fixtures for subsystem-specific acceptance:
 
@@ -135,6 +135,7 @@ For each public tool, review:
 - The Worker is explicitly x64 to avoid the legacy NetHelper/registry-view failure mode on older OpticStudio installations.
 - Packaged Workers record the ZOS-API release used to compile them and reject an older selected runtime before CLR type binding can fail on missing interface members.
 - HighImpact safety snapshots use `.zmx`, not `.zos`, so 2021 releases before 21.3 are not blocked by a file format they cannot read.
+- Snapshot management is bounded and path-confined: listing ignores reparse points; diff loads the selected snapshot only into a copied sequential system and returns bounded LDE parameter differences; restore first creates a fresh pre-restore safety snapshot, then loads the historical snapshot from a separate working copy so later saves cannot overwrite history.
 
 ### Stage B — Sequential editing
 
