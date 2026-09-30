@@ -306,6 +306,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
                     {
                         JobId = progress.OperationId,
                         ToolName = progress.ToolName,
+                        ParentOperationId = progress.ParentOperationId,
                         State = progress.State,
                         Fraction = progress.Fraction,
                         QueuePosition = progress.QueuePosition,
