@@ -229,6 +229,46 @@ try {
             }
         }
 
+        $snapshotTools = @("zemax_snapshot_list", "zemax_snapshot_diff", "zemax_snapshot_restore")
+        if (@($snapshotTools | Where-Object { $_ -notin $tools }).Count -eq 0) {
+            Invoke-Check "snapshot-list-diff-restore" {
+                $latestPath = [string](Get-Health).lastSnapshotPath
+                if ([string]::IsNullOrWhiteSpace($latestPath)) { throw "Sequential mutation checks did not report a safety snapshot." }
+                $snapshotName = [IO.Path]::GetFileName($latestPath)
+
+                $listed = Get-ToolPayload (Invoke-Tool "zemax_snapshot_list" @{ limit = 10 })
+                if ($snapshotName -notin @($listed.snapshots | ForEach-Object { $_.fileName })) {
+                    throw "Latest safety snapshot was not returned by zemax_snapshot_list."
+                }
+
+                $diff = Get-ToolPayload (Invoke-Tool "zemax_snapshot_diff" @{
+                    snapshotFileName = $snapshotName
+                    maxDifferences = 20
+                    maxSurfaces = 200
+                })
+                if ([int]$diff.inspectedSurfaces -lt 1) { throw "Snapshot diff did not inspect any sequential surfaces." }
+
+                $restoredPath = $null
+                try {
+                    $restore = Get-ToolPayload (Invoke-Tool "zemax_snapshot_restore" @{ snapshotFileName = $snapshotName })
+                    $restoredPath = [string]$restore.workingFilePath
+                    if ([string]::IsNullOrWhiteSpace([string]$restore.protectedCurrentSnapshotFileName) -or
+                        [string]::IsNullOrWhiteSpace($restoredPath) -or
+                        -not (Test-Path -LiteralPath $restoredPath)) {
+                        throw "Controlled restore did not protect the current state and open a separate working copy."
+                    }
+                }
+                finally {
+                    try { Get-ToolPayload (Invoke-Tool "zemax_open_file" @{ filePath = $workingCopy }) | Out-Null } catch { }
+                    if (-not [string]::IsNullOrWhiteSpace($restoredPath)) {
+                        try { if (Test-Path -LiteralPath $restoredPath) { Remove-Item -LiteralPath $restoredPath -Force } } catch { }
+                    }
+                }
+
+                "snapshot=$snapshotName, observedDiffs=$($diff.observedPropertyDifferences)"
+            } | Out-Null
+        }
+
         if ("zemax_ray_trace_diagnostics" -in $tools) {
             Invoke-Check "sequential-ray-diagnostics" {
                 $diagnostics = Get-ToolPayload (Invoke-Tool "zemax_ray_trace_diagnostics" @{
