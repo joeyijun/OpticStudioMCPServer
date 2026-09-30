@@ -344,7 +344,7 @@ internal static class Program
 
             using var disconnect = await Send2026ToolCallAsync(client, endpoint, 6, "zemax_disconnect", "client-a", "instance-a").ConfigureAwait(false);
             var disconnectBody = await ReadFirstMcpPayloadAsync(disconnect).ConfigureAwait(false);
-            if (!disconnect.IsSuccessStatusCode || !disconnectBody.Contains("echo-ok", StringComparison.Ordinal))
+            if (!disconnect.IsSuccessStatusCode || !disconnectBody.Contains("success", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("The lease owner could not disconnect cleanly: " + disconnectBody);
 
             using var handedOff = await Send2026ToolCallAsync(client, endpoint, 7, "zemax_status", "client-a", "instance-b").ConfigureAwait(false);
@@ -521,8 +521,16 @@ internal static class Program
                     }).ConfigureAwait(false);
                     await Task.Delay(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
                 }
+                if (string.Equals(command, "zemax_disconnect", StringComparison.Ordinal))
+                {
+                    await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
+                    {
+                        content = new[] { new { type = "text", text = "{\"success\":true,\"error\":null}" } },
+                        isError = false
+                    }).ConfigureAwait(false);
+                    continue;
+                }
                 if (string.Equals(command, "zemax_status", StringComparison.Ordinal) || string.Equals(command, "zemax_get_system", StringComparison.Ordinal) ||
-                    string.Equals(command, "zemax_disconnect", StringComparison.Ordinal) ||
                     string.Equals(command, "zemax_test_echo", StringComparison.Ordinal) || string.Equals(command, "zemax_test_hold", StringComparison.Ordinal))
                 {
                     await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
