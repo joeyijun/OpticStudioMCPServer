@@ -2,6 +2,7 @@ using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Services.GlassCatalog;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Services.Jobs;
+using ZemaxMCP.Server.Tools.Base;
 
 internal static class Program
 {
@@ -10,10 +11,11 @@ internal static class Program
         try
         {
             VerifyOperationMetadataAndSnapshotBoundary();
+            VerifyScientificNumberTruthfulness();
             VerifyGlassCatalogSafety();
             await VerifyStaDispatcherAsync();
             await VerifyJobManagerAsync();
-            Console.WriteLine("Core safety abstraction, glass-catalog integrity, STA dispatcher, and server job simulation tests passed.");
+            Console.WriteLine("Core safety abstraction, scientific-number truthfulness, glass-catalog integrity, STA dispatcher, and server job simulation tests passed.");
             return 0;
         }
         catch (Exception exception)
@@ -57,6 +59,22 @@ internal static class Program
             Environment.SetEnvironmentVariable("ZEMAX_MCP_SNAPSHOT_DIR", oldSnapshots);
             try { Directory.Delete(root, true); } catch { }
         }
+    }
+
+    private static void VerifyScientificNumberTruthfulness()
+    {
+        Assert(Math.Abs(1.25.Sanitize() - 1.25) < 1e-12, "Finite scientific values must be preserved exactly.");
+        AssertThrows<InvalidDataException>(
+            () => double.NaN.Sanitize(),
+            "NaN must not be rewritten into a plausible finite measurement.");
+        AssertThrows<InvalidDataException>(
+            () => double.PositiveInfinity.Sanitize(),
+            "Infinity must not be rewritten into an arbitrary finite measurement.");
+        Assert(double.PositiveInfinity.SanitizeRadius() == 0,
+            "Infinite optical radius should retain the established plane-surface convention.");
+        AssertThrows<InvalidDataException>(
+            () => double.NaN.SanitizeRadius(),
+            "NaN radius must not be misreported as a plane surface.");
     }
 
     private static void VerifyGlassCatalogSafety()
