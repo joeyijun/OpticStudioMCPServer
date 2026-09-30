@@ -27,9 +27,13 @@ try {
   Set-Content -LiteralPath (Join-Path $install "logs\preserved.log") -Value "runtime-state"
   Set-Content -LiteralPath (Join-Path $staging "Start-Zemax-MCP.exe") -Value "new-launcher"
   Set-Content -LiteralPath (Join-Path $staging "added.txt") -Value "new-state"
+  Set-Content -LiteralPath (Join-Path $staging "Install.exe") -Value "package-only-installer"
+  Set-Content -LiteralPath (Join-Path $staging "Portable-Install.cmd") -Value "package-only-portable-script"
   & $updater --staging $staging --install $install --parent-pid 0 --restart false
   if ($LASTEXITCODE -ne 0 -or (Get-Content -Raw (Join-Path $install "Start-Zemax-MCP.exe")).Trim() -ne "new-launcher" -or
       -not (Test-Path -LiteralPath (Join-Path $install "added.txt")) -or (Test-Path -LiteralPath (Join-Path $install "obsolete.txt")) -or
+      (Test-Path -LiteralPath (Join-Path $install "Install.exe")) -or
+      (Test-Path -LiteralPath (Join-Path $install "Portable-Install.cmd")) -or
       (Get-Content -Raw (Join-Path $install "logs\preserved.log")).Trim() -ne "runtime-state") {
     throw "Updater did not apply a valid staged update correctly."
   }
