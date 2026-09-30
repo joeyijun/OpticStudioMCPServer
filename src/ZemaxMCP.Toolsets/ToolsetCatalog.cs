@@ -145,6 +145,7 @@ public static class ToolsetCatalog
         ["zemax_quick_focus"] = "sequential-editing",
         ["zemax_ray_fan"] = "analysis",
         ["zemax_ray_trace"] = "analysis",
+        ["zemax_ray_trace_diagnostics"] = "analysis",
         ["zemax_ray_trace_extended"] = "analysis",
         ["zemax_relative_illumination"] = "analysis",
         ["zemax_remove_operand"] = "optimization",
@@ -204,7 +205,7 @@ public static class ToolsetCatalog
         "zemax_get_surface_aperture", "zemax_get_surface_solves", "zemax_get_system", "zemax_get_system_files", "zemax_get_system_metadata",
         "zemax_get_tolerances", "zemax_tolerance_summary", "zemax_get_units", "zemax_get_variables", "zemax_get_vignetting", "zemax_get_wavelength_settings", "zemax_huygens_psf",
         "zemax_job_list", "zemax_job_status", "zemax_lateral_color", "zemax_list_surface_types", "zemax_longitudinal_aberration", "zemax_multistart_status",
-        "zemax_opd_fan", "zemax_operand_help", "zemax_pupil_aberration_fan", "zemax_ray_fan", "zemax_ray_trace", "zemax_ray_trace_extended",
+        "zemax_opd_fan", "zemax_operand_help", "zemax_pupil_aberration_fan", "zemax_ray_fan", "zemax_ray_trace", "zemax_ray_trace_diagnostics", "zemax_ray_trace_extended",
         "zemax_relative_illumination", "zemax_rms_spot", "zemax_search_operands", "zemax_seidel_coefficients", "zemax_spot_diagram", "zemax_status", "zemax_tool_catalog"
     };
 
@@ -240,7 +241,7 @@ public static class ToolsetCatalog
                 "zemax_get_wavelength_settings", "zemax_get_stop_surface", "zemax_get_first_order_data",
                 "zemax_get_surface", "zemax_get_surface_aperture", "zemax_get_vignetting",
                 "zemax_cardinal_points", "zemax_fft_mtf", "zemax_fft_psf", "zemax_spot_diagram",
-                "zemax_rms_spot", "zemax_ray_fan", "zemax_ray_trace", "zemax_field_curvature_distortion",
+                "zemax_rms_spot", "zemax_ray_fan", "zemax_ray_trace", "zemax_ray_trace_diagnostics", "zemax_field_curvature_distortion",
                 "zemax_chromatic_focal_shift", "zemax_lateral_color", "zemax_relative_illumination",
                 "zemax_seidel_coefficients", "zemax_geometric_mtf", "zemax_huygens_psf",
                 "zemax_diffraction_encircled_energy"),
@@ -266,7 +267,7 @@ public static class ToolsetCatalog
                 "zemax_quick_focus", "zemax_scale_lens",
                 "zemax_cardinal_points", "zemax_fft_mtf", "zemax_fft_mtf_vs_field", "zemax_fft_psf",
                 "zemax_spot_diagram", "zemax_rms_spot", "zemax_ray_fan", "zemax_opd_fan",
-                "zemax_ray_trace", "zemax_ray_trace_extended", "zemax_field_curvature_distortion",
+                "zemax_ray_trace", "zemax_ray_trace_diagnostics", "zemax_ray_trace_extended", "zemax_field_curvature_distortion",
                 "zemax_chromatic_focal_shift", "zemax_lateral_color", "zemax_relative_illumination",
                 "zemax_seidel_coefficients", "zemax_geometric_mtf", "zemax_huygens_psf"),
 
@@ -294,7 +295,7 @@ public static class ToolsetCatalog
                 "zemax_job_status", "zemax_job_list", "zemax_job_cancel", "zemax_get_tolerances", "zemax_tolerance_summary",
                 "zemax_cardinal_points", "zemax_fft_mtf", "zemax_fft_mtf_vs_field", "zemax_fft_psf",
                 "zemax_spot_diagram", "zemax_rms_spot", "zemax_ray_fan", "zemax_opd_fan",
-                "zemax_ray_trace", "zemax_field_curvature_distortion", "zemax_chromatic_focal_shift",
+                "zemax_ray_trace", "zemax_ray_trace_diagnostics", "zemax_field_curvature_distortion", "zemax_chromatic_focal_shift",
                 "zemax_relative_illumination", "zemax_seidel_coefficients")
         };
 
