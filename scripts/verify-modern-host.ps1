@@ -23,12 +23,14 @@ $generatorSource = Get-Content -Raw (Join-Path $root "tools\ZemaxMCP.ToolManifes
 $privateRpcTest = Get-Content -Raw (Join-Path $root "tests\ZemaxMCP.PrivateRpcTests\Program.cs")
 $schemaTest = Get-Content -Raw (Join-Path $root "tests\ZemaxMCP.PrivateRpcTests\StaticToolManifestAssertions.cs")
 $liveVerifier = Get-Content -Raw (Join-Path $root "scripts\verify-live-mcp.ps1")
+$functionalLiveVerifier = Get-Content -Raw (Join-Path $root "scripts\verify-live-functional.ps1")
 $packages = Get-Content -Raw (Join-Path $root "Directory.Packages.props")
 
 # Parse the manual/live acceptance harness during CI even though the hosted
 # runner cannot execute it against proprietary ZOS-API. This catches broken
 # PowerShell edits before a maintainer reaches the OpticStudio test machine.
 [scriptblock]::Create($liveVerifier) | Out-Null
+[scriptblock]::Create($functionalLiveVerifier) | Out-Null
 
 if ($hostProject -notmatch '<TargetFramework>net10\.0-windows</TargetFramework>' -or
     $hostProject -notmatch 'ModelContextProtocol\.AspNetCore') {
@@ -91,6 +93,11 @@ if ($hostSource -notmatch 'StaticToolManifest\.All' -or $hostSource -notmatch 'S
 }
 if ($workerRegistry -notmatch 'StaticToolManifest\.GetRequired' -or $workerRegistry -match 'BuildSchema\(|BuildTypeSchema\(') {
   throw "Worker execution must consume the shared manifest rather than maintain a second schema generator."
+}
+if ($workerRpc -notmatch 'IsExplicitToolFailure' -or
+    $workerRpc -notmatch 'isError = IsExplicitToolFailure' -or
+    $workerRpc -notmatch 'ParentOperationId') {
+  throw "Worker RPC must surface structured success=false results as MCP errors and preserve background-job parent-operation correlation."
 }
 if ($workerRegistry -notmatch 'arguments\.EnumerateObject\(\)' -or
     $workerRegistry -notmatch 'Unknown tool argument' -or
@@ -166,6 +173,15 @@ if ($liveVerifier -notmatch '2026-07-28' -or $liveVerifier -notmatch 'MCP-Protoc
     $liveVerifier -notmatch 'VerifyLegacyCompatibility' -or $liveVerifier -notmatch '2025-11-25' -or
     $liveVerifier -match '2024-11-05') {
   throw "The live release verifier must exercise 2026-07-28 stateless MCP by default and keep 2025-11-25 only as an explicit compatibility probe."
+}
+if ($functionalLiveVerifier -notmatch 'FixturePath' -or
+    $functionalLiveVerifier -notmatch 'VerifyBackgroundJobs' -or
+    $functionalLiveVerifier -notmatch 'ParentOperationId' -or
+    $functionalLiveVerifier -notmatch 'zemax_nsc_scene_summary' -or
+    $functionalLiveVerifier -notmatch 'zemax_tolerance_summary' -or
+    $functionalLiveVerifier -notmatch 'ConvertTo-Json' -or
+    $functionalLiveVerifier -notmatch 'workingCopy') {
+  throw "Functional live acceptance must operate on a temporary fixture copy, cover background-job correlation and NSC/tolerance diagnostics, and emit a structured JSON report."
 }
 $listIndex = $liveVerifier.IndexOf('Invoke-ModernMcpRequest -Method "tools/list"', [StringComparison]::Ordinal)
 $healthIndex = $liveVerifier.IndexOf('$health = Get-McpHealth', [StringComparison]::Ordinal)
