@@ -35,6 +35,24 @@ internal static class StaticToolManifestAssertions
         if (StaticToolManifest.IsAllowed("basic-viewing", openFileEntry.Name, readOnly: false))
             throw new InvalidOperationException("The basic-viewing profile must remain stricter than the global read-only switch.");
 
+        var expectedProfileCounts = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["basic-viewing"] = 33,
+            ["sequential-design"] = 74,
+            ["nonsequential-stray-light"] = 17,
+            ["optimization-tolerance"] = 59,
+            ["full-expert"] = 126
+        };
+        foreach (var pair in expectedProfileCounts)
+        {
+            var actual = StaticToolManifest.All.Count(tool => StaticToolManifest.IsAllowed(pair.Key, tool.Name, readOnly: false));
+            if (actual != pair.Value)
+                throw new InvalidOperationException($"Tool profile {pair.Key} exposes {actual} tools; expected {pair.Value}. Profiles must remain task-sized and explicitly reviewed.");
+        }
+        if (StaticToolManifest.IsAllowed("nonsequential-stray-light", "zemax_set_surface", readOnly: false) ||
+            StaticToolManifest.IsAllowed("optimization-tolerance", "zemax_get_nsc_objects", readOnly: false))
+            throw new InvalidOperationException("Focused profiles leaked unrelated editor domains back into tools/list.");
+
         var setFields = StaticToolManifest.GetRequired("zemax_set_fields").InputSchema;
         var setFieldsRequired = setFields.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
         if (!setFieldsRequired.SetEquals(new[] { "fields" }))
