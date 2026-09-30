@@ -91,6 +91,11 @@ if ($hostSource -notmatch 'StaticToolManifest\.All' -or $hostSource -notmatch 'S
 if ($workerRegistry -notmatch 'StaticToolManifest\.GetRequired' -or $workerRegistry -match 'BuildSchema\(|BuildTypeSchema\(') {
   throw "Worker execution must consume the shared manifest rather than maintain a second schema generator."
 }
+if ($workerRegistry -notmatch 'arguments\.EnumerateObject\(\)' -or
+    $workerRegistry -notmatch 'Unknown tool argument' -or
+    $workerRegistry -notmatch 'Allowed arguments') {
+  throw "Worker execution must reject JSON arguments that are not declared by the public tool method contract."
+}
 if ($rpcClient -notmatch 'PipeSecurity' -or $rpcClient -notmatch 'ZEMAX_MCP_PIPE_SECRET' -or
     $rpcClient -notmatch 'WorkerHandshake' -or $rpcClient -notmatch 'StaticToolManifest\.ContractFingerprint' -or
     $workerSource -notmatch 'WorkerHandshake' -or $workerSource -notmatch 'StaticToolManifest\.ContractFingerprint') {
@@ -110,6 +115,10 @@ if ($hostSource -notmatch 'OpticStudioControlLease' -or $hostSource -notmatch 'R
     $hostSource -match 'AllowAnyOrigin\(' -or $hostSource -notmatch 'zemax-mcp-remote-endpoint' -or
     $hostSource -match 'zemax-mcp-client-name|Mcp-Version' -or $hostSource -notmatch 'UseSetting\("AllowedHosts"' -or $hostOptions -notmatch 'allowed-origin') {
   throw "Control ownership and Host/Origin boundaries must remain explicit and non-wildcarded."
+}
+if ($hostSource -notmatch '"zemax_disconnect"' -or $hostSource -notmatch 'ReleaseOwnership\(clientId\)' -or
+    $privateRpcTest -notmatch 'immediate handoff') {
+  throw "A successful zemax_disconnect must release the owning client lease and the MCP E2E suite must verify immediate handoff."
 }
 if ($rpcClient -notmatch 'HardRecoveryTimeoutSeconds' -or $rpcClient -notmatch 'FaultWorkerConnection' -or
     $rpcClient -notmatch 'CancelOperation' -or $rpcClient -notmatch 'CancellationWriteTimeoutSeconds' -or
