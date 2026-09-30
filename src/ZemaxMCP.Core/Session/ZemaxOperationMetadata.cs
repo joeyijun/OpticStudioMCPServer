@@ -44,7 +44,7 @@ public static class ZemaxOperationMetadata
                 "GetMeritFunction", "GetMtfUnits", "GetNonSequentialSystemSettings", "GetNscDetector", "GetNscObjectParameters", "GetNscObjects", "NscSceneSummary",
                 "GetRayAiming", "GetRayAimingSettings", "GetSurface", "GetSurfaceAperture", "GetSurfaceParameter", "GetSurfaceSolves", "GetSystem", "GetSystemFiles",
                 "GetSystemMetadata", "GetTolerances", "ToleranceSummary", "GetUnits", "GetVariables", "GetWavelengthSettings", "HuygensPsf", "LateralColor",
-                "LongitudinalAberration", "MTF", "OpdFan", "PupilAberrationFan", "RayFan", "RayTrace", "RayTraceExtended", "read",
+                "LongitudinalAberration", "MTF", "OpdFan", "PupilAberrationFan", "RayFan", "RayTrace", "RayTraceDiagnostics", "RayTraceExtended", "read",
                 "RelativeIllumination", "RmsSpot", "SeidelCoefficients", "SpotDiagram"
             }, new[]
             {
@@ -59,7 +59,7 @@ public static class ZemaxOperationMetadata
             "zemax_get_surface_aperture", "zemax_get_surface_solves", "zemax_get_system", "zemax_get_system_files", "zemax_get_system_metadata",
             "zemax_get_tolerances", "zemax_tolerance_summary", "zemax_get_units", "zemax_get_variables", "zemax_get_vignetting", "zemax_get_wavelength_settings", "zemax_huygens_psf",
             "zemax_job_list", "zemax_job_status", "zemax_lateral_color", "zemax_list_surface_types", "zemax_longitudinal_aberration", "zemax_multistart_status",
-            "zemax_opd_fan", "zemax_operand_help", "zemax_pupil_aberration_fan", "zemax_ray_fan", "zemax_ray_trace", "zemax_ray_trace_extended",
+            "zemax_opd_fan", "zemax_operand_help", "zemax_pupil_aberration_fan", "zemax_ray_fan", "zemax_ray_trace", "zemax_ray_trace_diagnostics", "zemax_ray_trace_extended",
             "zemax_relative_illumination", "zemax_rms_spot", "zemax_search_operands", "zemax_seidel_coefficients", "zemax_spot_diagram", "zemax_status",
             "zemax_tool_catalog"
             }),
