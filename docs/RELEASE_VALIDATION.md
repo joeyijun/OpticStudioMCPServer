@@ -72,7 +72,7 @@ Use purpose-built fixtures for subsystem-specific acceptance:
 ./scripts/verify-live-functional.ps1 -FixturePath "C:\ZemaxValidation\tolerance-fixture.zmx" -VerifyTolerance
 ```
 
-The NSC path checks the structured scene summary and object inspection. The tolerance path checks the TDE summary and operand inspection. The harness emits a JSON record containing protocol/toolset/fingerprint/license context, Worker generation before/after, and PASS/FAIL/SKIPPED results so acceptance can be archived with release evidence.
+The NSC path checks the structured scene summary/object inspection and executes a bounded real NSC ray trace. The tolerance path checks the TDE summary/operands and executes a small real Sensitivity + Monte Carlo run through `zemax_run_tolerancing`, requiring structured Monte Carlo and sensitivity results. The harness emits a JSON record containing protocol/toolset/fingerprint/license context, Worker generation before/after, and PASS/FAIL/SKIPPED results so acceptance can be archived with release evidence.
 
 ## 4. Safety acceptance
 
@@ -199,6 +199,7 @@ Stage E static review is complete. Numerical convergence quality, ZOS optimizati
 - `zemax_nsc_scene_summary` provides a bounded structural scene diagnostic using object/type/detector/reference/nesting/material data already available through the reviewed NCE interfaces.
 - TDE reads preserve `IsParam1/2/3Used` and Nominal/Min/Max used flags; a used numeric bound must be finite and invalid pagination is explicit.
 - `zemax_tolerance_summary` provides bounded type/active/ignored/bound statistics and flags structurally contradictory TDE bounds without pretending to run Sensitivity or Monte Carlo.
+- `zemax_run_tolerancing` uses the official Tolerancing → ZTD → Tolerance Data Viewer path, never saves Monte Carlo lens files, returns bounded structured Monte Carlo statistics plus worst sensitivity operands, converts non-finite result values to explicit nulls rather than plausible zeros, and only computes yield when the caller explicitly supplies both a finite threshold and LessOrEqual/GreaterOrEqual direction.
 - Generic `zemax_export_analysis` uses a fixed supported-analysis allowlist, cancellable analysis lifecycle, strict BMP/TXT extension/output semantics, and atomic final file commits. BMP failure never silently creates a TXT fallback.
 - `AnalysisBmpHelper` distinguishes “no renderable DataGrid” from invalid grid/filesystem errors, rejects non-finite pixels, supports cancellation, and writes only to fresh temporary paths.
 
