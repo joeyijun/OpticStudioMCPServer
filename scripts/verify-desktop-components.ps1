@@ -14,6 +14,8 @@ foreach ($path in $launcherExe, $installerExe, $proxyExe, $hostDll, $updaterExe)
 $launcherXaml = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Launcher\MainWindow.xaml")
 $launcherCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Launcher\MainWindow.xaml.cs")
 $proxyCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.ClientProxy\Program.cs")
+$installerCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Installer\MainWindow.xaml.cs")
+$portableInstall = Get-Content -Raw (Join-Path $root "installer\Portable-Install.cmd")
 $solution = Get-Content -Raw (Join-Path $root "OpticStudioMCPServer.sln")
 $architectureDoc = Join-Path $root "docs\ARCHITECTURE.md"
 $releaseWorkflow = Get-Content -Raw (Join-Path $root ".github\workflows\release.yml")
@@ -29,6 +31,13 @@ if ($launcherCode -notmatch '"Host", "ZemaxMCP\.Host\.exe"' -or
 }
 if ($proxyCode -notmatch 'X-Zemax-MCP-Client-Instance' -or $proxyCode -notmatch 'Guid\.NewGuid') {
   throw "The packaged stdio proxy must emit a distinct per-process MCP client instance identity."
+}
+if ($installerCode -notmatch 'RunUpdater\(source, target\)' -or
+    $installerCode -notmatch 'CopyInitialInstall' -or
+    $portableInstall -notmatch 'ZemaxMCP\.Updater\.exe' -or
+    $portableInstall -notmatch 'goto launch_installed' -or
+    $portableInstall -notmatch 'portable mode') {
+  throw "GUI and portable installation flows must reuse the updater for existing installs and make portable fallback explicit."
 }
 if ($solution -notmatch '= "ZemaxMCP\.Host", "src\\ZemaxMCP\.HttpBridge' -or
     $solution -notmatch '= "Runtime", "Runtime"' -or
