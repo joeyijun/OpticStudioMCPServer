@@ -307,13 +307,35 @@ try {
     }
 
     if ($VerifyTolerance) {
-        Invoke-Check "tolerance-structural-summary" {
-            foreach ($required in @("zemax_tolerance_summary", "zemax_get_tolerances")) {
+        Invoke-Check "tolerance-structural-and-live-run" {
+            foreach ($required in @("zemax_tolerance_summary", "zemax_get_tolerances", "zemax_run_tolerancing")) {
                 if ($required -notin $tools) { throw "Active profile does not expose $required." }
             }
             $summary = Get-ToolPayload (Invoke-Tool "zemax_tolerance_summary" @{ maxOperands = 500 })
             Get-ToolPayload (Invoke-Tool "zemax_get_tolerances" @{ startRow = 1; maxOperands = 20 }) | Out-Null
-            "operands=$($summary.numberOfOperands), inspected=$($summary.inspectedOperands)"
+            if ([int]$summary.numberOfOperands -lt 1) { throw "Tolerance fixture contains no TDE operands." }
+
+            $run = Get-ToolPayload (Invoke-Tool "zemax_run_tolerancing" @{
+                includeSensitivity = $true
+                criterion = "RMSSpotRadius"
+                criterionSampling = 3
+                criterionComp = "None"
+                criterionCycle = 1
+                criterionField = "UserDefined"
+                monteCarloRuns = 3
+                monteCarloStatistic = "Normal"
+                maxSensitivityOperands = 10
+                timeoutSeconds = 120.0
+                runInBackground = $false
+            })
+            if ($run.state -ne "Completed") { throw "Tolerancing run did not complete." }
+            if ([int]$run.monteCarloRows -lt 1 -or [int]$run.monteCarloColumns -lt 1) {
+                throw "Tolerancing returned no structured Monte Carlo matrix."
+            }
+            if ([int]$run.sensitivityCriteria -lt 1) {
+                throw "Sensitivity mode returned no structured sensitivity criteria."
+            }
+            "operands=$($summary.numberOfOperands), MC=$($run.monteCarloRows)x$($run.monteCarloColumns), sensitivityCriteria=$($run.sensitivityCriteria)"
         } | Out-Null
     }
 
