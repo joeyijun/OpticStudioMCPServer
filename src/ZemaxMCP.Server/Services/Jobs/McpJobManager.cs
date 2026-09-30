@@ -13,12 +13,14 @@ public sealed class McpJobManager : IDisposable
     private static readonly AsyncLocal<string?> ParentOperation = new();
 
     public const int DefaultMaxHistory = 128;
+    public const int DefaultMaxResultHistory = 16;
     public const int DefaultMaxPending = 64;
 
     private readonly object _gate = new();
     private readonly Queue<JobEntry> _pending = new();
     private readonly Dictionary<string, JobEntry> _jobs = new(StringComparer.Ordinal);
     private readonly int _maxHistory;
+    private readonly int _maxResultHistory;
     private readonly int _maxPending;
     private readonly TimeSpan _cancellationGrace;
     private readonly Action<McpJobSnapshot>? _hardRecoveryAction;
@@ -29,11 +31,14 @@ public sealed class McpJobManager : IDisposable
         int maxHistory = DefaultMaxHistory,
         int maxPending = DefaultMaxPending,
         TimeSpan? cancellationGrace = null,
+        int maxResultHistory = DefaultMaxResultHistory,
         Action<McpJobSnapshot>? hardRecoveryAction = null)
     {
         if (maxHistory < 1) throw new ArgumentOutOfRangeException(nameof(maxHistory), "Job history limit must be at least 1.");
+        if (maxResultHistory < 0) throw new ArgumentOutOfRangeException(nameof(maxResultHistory), "Job result history limit cannot be negative.");
         if (maxPending < 1) throw new ArgumentOutOfRangeException(nameof(maxPending), "Pending job limit must be at least 1.");
         _maxHistory = maxHistory;
+        _maxResultHistory = Math.Min(maxResultHistory, maxHistory);
         _maxPending = maxPending;
         _cancellationGrace = cancellationGrace ?? TimeSpan.FromSeconds(60);
         if (_cancellationGrace <= TimeSpan.Zero)
@@ -260,13 +265,22 @@ public sealed class McpJobManager : IDisposable
 
     private void TrimHistoryLocked()
     {
-        var overflow = _jobs.Values
+        var terminal = _jobs.Values
             .Where(entry => entry.State is McpJobState.Completed or McpJobState.Cancelled or McpJobState.Failed)
             .OrderByDescending(entry => entry.CompletedAt ?? DateTimeOffset.MaxValue)
-            .Skip(_maxHistory)
             .ToArray();
 
-        foreach (var entry in overflow)
+        // Retain metadata for a useful recent history window, but retain
+        // potentially large result payloads for a much smaller newest subset.
+        // Callers can distinguish a genuinely null result from an expired one.
+        foreach (var entry in terminal.Skip(_maxResultHistory))
+        {
+            if (!entry.ResultWasSet || entry.ResultExpired) continue;
+            entry.Result = null;
+            entry.ResultExpired = true;
+        }
+
+        foreach (var entry in terminal.Skip(_maxHistory))
         {
             if (!_jobs.Remove(entry.Id)) continue;
             entry.Result = null;
@@ -286,13 +300,19 @@ public sealed class McpJobManager : IDisposable
 
     private void PublishResult(JobEntry entry, object? result)
     {
-        lock (_gate) entry.Result = result;
+        lock (_gate)
+        {
+            entry.Result = result;
+            entry.ResultWasSet = true;
+            entry.ResultExpired = false;
+        }
         Publish(Snapshot(entry));
     }
 
     private McpJobSnapshot Snapshot(JobEntry entry) => new(
         entry.Id, entry.ToolName, entry.ParentOperationId, entry.State, entry.QueuedAt, entry.StartedAt, entry.CompletedAt,
-        entry.Progress, entry.Message, QueuePosition(entry), entry.StartedAt == null ? null : DateTimeOffset.UtcNow - entry.StartedAt.Value, entry.Result);
+        entry.Progress, entry.Message, QueuePosition(entry), entry.StartedAt == null ? null : DateTimeOffset.UtcNow - entry.StartedAt.Value,
+        entry.ResultExpired, entry.Result);
 
     private int QueuePosition(JobEntry entry)
     {
@@ -369,6 +389,8 @@ public sealed class McpJobManager : IDisposable
         public double? Progress { get; set; }
         public string Message { get; set; } = "Queued.";
         public object? Result { get; set; }
+        public bool ResultWasSet { get; set; }
+        public bool ResultExpired { get; set; }
     }
 }
 
@@ -403,4 +425,5 @@ public sealed record McpJobSnapshot(
     string Message,
     int QueuePosition,
     TimeSpan? Elapsed,
+    bool ResultExpired,
     object? Result);
