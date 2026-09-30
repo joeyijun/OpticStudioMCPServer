@@ -8,15 +8,15 @@ Every pull request must pass the Windows workflow at the exact release-candidate
 
 Hosted checks cover:
 
-- 109 Worker tool classes / 126 unique commands;
+- 111 Worker tool classes / 128 unique commands;
 - explicit domain and impact metadata for every public tool;
 - generated JSON schemas and deterministic static-manifest fingerprint;
 - official .NET 10 MCP Host behavior and MCP 2026-07-28 stateless requests;
-- private RPC v3 authentication, contract negotiation, cancellation/recovery, and event dispatch;
+- private RPC v3 authentication, contract negotiation, cancellation/recovery, Worker-generation ownership, and coalesced progress dispatch;
 - Host-only `tools/list` and lazy Worker startup;
-- client-instance identity and OpticStudio control-lease isolation;
-- updater rollback and signed-update tamper rejection;
-- syntax/protocol-shape validation of the live release verifier;
+- client-instance identity, OpticStudio control-lease isolation, background-Job lease retention, and immediate disconnect handoff;
+- updater rollback, rollback-backup preservation contract, exact-release-SHA CI signing gate, and signed-update tamper rejection;
+- syntax/protocol-shape validation of both live release verifiers;
 - functional-safety guards covering reviewed Stage A-F contracts;
 - dedicated Stage E optimization guards for transactional MFE changes, configuration-aware MCE variable addressing, typed merit reads, and cancellation;
 - dedicated Stage F guards for POP, NSC, tolerancing, BMP rendering, and generic analysis exports;
@@ -51,7 +51,30 @@ For a release candidate that must retain initialize-era compatibility, add:
 
 This performs an explicit `2025-11-25` initialize probe after the modern stateless checks. Legacy compatibility is not the primary release path.
 
-## 3. Safety acceptance
+## 3. Functional live acceptance
+
+The transport smoke test above is intentionally small. For real ZOS-API behavior, run the functional harness against a disposable fixture:
+
+```powershell
+./scripts/verify-live-functional.ps1 `
+  -FixturePath "C:\ZemaxValidation\sequential-fixture.zmx" `
+  -VerifyOptimization `
+  -VerifyBackgroundJobs `
+  -ReportPath ".\artifacts\live-functional-2024R1.json"
+```
+
+The script copies the supplied ZMX/ZOS file to a temporary working directory before opening it. The original fixture is never intentionally edited. On a sequential fixture it verifies open/read, surface add → set → independent readback → remove, structured analysis, save, and optionally a bounded Local Optimize plus background-Job start/cancel/status lifecycle. Background Job status must preserve the originating Worker operation ID.
+
+Use purpose-built fixtures for subsystem-specific acceptance:
+
+```powershell
+./scripts/verify-live-functional.ps1 -FixturePath "C:\ZemaxValidation\nsc-fixture.zos" -VerifyNsc
+./scripts/verify-live-functional.ps1 -FixturePath "C:\ZemaxValidation\tolerance-fixture.zmx" -VerifyTolerance
+```
+
+The NSC path checks the structured scene summary and object inspection. The tolerance path checks the TDE summary and operand inspection. The harness emits a JSON record containing protocol/toolset/fingerprint/license context, Worker generation before/after, and PASS/FAIL/SKIPPED results so acceptance can be archived with release evidence.
+
+## 4. Safety acceptance
 
 Run the live verifier with safety checks in the intended release mode(s) when licensed-machine acceptance is performed.
 
@@ -71,9 +94,9 @@ Read/write mode:
 
 The same no-op mutation must succeed and create a verified `.zmx` pre-change snapshot. ZMX is deliberately used as the cross-version safety format because `.ZOS` did not exist before OpticStudio 21.3, while modern OpticStudio continues to support ZMX. The optical metadata itself is not intentionally changed.
 
-## 4. Functional review order and current status
+## 5. Functional review order and current status
 
-The 126 public commands are reviewed in stages so release-critical editing/recovery paths are checked before specialized analyses.
+The 128 public commands are reviewed in stages so release-critical editing/recovery paths are checked before specialized analyses.
 
 | Stage | Functional area | Review status | Release focus |
 | --- | --- | --- | --- |
@@ -99,7 +122,7 @@ For each public tool, review:
 9. **Version compatibility** — version-sensitive members fail explicitly instead of silently retaining defaults; every claimed OpticStudio family must compile against its actual ZOS-API assemblies.
 10. **Filesystem/data integrity** — documented path boundaries, source completeness, no-clobber behavior, and malformed-data rejection are enforced.
 
-## 5. Current functional review fixes
+## 6. Current functional review fixes
 
 ### Stage A — System/session
 
@@ -150,6 +173,8 @@ Stage D static review is complete. Actual OpticStudio MCE/catalog integration re
 - Hammer uses the official `AutomaticOptimization` and `TargetRunTimeM` settings instead of exposing ignored parameters.
 - Custom LM cancellation propagates through finite-difference Jacobians, linear algebra/trial steps, and merit evaluation; cancellation restores the last accepted design and rethrows `OperationCanceledException`.
 - Multistart preserves Job Cancelled semantics, propagates cancellation through variable/material discovery and every LM trial, and checkpoints through `CopySystem` so saving a checkpoint cannot rename the active optical system.
+- Background Job queue/history retention is bounded; Jobs record the originating operation ID. A cancelled Job that cannot drain within its independent recovery grace terminates the Worker generation so the Host can start cleanly.
+- A running background Job retains the creating client's OpticStudio control lease even beyond the normal idle timeout; the hold is scoped to the Worker generation and released on terminal state or generation replacement.
 - Unsaved multistart designs default to `.zmx` checkpoints for compatibility with OpticStudio releases before 21.3; already-saved systems preserve their `.zmx` or `.zos` extension.
 - Variable discovery and the optimization accessor use `IMCERow.GetOperandCell(configuration)` for MCE variables rather than treating a configuration number as a raw editor column index.
 - Variable and merit data must be finite. A non-finite weighted MFE row fails custom optimization rather than being silently dropped from the objective.
@@ -169,13 +194,15 @@ Stage E static review is complete. Numerical convergence quality, ZOS optimizati
 - POP raw-grid/BMP/ZBF outputs use explicit overwrite policy and same-directory temporary-file commits; a requested output that was not actually produced is an error.
 - `zemax_get_nsc_detector` uses the official `GetDetectorDimensions(... out Rows, out Cols)` ordering and cross-checks rows × columns against detector size, fixing the prior nonsquare-detector row/column swap.
 - NSC object pagination is strict, position/tilt values must be finite, and type-specific parameter reads preserve Integer/Double/String cell types instead of coercing them to one numeric representation.
+- `zemax_nsc_scene_summary` provides a bounded structural scene diagnostic using object/type/detector/reference/nesting/material data already available through the reviewed NCE interfaces.
 - TDE reads preserve `IsParam1/2/3Used` and Nominal/Min/Max used flags; a used numeric bound must be finite and invalid pagination is explicit.
+- `zemax_tolerance_summary` provides bounded type/active/ignored/bound statistics and flags structurally contradictory TDE bounds without pretending to run Sensitivity or Monte Carlo.
 - Generic `zemax_export_analysis` uses a fixed supported-analysis allowlist, cancellable analysis lifecycle, strict BMP/TXT extension/output semantics, and atomic final file commits. BMP failure never silently creates a TXT fallback.
 - `AnalysisBmpHelper` distinguishes “no renderable DataGrid” from invalid grid/filesystem errors, rejects non-finite pixels, supports cancellation, and writes only to fresh temporary paths.
 
 Stage F static review is complete. POP physics, NSC detector behavior, version-specific analysis grid/text availability, and exported BMP/TXT/ZBF/raw-grid interoperability remain deferred to licensed-machine acceptance.
 
-## 6. Cross-version compile acceptance
+## 7. Cross-version compile acceptance
 
 A claimed OpticStudio family must compile the complete Worker against that family's real ZOS-API assemblies before live testing:
 
@@ -192,7 +219,7 @@ This does not start OpticStudio or require a license. A compile failure means th
 
 Official release packaging should set `ZEMAX_API_BASELINE_ROOT` to the oldest version that passed this matrix. The resulting `ZOSAPI_BUILD_INFO.txt` makes that compile baseline part of the package contract.
 
-## 7. Release gate
+## 8. Release gate
 
 A build is release-ready only when all of the following are true:
 
@@ -200,10 +227,13 @@ A build is release-ready only when all of the following are true:
 - every OpticStudio version/family claimed as supported passes `verify-zosapi-compatibility.ps1` against its real API assemblies;
 - the release Worker was built against the oldest claimed supported ZOS-API baseline and contains `ZOSAPI_BUILD_INFO.txt`;
 - the live MCP 2026-07-28 verifier passes against a licensed OpticStudio installation for the release's intended version matrix;
+- `verify-live-functional.ps1` passes against a representative sequential fixture; releases claiming NSC/tolerance workflow support also archive the applicable NSC/tolerance fixture report;
 - safety verification passes in the intended release mode(s);
 - Host/Worker RPC version and manifest fingerprint agree in live health;
 - no P0/P1 finding remains in every functional stage declared complete for release;
+- background Jobs remain bounded, retain their owner/generation while active, and trigger Worker hard recovery if cancellation cannot drain;
+- release signing is permitted only after the exact tagged commit has a successful hosted verification run;
 - the release ZIP/update signature and rollback checks pass;
 - the tested OpticStudio version(s) are recorded in the release notes.
 
-The current branch has completed static Stage A-F review as documented above, but **licensed OpticStudio acceptance and real 2021/2023/2024 API compile-matrix validation have intentionally not yet been performed**.
+The current branch has completed static Stage A-F review and now contains the functional live harness described above, but **licensed OpticStudio acceptance and real 2021/2023/2024 API compile-matrix validation have intentionally not yet been performed**.
