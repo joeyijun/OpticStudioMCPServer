@@ -544,6 +544,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         info.Environment["ZEMAX_MCP_READ_ONLY"] = _options.ReadOnly ? "1" : "0";
         info.Environment["ZEMAX_MCP_TOOLSET"] = _options.Toolset;
         info.Environment["ZEMAX_MCP_SNAPSHOT_DIR"] = _options.SnapshotDirectory;
+        info.Environment["ZEMAX_MCP_JOB_RECOVERY_TIMEOUT_SECONDS"] = _options.JobRecoveryTimeoutSeconds.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
         var process = Process.Start(info) ?? throw new InvalidOperationException("Unable to launch the ZOS-API Worker.");
         process.ErrorDataReceived += (_, eventArgs) => { if (!string.IsNullOrWhiteSpace(eventArgs.Data)) Log.Information("Worker: {Message}", eventArgs.Data); };
         process.BeginErrorReadLine();
