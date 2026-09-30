@@ -397,6 +397,10 @@ finally {
         protocolVersion = $script:protocolVersion
         toolCount = $tools.Count
         toolset = if ($healthBefore) { $healthBefore.toolset } else { $null }
+        hostVersion = if ($healthBefore) { $healthBefore.hostVersion } else { $null }
+        workerVersion = if ($healthBefore) { $healthBefore.workerVersion } else { $null }
+        zosApiAssemblyVersion = if ($healthBefore) { $healthBefore.zosApiAssemblyVersion } else { $null }
+        zosApiFileVersion = if ($healthBefore) { $healthBefore.zosApiFileVersion } else { $null }
         rpcVersion = if ($healthBefore) { $healthBefore.rpcVersion } else { $null }
         manifestFingerprint = if ($healthBefore) { $healthBefore.manifestFingerprint } else { $null }
         licenseStatus = if ($healthBefore) { $healthBefore.licenseStatus } else { $null }
