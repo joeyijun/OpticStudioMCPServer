@@ -57,7 +57,7 @@ The Host may start and answer `tools/list` without starting the Worker. The Work
 
 ## Tool contract ownership
 
-Worker tool methods remain the authoring source for tool names, descriptions and parameter shapes. At build time the manifest generator produces a static contract containing all 126 tools. Each entry includes:
+Worker tool methods remain the authoring source for tool names, descriptions and parameter shapes. At build time the manifest generator produces a static contract containing all 128 tools. Each entry includes:
 
 - stable MCP tool name
 - description
@@ -81,7 +81,7 @@ RPC v3 deliberately has no discovery command. Its request/response surface is li
 - `result`
 - `error`
 
-Tool arguments remain manifest-defined JSON between Host and Worker, while RPC infrastructure/status/event envelopes are strongly typed. This avoids maintaining 126 duplicate per-tool RPC DTOs while still providing a compile-time typed infrastructure boundary.
+Tool arguments remain manifest-defined JSON between Host and Worker, while RPC infrastructure/status/event envelopes are strongly typed. This avoids maintaining 128 duplicate per-tool RPC DTOs while still providing a compile-time typed infrastructure boundary.
 
 ## Progress and event dispatch
 
@@ -97,7 +97,7 @@ Background jobs that outlive the original MCP request remain observable through 
 
 ## Client identity and control lease
 
-OpticStudio ownership is independent of MCP transport sessions. Identity is resolved in this order:
+OpticStudio ownership is independent of MCP transport sessions. An owned background Job keeps the control lease alive beyond the normal idle timeout and is bound to the Worker generation that created it; terminal Job state or generation replacement releases the hold. Identity is resolved in this order:
 
 1. a dedicated authenticated client profile, when provisioned;
 2. request-scoped `io.zemaxmcp/clientInstanceId` metadata;
