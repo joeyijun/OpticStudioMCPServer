@@ -122,7 +122,19 @@ internal static class Program
                         result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
 
                     if (TryGetStartedJobId(request.Params.Name, result, out var jobId))
-                        controlLease.RetainForJob(clientId, jobId, workerClient.CurrentGeneration);
+                    {
+                        var generation = workerClient.CurrentGeneration;
+                        if (controlLease.RetainForJob(clientId, jobId, generation) &&
+                            workerClient.TryGetJobStatus(generation, jobId, out var latestJob) &&
+                            latestJob != null)
+                        {
+                            // A very short Job can become terminal before the
+                            // tools/call result carrying its Job ID reaches the
+                            // Host. Reconcile immediately so no stale lease hold
+                            // survives that race.
+                            controlLease.ObserveJob(generation, latestJob);
+                        }
+                    }
 
                     if (string.Equals(request.Params.Name, "zemax_disconnect", StringComparison.Ordinal) &&
                         IsSuccessfulDisconnect(result))
