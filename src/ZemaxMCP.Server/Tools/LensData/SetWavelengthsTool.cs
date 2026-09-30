@@ -86,6 +86,10 @@ public class SetWavelengthsTool
 
             return result;
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             return new SetWavelengthsResult(false, ex.Message, 0, new List<Wavelength>());
