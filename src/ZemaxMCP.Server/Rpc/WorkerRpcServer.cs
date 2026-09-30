@@ -132,6 +132,7 @@ internal sealed class WorkerRpcServer
             await _executionGate.WaitAsync(operation.Token).ConfigureAwait(false);
             try
             {
+                using var parentOperation = McpJobManager.PushParentOperation(message.OperationId);
                 var result = await _tools.InvokeAsync(invocation.Command, invocation.Arguments, operation.Token).ConfigureAwait(false);
                 var resultJson = JsonSerializer.SerializeToElement(result, _jsonOptions);
                 await WriteResultAsync(writer, message.RequestId, message.OperationId, new
@@ -179,6 +180,7 @@ internal sealed class WorkerRpcServer
     {
         JobId = job.JobId,
         ToolName = job.ToolName,
+        ParentOperationId = job.ParentOperationId,
         State = job.State.ToString(),
         Fraction = job.Progress,
         QueuePosition = job.QueuePosition,
@@ -194,6 +196,7 @@ internal sealed class WorkerRpcServer
             Payload = JsonSerializer.SerializeToElement(new OperationProgress
             {
                 OperationId = job.JobId,
+                ParentOperationId = job.ParentOperationId,
                 ToolName = job.ToolName,
                 Fraction = job.Fraction,
                 QueuePosition = job.QueuePosition,
