@@ -159,7 +159,14 @@ public sealed class McpJobManager : IDisposable
                 if (timeoutSource != null) timeoutSource.CancelAfter(entry.Timeout!.Value);
                 var token = timeoutSource?.Token ?? entry.Cancellation.Token;
                 var drained = await ExecuteWithRecoveryAsync(entry, token).ConfigureAwait(false);
-                if (!drained) continue;
+                if (!drained)
+                {
+                    // Production hard recovery terminates the Worker generation.
+                    // If a test/recovery observer returns instead, do not start
+                    // another queued ZOS-API Job beside the still-hung task.
+                    lock (_gate) _processorRunning = false;
+                    return;
+                }
                 lock (_gate)
                 {
                     entry.CompletedAt = DateTimeOffset.UtcNow;
