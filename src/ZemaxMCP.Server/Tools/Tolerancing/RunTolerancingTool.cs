@@ -122,8 +122,12 @@ public sealed class RunTolerancingTool
             }, TimeSpan.FromSeconds(timeoutSeconds + 60));
 
             return EmptyResult(
-                true, null, "Queued", includeSensitivity, parsedCriterion, parsedComp, parsedField,
-                parsedStatistic, monteCarloRuns, job.JobId);
+                true, null, "Queued", includeSensitivity,
+                CanonicalCriterionName(parsedCriterion),
+                CanonicalCompName(parsedComp),
+                CanonicalFieldName(parsedField),
+                parsedStatistic.ToString(),
+                monteCarloRuns, job.JobId);
         }
         catch (OperationCanceledException)
         {
