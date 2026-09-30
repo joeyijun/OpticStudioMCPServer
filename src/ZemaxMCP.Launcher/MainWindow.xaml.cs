@@ -41,6 +41,9 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        SourceInitialized += (_, _) => ApplyMaterial();
+        SystemEvents.UserPreferenceChanged += AppearancePreferenceChanged;
+        SystemEvents.SessionSwitch += AppearanceSessionChanged;
         var applicationIcon = GetApplicationIcon();
         _trayIcon = new Forms.NotifyIcon { Icon = applicationIcon, Text = "Zemax MCP", Visible = true };
         _trayIcon.MouseClick += (_, eventArgs) =>
@@ -48,10 +51,24 @@ public partial class MainWindow : Window
             if (eventArgs.Button == Forms.MouseButtons.Left)
                 Dispatcher.BeginInvoke(new Action(RestoreWindow));
         };
-        var menu = new Forms.ContextMenuStrip();
+        var menu = new RoundedTrayMenu
+        {
+            Renderer = new TrayMenuRenderer(),
+            ShowImageMargin = false,
+            BackColor = Forms.SystemInformation.HighContrast ? System.Drawing.SystemColors.Menu : System.Drawing.Color.FromArgb(248, 250, 253),
+            ForeColor = Forms.SystemInformation.HighContrast ? System.Drawing.SystemColors.MenuText : System.Drawing.Color.FromArgb(29, 29, 31),
+            Font = new System.Drawing.Font("Segoe UI", 10),
+            Padding = new Forms.Padding(5)
+        };
         menu.Items.Add("Start", null, (_, _) => Dispatcher.BeginInvoke(new Action(StartServiceFromTray)));
         menu.Items.Add("Stop", null, (_, _) => Dispatcher.BeginInvoke(new Action(StopService)));
+        menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => Dispatcher.BeginInvoke(new Action(ExitApplication)));
+        foreach (Forms.ToolStripItem item in menu.Items)
+        {
+            if (item is Forms.ToolStripMenuItem)
+                item.Padding = new Forms.Padding(14, 8, 24, 8);
+        }
         _trayIcon.ContextMenuStrip = menu;
         _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _statusTimer.Tick += async (_, _) => await RefreshStatusAsync();
@@ -88,10 +105,11 @@ public partial class MainWindow : Window
         Report(hasRemoteEndpoint
             ? "Using the saved remote MCP endpoint. Local service startup is skipped."
             : installs.Count == 0
-            ? "No local OpticStudio installation detected. To use this computer as an AI client, paste the MCP address from the OpticStudio computer, then click Test MCP connection and Configure installed AI clients."
+            ? "No local OpticStudio found. Paste secure setup from the OpticStudio computer, then select Test MCP and Configure clients."
             : "Starting local MCP endpoint automatically…");
         RefreshEndpoint();
         _windowLoaded = true;
+        ApplyMaterial();
         if (installs.Count > 0 && !hasRemoteEndpoint) StartBridge();
         SetIndicatorsChecking();
         _statusTimer.Start();
@@ -99,6 +117,29 @@ public partial class MainWindow : Window
         RefreshClientDashboard(null);
         OfferFirstRunClientSetup();
     }
+    private string SelectedMaterial => (MaterialChoice.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag?.ToString() ?? "mica";
+
+    private void ApplyMaterial()
+    {
+        MaterialChoice.ToolTip = WindowMaterial.Apply(this, SelectedMaterial) +
+            "\nMica: subtle wallpaper tint. Acrylic: frosted desktop blur. Solid: no transparency.";
+    }
+
+    private void MaterialChoice_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (!_windowLoaded) return;
+        ApplyMaterial();
+        SaveSettings();
+    }
+
+    private void AppearancePreferenceChanged(object sender, UserPreferenceChangedEventArgs e) => QueueMaterialRefresh();
+    private void AppearanceSessionChanged(object sender, SessionSwitchEventArgs e) => QueueMaterialRefresh();
+    private void QueueMaterialRefresh()
+    {
+        if (!Dispatcher.HasShutdownStarted)
+            Dispatcher.BeginInvoke(new Action(() => { if (_windowLoaded && !_exitRequested) ApplyMaterial(); }));
+    }
+
     private void ZemaxVersions_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         if (!_windowLoaded) return;
@@ -398,12 +439,10 @@ public partial class MainWindow : Window
                 (string.IsNullOrWhiteSpace(lastServerError) ? "" : "\nLast MCP server error: " + lastServerError) +
                 (localBridge ? "\nLocal launcher bridge process: running" : "");
             var ready = bridgeRunning && serverRunning && apiConnected;
-            ConnectionSummary.Text = (ready ? "Ready" : "Needs attention") + " — MCP " +
-                (bridgeRunning && serverRunning ? "online" : "not ready") + " · OpticStudio " +
-                (apiConnected ? "connected" : apiLoaded ? "waiting" : "not connected") + " · " +
-                (authenticationRequired ? "token protected" : "unprotected") +
-                (activeCalls > 0 ? " · " + activeCalls + " AI call(s) in progress" : "");
-            if (bridgeRunning && serverRunning) SetIndicator(McpStateDot, McpState, "Online — MCP server is accepting connections", System.Windows.Media.Brushes.SeaGreen);
+            ConnectionSummary.Text = (ready ? "Ready" : "Needs attention — check the status cards above") + " · " +
+                (authenticationRequired ? "Token protected" : "No access token required") + " · " +
+                (readOnly ? "Read-only access" : "Lens changes allowed");
+            if (bridgeRunning && serverRunning) SetIndicator(McpStateDot, McpState, "Online · accepting connections", System.Windows.Media.Brushes.SeaGreen);
             else SetIndicator(McpStateDot, McpState, "Endpoint reachable, but a service is not running", System.Windows.Media.Brushes.DarkOrange);
             if (apiConnected) SetIndicator(ZosStateDot, ZosState, "Connected to OpticStudio", System.Windows.Media.Brushes.SeaGreen);
             else if (apiLoaded) SetIndicator(ZosStateDot, ZosState, "ZOS-API loaded — waiting for OpticStudio", System.Windows.Media.Brushes.DarkOrange);
@@ -411,7 +450,7 @@ public partial class MainWindow : Window
             else if (apiFiles) SetIndicator(ZosStateDot, ZosState, "Files found — not loaded yet", System.Windows.Media.Brushes.DarkOrange);
             else SetIndicator(ZosStateDot, ZosState, "ZOS-API files are missing", System.Windows.Media.Brushes.IndianRed);
             if (bridgeRunning && serverRunning) _bridgeRestartAttempts = 0;
-            LastStatusCheck.Text = "Updated " + DateTime.Now.ToString("HH:mm:ss") + " · activity 1s / health 5s";
+            LastStatusCheck.Text = "Checked " + DateTime.Now.ToString("HH:mm:ss");
         }
         catch (Exception ex)
         {
@@ -426,7 +465,7 @@ public partial class MainWindow : Window
             else SetIndicator(ZosStateDot, ZosState, "ZOS-API files are missing", System.Windows.Media.Brushes.IndianRed);
             RefreshClientMenuIndicators();
             SetIndicator(AiStateDot, AiState, "AI activity unavailable while offline", System.Windows.Media.Brushes.SlateGray);
-            LastStatusCheck.Text = "Checked " + DateTime.Now.ToString("HH:mm:ss") + " · offline, retrying";
+            LastStatusCheck.Text = "Offline · retrying automatically";
         }
         finally { _refreshingStatus = false; }
     }
@@ -879,6 +918,9 @@ public partial class MainWindow : Window
             ReadOnlyMode.IsChecked = settings["readOnly"]?.Value<bool>() ?? false;
             SelectToolsetProfile(settings["toolsetProfile"]?.ToString());
             StartOnLogin.IsChecked = settings["startOnLogin"]?.Value<bool>() ?? false;
+            var material = settings["windowMaterial"]?.ToString() ?? "mica";
+            foreach (System.Windows.Controls.ComboBoxItem item in MaterialChoice.Items)
+                if (item.Tag?.ToString() == material) MaterialChoice.SelectedItem = item;
             _clientSetupPrompted = settings["clientSetupPrompted"]?.Value<bool>() ?? false;
             UpdateRemoteSetupStatus();
         }
@@ -906,6 +948,7 @@ public partial class MainWindow : Window
                 ["readOnly"] = ReadOnlyMode.IsChecked == true,
                 ["toolsetProfile"] = SelectedToolsetProfile,
                 ["startOnLogin"] = StartOnLogin.IsChecked == true,
+                ["windowMaterial"] = SelectedMaterial,
                 ["clientSetupPrompted"] = _clientSetupPrompted
             }.ToString());
         }
@@ -954,9 +997,12 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _statusTimer.Stop();
+        SystemEvents.UserPreferenceChanged -= AppearancePreferenceChanged;
+        SystemEvents.SessionSwitch -= AppearanceSessionChanged;
         _activityTimer.Stop();
         StopBridge();
         _trayIcon.Visible = false;
+        _trayIcon.ContextMenuStrip?.Dispose();
         _trayIcon.Dispose();
         base.OnClosed(e);
     }
