@@ -46,6 +46,7 @@ public sealed class BatchSetSurfacesTool
         [Description("Surface edits. Surface numbers must be unique; at most 100 edits per call. Omitted properties remain unchanged.")] List<SurfaceEdit> edits,
         CancellationToken cancellationToken = default)
     {
+        var rolledBack = false;
         try
         {
             ValidateEdits(edits);
@@ -109,6 +110,7 @@ public sealed class BatchSetSurfacesTool
                         {
                             foreach (var pair in originals.OrderByDescending(pair => pair.Key))
                                 RestoreState(lde.GetSurfaceAt(pair.Key), pair.Value);
+                            rolledBack = true;
                         }
                         catch (Exception ex)
                         {
@@ -131,7 +133,7 @@ public sealed class BatchSetSurfacesTool
         }
         catch (Exception ex)
         {
-            return new Result(false, ex.Message, edits?.Count ?? 0, 0, true, Array.Empty<SurfaceState>());
+            return new Result(false, ex.Message, edits?.Count ?? 0, 0, rolledBack, Array.Empty<SurfaceState>());
         }
     }
 
