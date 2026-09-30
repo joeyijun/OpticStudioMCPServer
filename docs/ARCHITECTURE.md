@@ -53,7 +53,7 @@ The Host may start and answer `tools/list` without starting the Worker. The Work
 
 - `src/ZemaxMCP.Launcher` owns end-user setup, configuration, status and service lifecycle.
 - `src/ZemaxMCP.ClientProxy` adapts stdio-only clients to the public HTTP MCP endpoint and emits a per-process client instance identity.
-- `src/ZemaxMCP.Installer` and `src/ZemaxMCP.Updater` own installation and verified update flows.
+- `src/ZemaxMCP.Installer` owns first-install UI and delegates upgrades to `src/ZemaxMCP.Updater`; portable upgrades use the same updater replacement/rollback path when an installed copy exists.
 
 ## Tool contract ownership
 
@@ -85,15 +85,16 @@ Tool arguments remain manifest-defined JSON between Host and Worker, while RPC i
 
 ## Progress and event dispatch
 
-Worker job/snapshot callbacks never write directly to the pipe. They enqueue structured events into a single Worker outbound event queue; one pump serializes them through the pipe writer.
+Worker job/snapshot callbacks never write directly to the pipe. Snapshot notifications remain FIFO/durable, while progress is latest-state data and is coalesced by Job ID before the Worker event pump serializes it through the pipe writer.
 
-The Host pipe reader only parses and routes frames. Progress and snapshot frames are moved to an independent Host event channel so slow consumers cannot block result/cancellation processing. The Host:
+The Host pipe reader only parses and routes frames. It records snapshot creation immediately and independently coalesces progress by Worker generation + Job ID, so a slow MCP progress consumer cannot make memory usage grow with update frequency. The Host:
 
-- retains recent structured job progress for diagnostics;
+- retains bounded recent structured job state for diagnostics;
 - retains the most recent snapshot path;
-- forwards matching operation progress through MCP only when the original MCP request supplied a progress token.
+- forwards matching operation progress through MCP only when the original MCP request supplied a progress token;
+- correlates a background Job with the Worker operation that created it.
 
-Background jobs that outlive the original MCP request remain observable through job/status state rather than attempting to send progress against a completed request.
+Background jobs that outlive the original MCP request remain observable through job/status state. Queue length, metadata history, and large result-payload history have separate bounds. Cancellation has an independent drain deadline; if a cancelled ZOS-API job cannot stop within that grace period, the Worker generation is terminated so the Host can start cleanly.
 
 ## Client identity and control lease
 
