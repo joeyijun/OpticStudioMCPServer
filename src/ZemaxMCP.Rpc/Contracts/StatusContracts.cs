@@ -25,6 +25,7 @@ public sealed class WorkerJobStatus
 {
     public string JobId { get; set; } = string.Empty;
     public string ToolName { get; set; } = string.Empty;
+    public string? ParentOperationId { get; set; }
     public string State { get; set; } = string.Empty;
     public double? Fraction { get; set; }
     public int QueuePosition { get; set; }
