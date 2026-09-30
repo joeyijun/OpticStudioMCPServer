@@ -2,12 +2,14 @@ using System.Diagnostics;
 using System.IO.Pipes;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Protocol;
 using ZemaxMCP.HttpBridge.ModernHost;
 using ZemaxMCP.Rpc;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.ToolManifest;
 
 namespace ZemaxMCP.PrivateRpcTests;
@@ -28,6 +30,7 @@ internal static class Program
         {
             VerifyActivityOwnership();
             VerifyOriginBoundary();
+            VerifyStrictArgumentBinding();
             await VerifyContractMismatchRejectedAsync().ConfigureAwait(false);
             await VerifyPipeFaultRecoveryAsync().ConfigureAwait(false);
             await VerifyHardTimeoutRecoveryAsync().ConfigureAwait(false);
@@ -84,6 +87,45 @@ internal static class Program
             OriginPolicy.IsAllowed(new Uri("http://192.168.8.20:3001"), lanRules))
             throw new InvalidOperationException("An explicit LAN Origin must not inherit a wildcard port.");
     }
+
+    private static void VerifyStrictArgumentBinding()
+    {
+        var method = typeof(Program).GetMethod(nameof(StrictBinderFixture), BindingFlags.Static | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Could not resolve the strict-binder test fixture.");
+
+        using (var valid = JsonDocument.Parse("{\"required\":\"ok\",\"optional\":3}"))
+        {
+            var token = new CancellationTokenSource().Token;
+            var values = WorkerToolRegistry.BindArguments(method, valid.RootElement, token);
+            if (!string.Equals(values[0] as string, "ok", StringComparison.Ordinal) ||
+                values[1] is not int optional || optional != 3 ||
+                values[2] is not CancellationToken boundToken || boundToken != token)
+                throw new InvalidOperationException("Worker argument binding did not preserve valid typed arguments and cancellation.");
+        }
+
+        using (var typo = JsonDocument.Parse("{\"required\":\"ok\",\"optoinal\":3}"))
+        {
+            try
+            {
+                WorkerToolRegistry.BindArguments(method, typo.RootElement, CancellationToken.None);
+                throw new InvalidOperationException("An unknown Worker tool argument was silently ignored.");
+            }
+            catch (ArgumentException ex) when (ex.Message.Contains("Unknown tool argument", StringComparison.Ordinal) &&
+                                               ex.Message.Contains("optoinal", StringComparison.Ordinal)) { }
+        }
+
+        using (var missing = JsonDocument.Parse("{\"optional\":3}"))
+        {
+            try
+            {
+                WorkerToolRegistry.BindArguments(method, missing.RootElement, CancellationToken.None);
+                throw new InvalidOperationException("A missing required Worker tool argument was accepted.");
+            }
+            catch (ArgumentException ex) when (ex.Message.Contains("Missing required argument: required", StringComparison.Ordinal)) { }
+        }
+    }
+
+    private static void StrictBinderFixture(string required, int optional = 7, CancellationToken cancellationToken = default) { }
 
     private static async Task VerifyContractMismatchRejectedAsync()
     {
@@ -296,6 +338,20 @@ internal static class Program
                 !rejectedLeaseBody.Contains("isError", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Two same-name same-IP MCP client instances collapsed into one control identity: " + rejectedLeaseBody);
 
+            var heldBody = await ReadFirstMcpPayloadAsync(heldResponse).ConfigureAwait(false);
+            if (!heldBody.Contains("echo-ok", StringComparison.Ordinal))
+                throw new InvalidOperationException("The held control-lease request did not complete normally.");
+
+            using var disconnect = await Send2026ToolCallAsync(client, endpoint, 6, "zemax_disconnect", "client-a", "instance-a").ConfigureAwait(false);
+            var disconnectBody = await ReadFirstMcpPayloadAsync(disconnect).ConfigureAwait(false);
+            if (!disconnect.IsSuccessStatusCode || !disconnectBody.Contains("echo-ok", StringComparison.Ordinal))
+                throw new InvalidOperationException("The lease owner could not disconnect cleanly: " + disconnectBody);
+
+            using var handedOff = await Send2026ToolCallAsync(client, endpoint, 7, "zemax_status", "client-a", "instance-b").ConfigureAwait(false);
+            var handedOffBody = await ReadFirstMcpPayloadAsync(handedOff).ConfigureAwait(false);
+            if (!handedOff.IsSuccessStatusCode || !handedOffBody.Contains("echo-ok", StringComparison.Ordinal))
+                throw new InvalidOperationException("A successful zemax_disconnect did not release control ownership for immediate handoff: " + handedOffBody);
+
             using var spoofed = new HttpRequestMessage(HttpMethod.Get, endpoint + "/health");
             spoofed.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
             spoofed.Headers.Host = "attacker.example";
@@ -466,6 +522,7 @@ internal static class Program
                     await Task.Delay(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
                 }
                 if (string.Equals(command, "zemax_status", StringComparison.Ordinal) || string.Equals(command, "zemax_get_system", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_disconnect", StringComparison.Ordinal) ||
                     string.Equals(command, "zemax_test_echo", StringComparison.Ordinal) || string.Equals(command, "zemax_test_hold", StringComparison.Ordinal))
                 {
                     await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
