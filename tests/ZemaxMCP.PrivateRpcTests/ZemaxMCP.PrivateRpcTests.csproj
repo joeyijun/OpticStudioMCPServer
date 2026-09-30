@@ -6,6 +6,9 @@
     <UseAppHost>true</UseAppHost>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tooling\ZemaxToolAttributes.cs" Link="Worker\ZemaxToolAttributes.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="..\..\src\ZemaxMCP.HttpBridge\ZemaxMCP.HttpBridge.csproj" />
     <ProjectReference Include="..\..\src\ZemaxMCP.Rpc\ZemaxMCP.Rpc.csproj" />

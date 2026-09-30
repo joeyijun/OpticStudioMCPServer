@@ -10,13 +10,50 @@ namespace ZemaxMCP.Server.Services.Jobs;
 /// </summary>
 public sealed class McpJobManager : IDisposable
 {
+    private static readonly AsyncLocal<string?> ParentOperation = new();
+
+    public const int DefaultMaxHistory = 128;
+    public const int DefaultMaxResultHistory = 16;
+    public const int DefaultMaxPending = 64;
+
     private readonly object _gate = new();
     private readonly Queue<JobEntry> _pending = new();
     private readonly Dictionary<string, JobEntry> _jobs = new(StringComparer.Ordinal);
+    private readonly int _maxHistory;
+    private readonly int _maxResultHistory;
+    private readonly int _maxPending;
+    private readonly TimeSpan _cancellationGrace;
+    private readonly Action<McpJobSnapshot>? _hardRecoveryAction;
     private bool _processorRunning;
     private bool _disposed;
 
+    public McpJobManager(
+        int maxHistory = DefaultMaxHistory,
+        int maxPending = DefaultMaxPending,
+        TimeSpan? cancellationGrace = null,
+        int maxResultHistory = DefaultMaxResultHistory,
+        Action<McpJobSnapshot>? hardRecoveryAction = null)
+    {
+        if (maxHistory < 1) throw new ArgumentOutOfRangeException(nameof(maxHistory), "Job history limit must be at least 1.");
+        if (maxResultHistory < 0) throw new ArgumentOutOfRangeException(nameof(maxResultHistory), "Job result history limit cannot be negative.");
+        if (maxPending < 1) throw new ArgumentOutOfRangeException(nameof(maxPending), "Pending job limit must be at least 1.");
+        _maxHistory = maxHistory;
+        _maxResultHistory = Math.Min(maxResultHistory, maxHistory);
+        _maxPending = maxPending;
+        _cancellationGrace = cancellationGrace ?? TimeSpan.FromSeconds(60);
+        if (_cancellationGrace <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(cancellationGrace), "Job cancellation grace must be positive.");
+        _hardRecoveryAction = hardRecoveryAction;
+    }
+
     public event Action<McpJobSnapshot>? JobChanged;
+
+    internal static IDisposable PushParentOperation(string? operationId)
+    {
+        var previous = ParentOperation.Value;
+        ParentOperation.Value = string.IsNullOrWhiteSpace(operationId) ? null : operationId;
+        return new ParentOperationScope(previous);
+    }
 
     public McpJobSnapshot Enqueue(string toolName, Func<McpJobContext, Task> operation, TimeSpan? timeout = null)
     {
@@ -28,7 +65,9 @@ public sealed class McpJobManager : IDisposable
         lock (_gate)
         {
             ThrowIfDisposed();
-            entry = new JobEntry(Guid.NewGuid().ToString("N"), toolName, operation, timeout);
+            if (_pending.Count >= _maxPending)
+                throw new InvalidOperationException($"The background job queue is full ({_maxPending} pending jobs). Wait for a job to finish or cancel one before starting another.");
+            entry = new JobEntry(Guid.NewGuid().ToString("N"), toolName, ParentOperation.Value, operation, timeout);
             _pending.Enqueue(entry);
             _jobs.Add(entry.Id, entry);
             snapshot = Snapshot(entry);
@@ -100,6 +139,7 @@ public sealed class McpJobManager : IDisposable
                     entry.CompletedAt = DateTimeOffset.UtcNow;
                     entry.Message = "Cancelled before execution.";
                     cancelledBeforeExecution = Snapshot(entry);
+                    TrimHistoryLocked();
                 }
                 else
                 {
@@ -123,15 +163,30 @@ public sealed class McpJobManager : IDisposable
                     : null;
                 if (timeoutSource != null) timeoutSource.CancelAfter(entry.Timeout!.Value);
                 var token = timeoutSource?.Token ?? entry.Cancellation.Token;
-                await entry.Operation(new McpJobContext(
-                    token,
-                    (progress, message) => PublishProgress(entry, progress, message),
-                    result => PublishResult(entry, result))).ConfigureAwait(false);
+                var drained = await ExecuteWithRecoveryAsync(entry, token).ConfigureAwait(false);
+                if (!drained)
+                {
+                    // Production hard recovery terminates the Worker generation.
+                    // If a test/recovery observer returns instead, do not start
+                    // another queued ZOS-API Job beside the still-hung task.
+                    lock (_gate) _processorRunning = false;
+                    return;
+                }
                 lock (_gate)
                 {
                     entry.CompletedAt = DateTimeOffset.UtcNow;
-                    entry.State = entry.Cancellation.IsCancellationRequested ? McpJobState.Cancelled : McpJobState.Completed;
-                    entry.Message = entry.Cancellation.IsCancellationRequested ? "Cancelled." : "Completed.";
+                    if (token.IsCancellationRequested)
+                    {
+                        entry.State = McpJobState.Cancelled;
+                        entry.Message = entry.Timeout is { } && timeoutSource?.IsCancellationRequested == true && !entry.Cancellation.IsCancellationRequested
+                            ? "Timed out and stopped during the cancellation grace period."
+                            : "Cancelled.";
+                    }
+                    else
+                    {
+                        entry.State = McpJobState.Completed;
+                        entry.Message = "Completed.";
+                    }
                 }
             }
             catch (OperationCanceledException)
@@ -155,7 +210,81 @@ public sealed class McpJobManager : IDisposable
                 }
             }
             finally { timeoutSource?.Dispose(); }
-            Publish(Snapshot(entry));
+            McpJobSnapshot terminal;
+            lock (_gate)
+            {
+                terminal = Snapshot(entry);
+                TrimHistoryLocked();
+            }
+            Publish(terminal);
+        }
+    }
+
+    private async Task<bool> ExecuteWithRecoveryAsync(JobEntry entry, CancellationToken cancellationToken)
+    {
+        var context = new McpJobContext(
+            cancellationToken,
+            (progress, message) => PublishProgress(entry, progress, message),
+            result => PublishResult(entry, result));
+
+        var operationTask = entry.Operation(context);
+        if (!cancellationToken.CanBeCanceled)
+        {
+            await operationTask.ConfigureAwait(false);
+            return true;
+        }
+
+        var cancellationSignal = Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        if (await Task.WhenAny(operationTask, cancellationSignal).ConfigureAwait(false) == operationTask)
+        {
+            await operationTask.ConfigureAwait(false);
+            return true;
+        }
+
+        var drainDeadline = Task.Delay(_cancellationGrace);
+        if (await Task.WhenAny(operationTask, drainDeadline).ConfigureAwait(false) == operationTask)
+        {
+            await operationTask.ConfigureAwait(false);
+            return true;
+        }
+
+        McpJobSnapshot snapshot;
+        lock (_gate)
+        {
+            entry.CompletedAt = DateTimeOffset.UtcNow;
+            entry.State = McpJobState.Failed;
+            entry.Message = $"Cancellation did not stop the background ZOS-API job within {_cancellationGrace.TotalSeconds:0} seconds; Worker hard recovery is required.";
+            snapshot = Snapshot(entry);
+            TrimHistoryLocked();
+        }
+        Publish(snapshot);
+        try { _hardRecoveryAction?.Invoke(snapshot); }
+        catch { /* The job state is already terminal; recovery observers must not corrupt it. */ }
+        return false;
+    }
+
+    private void TrimHistoryLocked()
+    {
+        var terminal = _jobs.Values
+            .Where(entry => entry.State is McpJobState.Completed or McpJobState.Cancelled or McpJobState.Failed)
+            .OrderByDescending(entry => entry.CompletedAt ?? DateTimeOffset.MaxValue)
+            .ToArray();
+
+        // Retain metadata for a useful recent history window, but retain
+        // potentially large result payloads for a much smaller newest subset.
+        // Callers can distinguish a genuinely null result from an expired one.
+        foreach (var entry in terminal.Skip(_maxResultHistory))
+        {
+            if (!entry.ResultWasSet || entry.ResultExpired) continue;
+            entry.Result = null;
+            entry.ResultExpired = true;
+        }
+
+        foreach (var entry in terminal.Skip(_maxHistory))
+        {
+            if (!_jobs.Remove(entry.Id)) continue;
+            entry.Result = null;
+            entry.Cancellation.Dispose();
         }
     }
 
@@ -171,13 +300,19 @@ public sealed class McpJobManager : IDisposable
 
     private void PublishResult(JobEntry entry, object? result)
     {
-        lock (_gate) entry.Result = result;
+        lock (_gate)
+        {
+            entry.Result = result;
+            entry.ResultWasSet = true;
+            entry.ResultExpired = false;
+        }
         Publish(Snapshot(entry));
     }
 
     private McpJobSnapshot Snapshot(JobEntry entry) => new(
-        entry.Id, entry.ToolName, entry.State, entry.QueuedAt, entry.StartedAt, entry.CompletedAt,
-        entry.Progress, entry.Message, QueuePosition(entry), entry.StartedAt == null ? null : DateTimeOffset.UtcNow - entry.StartedAt.Value, entry.Result);
+        entry.Id, entry.ToolName, entry.ParentOperationId, entry.State, entry.QueuedAt, entry.StartedAt, entry.CompletedAt,
+        entry.Progress, entry.Message, QueuePosition(entry), entry.StartedAt == null ? null : DateTimeOffset.UtcNow - entry.StartedAt.Value,
+        entry.ResultExpired, entry.Result);
 
     private int QueuePosition(JobEntry entry)
     {
@@ -207,22 +342,43 @@ public sealed class McpJobManager : IDisposable
         {
             if (_disposed) return;
             _disposed = true;
-            foreach (var entry in _jobs.Values) entry.Cancellation.Cancel();
+            foreach (var entry in _jobs.Values)
+            {
+                if (entry.State is McpJobState.Completed or McpJobState.Cancelled or McpJobState.Failed)
+                    entry.Cancellation.Dispose();
+                else
+                    entry.Cancellation.Cancel();
+            }
+        }
+    }
+
+    private sealed class ParentOperationScope : IDisposable
+    {
+        private readonly string? _previous;
+        private bool _disposed;
+        public ParentOperationScope(string? previous) => _previous = previous;
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            ParentOperation.Value = _previous;
         }
     }
 
     private sealed class JobEntry
     {
-        public JobEntry(string id, string toolName, Func<McpJobContext, Task> operation, TimeSpan? timeout)
+        public JobEntry(string id, string toolName, string? parentOperationId, Func<McpJobContext, Task> operation, TimeSpan? timeout)
         {
             Id = id;
             ToolName = toolName;
+            ParentOperationId = parentOperationId;
             Operation = operation;
             Timeout = timeout;
         }
 
         public string Id { get; }
         public string ToolName { get; }
+        public string? ParentOperationId { get; }
         public Func<McpJobContext, Task> Operation { get; }
         public TimeSpan? Timeout { get; }
         public CancellationTokenSource Cancellation { get; } = new();
@@ -233,6 +389,8 @@ public sealed class McpJobManager : IDisposable
         public double? Progress { get; set; }
         public string Message { get; set; } = "Queued.";
         public object? Result { get; set; }
+        public bool ResultWasSet { get; set; }
+        public bool ResultExpired { get; set; }
     }
 }
 
@@ -258,6 +416,7 @@ public enum McpJobState { Queued, Running, Cancelling, Completed, Cancelled, Fai
 public sealed record McpJobSnapshot(
     string JobId,
     string ToolName,
+    string? ParentOperationId,
     McpJobState State,
     DateTimeOffset QueuedAt,
     DateTimeOffset? StartedAt,
@@ -266,4 +425,5 @@ public sealed record McpJobSnapshot(
     string Message,
     int QueuePosition,
     TimeSpan? Elapsed,
+    bool ResultExpired,
     object? Result);

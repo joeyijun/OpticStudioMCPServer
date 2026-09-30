@@ -92,6 +92,10 @@ public class SetFieldsTool
 
             return result;
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             return new SetFieldsResult(false, ex.Message, 0, new List<Field>());

@@ -39,6 +39,9 @@ jobs:
           dotnet build src/ZemaxMCP.Launcher/ZemaxMCP.Launcher.csproj -c Release
           dotnet build src/ZemaxMCP.Installer/ZemaxMCP.Installer.csproj -c Release
           dotnet build src/ZemaxMCP.Updater/ZemaxMCP.Updater.csproj -c Release
+      - name: Smoke-test launcher materials and rounded tray menu
+        shell: pwsh
+        run: powershell -NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File .\scripts\test-launcher-materials.ps1 -Configuration Release
       - name: Verify discovery, configuration paths, and icons
         shell: pwsh
         run: ./scripts/verify-desktop-components.ps1 -Configuration Release

@@ -81,6 +81,10 @@ public class OpenFileTool
 
             return result;
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             return new OpenFileResult(

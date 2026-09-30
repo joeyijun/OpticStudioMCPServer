@@ -2,12 +2,14 @@ using System.Diagnostics;
 using System.IO.Pipes;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Protocol;
 using ZemaxMCP.HttpBridge.ModernHost;
 using ZemaxMCP.Rpc;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.ToolManifest;
 
 namespace ZemaxMCP.PrivateRpcTests;
@@ -28,6 +30,9 @@ internal static class Program
         {
             VerifyActivityOwnership();
             VerifyOriginBoundary();
+            await VerifyBackgroundJobLeaseRetentionAsync().ConfigureAwait(false);
+            VerifyStrictArgumentBinding();
+            await VerifyWriteGateCancellationClassificationAsync().ConfigureAwait(false);
             await VerifyContractMismatchRejectedAsync().ConfigureAwait(false);
             await VerifyPipeFaultRecoveryAsync().ConfigureAwait(false);
             await VerifyHardTimeoutRecoveryAsync().ConfigureAwait(false);
@@ -83,6 +88,101 @@ internal static class Program
         if (!OriginPolicy.IsAllowed(new Uri("http://192.168.8.20:3000"), lanRules) ||
             OriginPolicy.IsAllowed(new Uri("http://192.168.8.20:3001"), lanRules))
             throw new InvalidOperationException("An explicit LAN Origin must not inherit a wildcard port.");
+    }
+
+    private static async Task VerifyBackgroundJobLeaseRetentionAsync()
+    {
+        var lease = new OpticStudioControlLease(TimeSpan.FromMilliseconds(50));
+        using (await lease.AcquireAsync("client-a", "zemax_global_search", CancellationToken.None).ConfigureAwait(false)) { }
+        if (!lease.RetainForJob("client-a", "job-1", generation: 7))
+            throw new InvalidOperationException("The owning client could not retain control for its background job.");
+
+        await Task.Delay(80).ConfigureAwait(false);
+        try
+        {
+            using var _ = await lease.AcquireAsync("client-b", "zemax_status", CancellationToken.None).ConfigureAwait(false);
+            throw new InvalidOperationException("A background job did not prevent lease expiry and cross-client takeover.");
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("currently leased", StringComparison.OrdinalIgnoreCase)) { }
+
+        lease.ObserveJob(8, new WorkerJobStatus { JobId = "job-1", State = "Completed" });
+        await Task.Delay(80).ConfigureAwait(false);
+        try
+        {
+            using var _ = await lease.AcquireAsync("client-b", "zemax_status", CancellationToken.None).ConfigureAwait(false);
+            throw new InvalidOperationException("A terminal event from the wrong Worker generation released the job lease.");
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("currently leased", StringComparison.OrdinalIgnoreCase)) { }
+
+        lease.ReleaseGeneration(7);
+        await Task.Delay(80).ConfigureAwait(false);
+        using var handedOff = await lease.AcquireAsync("client-b", "zemax_status", CancellationToken.None).ConfigureAwait(false);
+    }
+
+    private static void VerifyStrictArgumentBinding()
+    {
+        var method = typeof(Program).GetMethod(nameof(StrictBinderFixture), BindingFlags.Static | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Could not resolve the strict-binder test fixture.");
+
+        using (var valid = JsonDocument.Parse("{\"required\":\"ok\",\"optional\":3}"))
+        {
+            var token = new CancellationTokenSource().Token;
+            var values = WorkerToolRegistry.BindArguments(method, valid.RootElement, token);
+            if (!string.Equals(values[0] as string, "ok", StringComparison.Ordinal) ||
+                values[1] is not int optional || optional != 3 ||
+                values[2] is not CancellationToken boundToken || boundToken != token)
+                throw new InvalidOperationException("Worker argument binding did not preserve valid typed arguments and cancellation.");
+        }
+
+        using (var typo = JsonDocument.Parse("{\"required\":\"ok\",\"optoinal\":3}"))
+        {
+            try
+            {
+                WorkerToolRegistry.BindArguments(method, typo.RootElement, CancellationToken.None);
+                throw new InvalidOperationException("An unknown Worker tool argument was silently ignored.");
+            }
+            catch (ArgumentException ex) when (ex.Message.Contains("Unknown tool argument", StringComparison.Ordinal) &&
+                                               ex.Message.Contains("optoinal", StringComparison.Ordinal)) { }
+        }
+
+        using (var missing = JsonDocument.Parse("{\"optional\":3}"))
+        {
+            try
+            {
+                WorkerToolRegistry.BindArguments(method, missing.RootElement, CancellationToken.None);
+                throw new InvalidOperationException("A missing required Worker tool argument was accepted.");
+            }
+            catch (ArgumentException ex) when (ex.Message.Contains("Missing required argument: required", StringComparison.Ordinal)) { }
+        }
+    }
+
+    private static void StrictBinderFixture(string required, int optional = 7, CancellationToken cancellationToken = default) { }
+
+    private static async Task VerifyWriteGateCancellationClassificationAsync()
+    {
+        using var blockedGate = new SemaphoreSlim(0, 1);
+        using var caller = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        using var callerDeadline = CancellationTokenSource.CreateLinkedTokenSource(caller.Token);
+        callerDeadline.CancelAfter(TimeSpan.FromSeconds(2));
+        try
+        {
+            await WorkerRpcClient.WaitForWriteGateAsync(blockedGate, callerDeadline.Token, caller.Token, callerDeadline).ConfigureAwait(false);
+            throw new InvalidOperationException("A caller-cancelled write-lock wait unexpectedly acquired the gate.");
+        }
+        catch (OperationCanceledException) when (caller.IsCancellationRequested) { }
+        catch (TimeoutException)
+        {
+            throw new InvalidOperationException("Caller cancellation while waiting for the RPC write lock was misclassified as a write timeout.");
+        }
+
+        using var timeoutGate = new SemaphoreSlim(0, 1);
+        using var writeDeadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        try
+        {
+            await WorkerRpcClient.WaitForWriteGateAsync(timeoutGate, writeDeadline.Token, CancellationToken.None, writeDeadline).ConfigureAwait(false);
+            throw new InvalidOperationException("An expired write deadline unexpectedly acquired the gate.");
+        }
+        catch (TimeoutException) { }
     }
 
     private static async Task VerifyContractMismatchRejectedAsync()
@@ -296,6 +396,20 @@ internal static class Program
                 !rejectedLeaseBody.Contains("isError", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Two same-name same-IP MCP client instances collapsed into one control identity: " + rejectedLeaseBody);
 
+            var heldBody = await ReadFirstMcpPayloadAsync(heldResponse).ConfigureAwait(false);
+            if (!heldBody.Contains("echo-ok", StringComparison.Ordinal))
+                throw new InvalidOperationException("The held control-lease request did not complete normally.");
+
+            using var disconnect = await Send2026ToolCallAsync(client, endpoint, 6, "zemax_disconnect", "client-a", "instance-a").ConfigureAwait(false);
+            var disconnectBody = await ReadFirstMcpPayloadAsync(disconnect).ConfigureAwait(false);
+            if (!disconnect.IsSuccessStatusCode || !disconnectBody.Contains("success", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("The lease owner could not disconnect cleanly: " + disconnectBody);
+
+            using var handedOff = await Send2026ToolCallAsync(client, endpoint, 7, "zemax_status", "client-a", "instance-b").ConfigureAwait(false);
+            var handedOffBody = await ReadFirstMcpPayloadAsync(handedOff).ConfigureAwait(false);
+            if (!handedOff.IsSuccessStatusCode || !handedOffBody.Contains("echo-ok", StringComparison.Ordinal))
+                throw new InvalidOperationException("A successful zemax_disconnect did not release control ownership for immediate handoff: " + handedOffBody);
+
             using var spoofed = new HttpRequestMessage(HttpMethod.Get, endpoint + "/health");
             spoofed.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
             spoofed.Headers.Host = "attacker.example";
@@ -464,6 +578,15 @@ internal static class Program
                         message = "Fake progress"
                     }).ConfigureAwait(false);
                     await Task.Delay(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+                }
+                if (string.Equals(command, "zemax_disconnect", StringComparison.Ordinal))
+                {
+                    await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
+                    {
+                        content = new[] { new { type = "text", text = "{\"success\":true,\"error\":null}" } },
+                        isError = false
+                    }).ConfigureAwait(false);
+                    continue;
                 }
                 if (string.Equals(command, "zemax_status", StringComparison.Ordinal) || string.Equals(command, "zemax_get_system", StringComparison.Ordinal) ||
                     string.Equals(command, "zemax_test_echo", StringComparison.Ordinal) || string.Equals(command, "zemax_test_hold", StringComparison.Ordinal))

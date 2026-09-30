@@ -101,11 +101,40 @@ public sealed class WorkerToolRegistry
             });
     }
 
-    private static object?[] BindArguments(MethodInfo method, JsonElement arguments, CancellationToken cancellationToken)
+    internal static object?[] BindArguments(MethodInfo method, JsonElement arguments, CancellationToken cancellationToken)
     {
         if (arguments.ValueKind is not (JsonValueKind.Object or JsonValueKind.Undefined or JsonValueKind.Null))
             throw new ArgumentException("Tool arguments must be a JSON object.");
-        return method.GetParameters().Select(parameter =>
+
+        var parameters = method.GetParameters();
+        var publicParameters = parameters
+            .Where(parameter => parameter.ParameterType != typeof(CancellationToken))
+            .ToArray();
+
+        if (arguments.ValueKind == JsonValueKind.Object)
+        {
+            var allowed = new HashSet<string>(
+                publicParameters.Select(parameter => parameter.Name
+                    ?? throw new InvalidOperationException("Tool parameter name metadata is unavailable.")),
+                StringComparer.Ordinal);
+            var unknown = arguments.EnumerateObject()
+                .Select(property => property.Name)
+                .Where(name => !allowed.Contains(name))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToArray();
+            if (unknown.Length > 0)
+            {
+                var allowedText = allowed.Count == 0
+                    ? "(none)"
+                    : string.Join(", ", allowed.OrderBy(name => name, StringComparer.Ordinal));
+                throw new ArgumentException(
+                    "Unknown tool argument(s): " + string.Join(", ", unknown) +
+                    ". Allowed arguments: " + allowedText + ".");
+            }
+        }
+
+        return parameters.Select(parameter =>
         {
             if (parameter.ParameterType == typeof(CancellationToken)) return (object)cancellationToken;
             if (arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty(parameter.Name!, out var value))

@@ -14,6 +14,7 @@ $bootstrapSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Bootst
 $workerRpc = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Rpc\WorkerRpcServer.cs")
 $workerProject = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\ZemaxMCP.Server.csproj")
 $workerRegistry = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Tooling\ZemaxToolAttributes.cs")
+$jobManager = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Services\Jobs\McpJobManager.cs")
 $workerTools = Get-ChildItem (Join-Path $root "src\ZemaxMCP.Server\Tools") -Recurse -Filter *.cs | ForEach-Object { Get-Content -Raw $_.FullName } | Out-String
 $setSurfaceSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Server\Tools\LensData\SetSurfaceTool.cs")
 $manifestProject = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.ToolManifest\ZemaxMCP.ToolManifest.csproj")
@@ -22,12 +23,14 @@ $generatorSource = Get-Content -Raw (Join-Path $root "tools\ZemaxMCP.ToolManifes
 $privateRpcTest = Get-Content -Raw (Join-Path $root "tests\ZemaxMCP.PrivateRpcTests\Program.cs")
 $schemaTest = Get-Content -Raw (Join-Path $root "tests\ZemaxMCP.PrivateRpcTests\StaticToolManifestAssertions.cs")
 $liveVerifier = Get-Content -Raw (Join-Path $root "scripts\verify-live-mcp.ps1")
+$functionalLiveVerifier = Get-Content -Raw (Join-Path $root "scripts\verify-live-functional.ps1")
 $packages = Get-Content -Raw (Join-Path $root "Directory.Packages.props")
 
 # Parse the manual/live acceptance harness during CI even though the hosted
 # runner cannot execute it against proprietary ZOS-API. This catches broken
 # PowerShell edits before a maintainer reaches the OpticStudio test machine.
 [scriptblock]::Create($liveVerifier) | Out-Null
+[scriptblock]::Create($functionalLiveVerifier) | Out-Null
 
 if ($hostProject -notmatch '<TargetFramework>net10\.0-windows</TargetFramework>' -or
     $hostProject -notmatch 'ModelContextProtocol\.AspNetCore') {
@@ -91,16 +94,34 @@ if ($hostSource -notmatch 'StaticToolManifest\.All' -or $hostSource -notmatch 'S
 if ($workerRegistry -notmatch 'StaticToolManifest\.GetRequired' -or $workerRegistry -match 'BuildSchema\(|BuildTypeSchema\(') {
   throw "Worker execution must consume the shared manifest rather than maintain a second schema generator."
 }
+$statusContracts = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Rpc\Contracts\StatusContracts.cs")
+if ($statusContracts -notmatch 'WorkerVersion' -or
+    $statusContracts -notmatch 'ZosApiAssemblyVersion' -or
+    $statusContracts -notmatch 'ZosApiFileVersion' -or
+    $hostSource -notmatch 'hostVersion = typeof\(Program\)\.Assembly' -or
+    $hostSource -notmatch 'workerVersion = status\?\.WorkerVersion') {
+  throw "Health/status must expose Host, Worker, and ZOS-API version identities for auditable live acceptance."
+}
+if ($workerRpc -notmatch 'IsExplicitToolFailure' -or
+    $workerRpc -notmatch 'isError = IsExplicitToolFailure' -or
+    $workerRpc -notmatch 'ParentOperationId') {
+  throw "Worker RPC must surface structured success=false results as MCP errors and preserve background-job parent-operation correlation."
+}
+if ($workerRegistry -notmatch 'arguments\.EnumerateObject\(\)' -or
+    $workerRegistry -notmatch 'Unknown tool argument' -or
+    $workerRegistry -notmatch 'Allowed arguments') {
+  throw "Worker execution must reject JSON arguments that are not declared by the public tool method contract."
+}
 if ($rpcClient -notmatch 'PipeSecurity' -or $rpcClient -notmatch 'ZEMAX_MCP_PIPE_SECRET' -or
     $rpcClient -notmatch 'WorkerHandshake' -or $rpcClient -notmatch 'StaticToolManifest\.ContractFingerprint' -or
     $workerSource -notmatch 'WorkerHandshake' -or $workerSource -notmatch 'StaticToolManifest\.ContractFingerprint') {
   throw "The Host/Worker startup handshake must authenticate PID/secret and reject RPC or manifest contract mismatches before ZOS-API execution."
 }
-if ($workerRpc -notmatch 'ConcurrentQueue<ZemaxRpcEnvelope>' -or $workerRpc -notmatch 'PumpEventsAsync' -or
-    $workerRpc -match '_ = WriteProgressAsync|_ = WriteSnapshotCreatedAsync' -or
-    $rpcClient -notmatch 'Channel<ZemaxRpcEnvelope>' -or $rpcClient -notmatch 'DispatchEventsAsync' -or
+if ($workerRpc -notmatch '_coalescedProgress' -or $workerRpc -notmatch '_snapshotEvents' -or
+    $workerRpc -notmatch 'PumpEventsAsync' -or $workerRpc -match '_ = WriteProgressAsync|_ = WriteSnapshotCreatedAsync' -or
+    $rpcClient -notmatch '_coalescedProgress' -or $rpcClient -notmatch 'DispatchEventsAsync' -or
     $rpcClient -notmatch '_progressHandlers' -or $hostSource -notmatch 'NotifyProgressAsync') {
-  throw "Worker progress/snapshot events must use a serialized outbound queue and an independent Host dispatcher with MCP progress forwarding."
+  throw "Worker/Host progress must be coalesced by operation while snapshot events remain durable and MCP progress forwarding remains serialized."
 }
 if ($hostSource -notmatch 'io\.zemaxmcp/clientInstanceId' -or $hostSource -notmatch 'X-Zemax-MCP-Client-Instance' -or
     $hostSource -notmatch 'IsSafeClientInstanceId' -or $originPolicy -notmatch 'X-Zemax-MCP-Client-Instance') {
@@ -111,11 +132,27 @@ if ($hostSource -notmatch 'OpticStudioControlLease' -or $hostSource -notmatch 'R
     $hostSource -match 'zemax-mcp-client-name|Mcp-Version' -or $hostSource -notmatch 'UseSetting\("AllowedHosts"' -or $hostOptions -notmatch 'allowed-origin') {
   throw "Control ownership and Host/Origin boundaries must remain explicit and non-wildcarded."
 }
+if ($hostSource -notmatch '"zemax_disconnect"' -or $hostSource -notmatch 'ReleaseOwnership\(clientId\)' -or
+    $privateRpcTest -notmatch 'immediate handoff') {
+  throw "A successful zemax_disconnect must release the owning client lease and the MCP E2E suite must verify immediate handoff."
+}
+if ($hostSource -notmatch 'RetainForJob\(clientId' -or $hostSource -notmatch 'JobStateChanged' -or
+    $rpcClient -notmatch 'GenerationEnded' -or $privateRpcTest -notmatch 'VerifyBackgroundJobLeaseRetentionAsync') {
+  throw "Background jobs must retain client control ownership and be scoped to the Worker generation that created them."
+}
 if ($rpcClient -notmatch 'HardRecoveryTimeoutSeconds' -or $rpcClient -notmatch 'FaultWorkerConnection' -or
     $rpcClient -notmatch 'CancelOperation' -or $rpcClient -notmatch 'CancellationWriteTimeoutSeconds' -or
     $rpcClient -notmatch 'RequestWriteTimeoutSeconds' -or $rpcClient -notmatch 'hardDeadline' -or
-    $rpcClient -notmatch 'RecoverCancelledOperationAsync') {
-  throw "Worker RPC must retain bounded request/cancellation writes, soft cancellation, hard recovery, and one fault-recovery path."
+    $rpcClient -notmatch 'RecoverCancelledOperationAsync' -or $rpcClient -notmatch 'WaitForWriteGateAsync') {
+  throw "Worker RPC must retain bounded request/cancellation writes, correct caller-cancellation classification, soft cancellation, hard recovery, and one fault-recovery path."
+}
+if ($jobManager -notmatch 'DefaultMaxHistory' -or $jobManager -notmatch 'DefaultMaxPending' -or
+    $jobManager -notmatch 'ExecuteWithRecoveryAsync' -or $jobManager -notmatch 'hard recovery' -or
+    $workerSource -notmatch 'ZEMAX_MCP_JOB_RECOVERY_TIMEOUT_SECONDS') {
+  throw "Background jobs must have bounded queue/history retention and an independent cancellation hard-recovery deadline."
+}
+if ($privateRpcTest -notmatch 'VerifyWriteGateCancellationClassificationAsync') {
+  throw "Private RPC tests must distinguish caller cancellation while waiting for the write lock from a genuine write timeout."
 }
 $callToolBody = [regex]::Match($rpcClient,
     'public async Task<CallToolResult> CallToolAsync[\s\S]*?(?<body>\{[\s\S]*?)\r?\n    public async Task<WorkerStatus>').Groups['body'].Value
@@ -131,7 +168,7 @@ if ($privateRpcTest -notmatch '2026-07-28' -or $privateRpcTest -notmatch 'io\.mo
     $privateRpcTest -notmatch 'Send2026ListToolsAsync' -or $privateRpcTest -match '"initialize"') {
   throw "The E2E suite must cover stateless discovery, manifest mismatch, event dispatch, and distinct same-info client instances."
 }
-if ($schemaTest -notmatch 'StaticToolManifest\.All\.Count != 126' -or $schemaTest -notmatch 'zemax_open_file' -or
+if ($schemaTest -notmatch 'StaticToolManifest\.All\.Count != 135' -or $schemaTest -notmatch 'zemax_open_file' -or
     $schemaTest -notmatch 'zemax_set_fields' -or $schemaTest -notmatch 'zemax_optimize' -or
     $schemaTest -notmatch 'unresolved opaque object contracts') {
   throw "Generated manifest regressions must verify count, policy metadata, required parameters, nested records, defaults, and absence of opaque contracts."
@@ -144,6 +181,28 @@ if ($liveVerifier -notmatch '2026-07-28' -or $liveVerifier -notmatch 'MCP-Protoc
     $liveVerifier -notmatch 'VerifyLegacyCompatibility' -or $liveVerifier -notmatch '2025-11-25' -or
     $liveVerifier -match '2024-11-05') {
   throw "The live release verifier must exercise 2026-07-28 stateless MCP by default and keep 2025-11-25 only as an explicit compatibility probe."
+}
+if ($functionalLiveVerifier -notmatch 'FixturePath' -or
+    $functionalLiveVerifier -notmatch 'VerifyBackgroundJobs' -or
+    $functionalLiveVerifier -notmatch 'ParentOperationId' -or
+    $functionalLiveVerifier -notmatch 'zemax_batch_set_surfaces' -or
+    $functionalLiveVerifier -notmatch 'zemax_snapshot_list' -or
+    $functionalLiveVerifier -notmatch 'zemax_snapshot_diff' -or
+    $functionalLiveVerifier -notmatch 'zemax_snapshot_restore' -or
+    $functionalLiveVerifier -notmatch 'zemax_ray_trace_diagnostics' -or
+    $functionalLiveVerifier -notmatch 'zemax_nsc_scene_summary' -or
+    $functionalLiveVerifier -notmatch 'zemax_run_nsc_ray_trace' -or
+    $functionalLiveVerifier -notmatch 'zemax_tolerance_summary' -or
+    $functionalLiveVerifier -notmatch 'zemax_run_tolerancing' -or
+    $functionalLiveVerifier -notmatch 'monteCarloRows' -or
+    $functionalLiveVerifier -notmatch 'sensitivityCriteria' -or
+    $functionalLiveVerifier -notmatch 'hostVersion' -or
+    $functionalLiveVerifier -notmatch 'workerVersion' -or
+    $functionalLiveVerifier -notmatch 'zosApiAssemblyVersion' -or
+    $functionalLiveVerifier -notmatch 'zosApiFileVersion' -or
+    $functionalLiveVerifier -notmatch 'ConvertTo-Json' -or
+    $functionalLiveVerifier -notmatch 'workingCopy') {
+  throw "Functional live acceptance must use a temporary fixture copy, cover batch edit/readback, snapshot list/diff/restore, ray diagnostics, background-job correlation, real NSC/tolerancing execution, structured result checks, and emit a JSON report."
 }
 $listIndex = $liveVerifier.IndexOf('Invoke-ModernMcpRequest -Method "tools/list"', [StringComparison]::Ordinal)
 $healthIndex = $liveVerifier.IndexOf('$health = Get-McpHealth', [StringComparison]::Ordinal)

@@ -342,6 +342,71 @@ public class ZemaxSession : IZemaxSession
             }, cancellationToken);
     }
 
+    public async Task<string> RestoreSnapshotAsync(string snapshotPath, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(snapshotPath))
+            throw new ArgumentException("Snapshot path is required.", nameof(snapshotPath));
+
+        var fullSnapshotPath = Path.GetFullPath(snapshotPath);
+        if (!File.Exists(fullSnapshotPath))
+            throw new FileNotFoundException("Snapshot file does not exist.", fullSnapshotPath);
+
+        return await ExecuteAsync(
+            "RestoreSnapshot",
+            new Dictionary<string, object?> { ["SnapshotFileName"] = Path.GetFileName(fullSnapshotPath) },
+            system =>
+            {
+                var restoredDirectory = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "ZemaxMCP",
+                    "restored");
+                Directory.CreateDirectory(restoredDirectory);
+
+                var extension = Path.GetExtension(fullSnapshotPath);
+                var baseName = Path.GetFileNameWithoutExtension(fullSnapshotPath);
+                var workingPath = Path.Combine(
+                    restoredDirectory,
+                    DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff", System.Globalization.CultureInfo.InvariantCulture) +
+                    "_" + baseName + "_restored" + extension);
+
+                File.Copy(fullSnapshotPath, workingPath, overwrite: false);
+                try
+                {
+                    if (!system.LoadFile(workingPath, false))
+                        throw new IOException("OpticStudio did not load the restored working copy.");
+
+                    CurrentFilePath = workingPath;
+                    PruneRestoredWorkingCopies(restoredDirectory, workingPath);
+                    _logger.LogInformation("Restored safety snapshot into working copy: {WorkingPath}", workingPath);
+                    return workingPath;
+                }
+                catch
+                {
+                    try { if (File.Exists(workingPath)) File.Delete(workingPath); } catch { }
+                    throw;
+                }
+            },
+            cancellationToken);
+    }
+
+    private static void PruneRestoredWorkingCopies(string directory, string currentWorkingPath)
+    {
+        try
+        {
+            foreach (var file in new DirectoryInfo(directory).GetFiles()
+                         .Where(file => !string.Equals(file.FullName, currentWorkingPath, StringComparison.OrdinalIgnoreCase))
+                         .OrderByDescending(file => file.LastWriteTimeUtc)
+                         .Skip(24))
+            {
+                file.Delete();
+            }
+        }
+        catch
+        {
+            // Retention cleanup must not invalidate a successful restore.
+        }
+    }
+
     public async Task<bool> NewSystemAsync(CancellationToken cancellationToken = default)
     {
         return await ExecuteAsync(

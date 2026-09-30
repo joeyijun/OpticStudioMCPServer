@@ -14,9 +14,13 @@ foreach ($path in $launcherExe, $installerExe, $proxyExe, $hostDll, $updaterExe)
 $launcherXaml = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Launcher\MainWindow.xaml")
 $launcherCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Launcher\MainWindow.xaml.cs")
 $proxyCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.ClientProxy\Program.cs")
+$installerCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Installer\MainWindow.xaml.cs")
+$portableInstall = Get-Content -Raw (Join-Path $root "installer\Portable-Install.cmd")
 $solution = Get-Content -Raw (Join-Path $root "OpticStudioMCPServer.sln")
 $architectureDoc = Join-Path $root "docs\ARCHITECTURE.md"
-foreach ($marker in 'AiStateDot', 'Choose folder', 'Content="Start"', 'Content="Stop"', 'Copy secure setup', 'x:Name="ToolsetProfile"') {
+$releaseWorkflow = Get-Content -Raw (Join-Path $root ".github\workflows\release.yml")
+$publishReleaseWorkflow = Get-Content -Raw (Join-Path $root ".github\workflows\publish-release.yml")
+foreach ($marker in 'AiStateDot', 'Content="Browse…"', 'Click="ChooseZemaxFolder_Click"', 'Content="Start"', 'Content="Stop"', 'Copy secure setup', 'x:Name="ToolsetProfile"') {
   if ($launcherXaml -notmatch [regex]::Escape($marker)) { throw "The desktop UI contract is missing: $marker" }
 }
 if ($launcherCode -notmatch '"Host", "ZemaxMCP\.Host\.exe"' -or
@@ -27,6 +31,13 @@ if ($launcherCode -notmatch '"Host", "ZemaxMCP\.Host\.exe"' -or
 }
 if ($proxyCode -notmatch 'X-Zemax-MCP-Client-Instance' -or $proxyCode -notmatch 'Guid\.NewGuid') {
   throw "The packaged stdio proxy must emit a distinct per-process MCP client instance identity."
+}
+if ($installerCode -notmatch 'RunUpdater\(source, target\)' -or
+    $installerCode -notmatch 'CopyInitialInstall' -or
+    $portableInstall -notmatch 'ZemaxMCP\.Updater\.exe' -or
+    $portableInstall -notmatch 'goto launch_installed' -or
+    $portableInstall -notmatch 'portable mode') {
+  throw "GUI and portable installation flows must reuse the updater for existing installs and make portable fallback explicit."
 }
 if ($solution -notmatch '= "ZemaxMCP\.Host", "src\\ZemaxMCP\.HttpBridge' -or
     $solution -notmatch '= "Runtime", "Runtime"' -or
@@ -42,4 +53,10 @@ if ($publish -notmatch 'dotnet publish.*--self-contained true' -or
     $publish -notmatch 'ZOSAPI\*\.dll') {
   throw "The portable package must contain a self-contained Host and no redistributed ZOS-API DLLs."
 }
-Write-Host "Desktop component, client identity, project organization, and self-contained Host packaging verification passed."
+if ($releaseWorkflow -notmatch 'test-launcher-materials\.ps1' -or
+    $publishReleaseWorkflow -notmatch 'actions:\s*read' -or
+    $publishReleaseWorkflow -notmatch 'head_sha=\$sha' -or
+    $publishReleaseWorkflow -notmatch 'Release signing is blocked') {
+  throw "Release workflows must smoke-test the current launcher UI and refuse signing without successful CI at the exact tagged commit."
+}
+Write-Host "Desktop component, release-gate, client identity, project organization, and self-contained Host packaging verification passed."

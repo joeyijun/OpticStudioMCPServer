@@ -14,6 +14,7 @@ internal static class Program
     public static int Main(string[] args)
     {
         string? backup = null;
+        var cleanupBackup = false;
         try
         {
             var options = Parse(args);
@@ -34,21 +35,33 @@ internal static class Program
             {
                 ClearDirectory(options.Install, preserveRuntimeData: true);
                 CopyDirectory(options.Staging, options.Install, skipRuntimeData: true,
-                    excludedNames: new[] { "release.zip", "release-manifest.json" });
+                    excludedNames: new[] { "release.zip", "release-manifest.json", "Install.exe", "Portable-Install.cmd" });
                 var launcher = Path.Combine(options.Install, "Start-Zemax-MCP.exe");
                 if (!File.Exists(launcher)) throw new FileNotFoundException("Updated launcher is missing.", launcher);
+                cleanupBackup = true;
                 Log("Update installed successfully.");
                 if (options.Restart) Process.Start(new ProcessStartInfo(launcher) { UseShellExecute = true });
                 return 0;
             }
-            catch
+            catch (Exception updateError)
             {
                 Log("Update failed; restoring the previous installation.");
-                ClearDirectory(options.Install, preserveRuntimeData: true);
-                CopyDirectory(backup, options.Install, skipRuntimeData: false);
-                var launcher = Path.Combine(options.Install, "Start-Zemax-MCP.exe");
-                if (options.Restart && File.Exists(launcher)) Process.Start(new ProcessStartInfo(launcher) { UseShellExecute = true });
-                throw;
+                try
+                {
+                    ClearDirectory(options.Install, preserveRuntimeData: true);
+                    CopyDirectory(backup, options.Install, skipRuntimeData: false);
+                    cleanupBackup = true;
+                    var launcher = Path.Combine(options.Install, "Start-Zemax-MCP.exe");
+                    if (options.Restart && File.Exists(launcher)) Process.Start(new ProcessStartInfo(launcher) { UseShellExecute = true });
+                    throw;
+                }
+                catch (Exception rollbackError) when (!ReferenceEquals(rollbackError, updateError))
+                {
+                    cleanupBackup = false;
+                    var recovery = $"Automatic rollback also failed. The previous installation backup has been preserved at '{backup}'.";
+                    Log(recovery + " Rollback error: " + rollbackError);
+                    throw new AggregateException(recovery, updateError, rollbackError);
+                }
             }
         }
         catch (Exception ex)
@@ -58,7 +71,12 @@ internal static class Program
         }
         finally
         {
-            try { if (!string.IsNullOrWhiteSpace(backup) && Directory.Exists(backup)) Directory.Delete(backup, true); } catch { }
+            try
+            {
+                if (cleanupBackup && !string.IsNullOrWhiteSpace(backup) && Directory.Exists(backup))
+                    Directory.Delete(backup, true);
+            }
+            catch { }
         }
     }
 

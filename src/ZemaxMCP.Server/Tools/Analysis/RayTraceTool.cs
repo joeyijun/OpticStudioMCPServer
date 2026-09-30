@@ -53,6 +53,7 @@ public class RayTraceTool
                 if (wavelength > wavelengthCount)
                     throw new ArgumentOutOfRangeException(nameof(wavelength), $"Wavelength must be between 1 and {wavelengthCount}.");
 
+                var calculateOpd = surf == lastSurface;
                 var batchRay = system.Tools.OpenBatchRayTrace();
                 if (batchRay == null)
                     throw new InvalidOperationException("OpticStudio did not open Batch Ray Trace.");
@@ -91,6 +92,10 @@ public class RayTraceTool
             }, cancellationToken);
 
             return result;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {

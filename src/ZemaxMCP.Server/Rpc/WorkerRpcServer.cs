@@ -22,7 +22,8 @@ internal sealed class WorkerRpcServer
     private readonly SemaphoreSlim _executionGate = new(1, 1);
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly SemaphoreSlim _eventSignal = new(0);
-    private readonly ConcurrentQueue<ZemaxRpcEnvelope> _events = new();
+    private readonly ConcurrentDictionary<string, ZemaxRpcEnvelope> _coalescedProgress = new(StringComparer.Ordinal);
+    private readonly ConcurrentQueue<ZemaxRpcEnvelope> _snapshotEvents = new();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _operations = new(StringComparer.Ordinal);
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -131,11 +132,13 @@ internal sealed class WorkerRpcServer
             await _executionGate.WaitAsync(operation.Token).ConfigureAwait(false);
             try
             {
+                using var parentOperation = McpJobManager.PushParentOperation(message.OperationId);
                 var result = await _tools.InvokeAsync(invocation.Command, invocation.Arguments, operation.Token).ConfigureAwait(false);
+                var resultJson = JsonSerializer.SerializeToElement(result, _jsonOptions);
                 await WriteResultAsync(writer, message.RequestId, message.OperationId, new
                 {
-                    content = new[] { new { type = "text", text = JsonSerializer.Serialize(result, _jsonOptions) } },
-                    isError = false
+                    content = new[] { new { type = "text", text = resultJson.GetRawText() } },
+                    isError = IsExplicitToolFailure(resultJson)
                 }).ConfigureAwait(false);
             }
             finally { _executionGate.Release(); }
@@ -143,18 +146,34 @@ internal sealed class WorkerRpcServer
         finally { _operations.TryRemove(message.OperationId, out _); }
     }
 
+    internal static bool IsExplicitToolFailure(JsonElement result)
+    {
+        return result.ValueKind == JsonValueKind.Object &&
+               result.TryGetProperty("success", out var success) &&
+               success.ValueKind == JsonValueKind.False;
+    }
+
     private WorkerStatus CreateStatus()
     {
         var session = _services.GetRequiredService<IZemaxSession>();
         var jobs = _services.GetRequiredService<McpJobManager>();
+        var workerAssembly = typeof(WorkerRpcServer).Assembly;
+        var zosAssembly = typeof(ZOSAPI.ZOSAPI_Connection).Assembly;
+        var zosLocation = zosAssembly.Location;
+        string? zosFileVersion = null;
+        try { zosFileVersion = System.Diagnostics.FileVersionInfo.GetVersionInfo(zosLocation).FileVersion; } catch { }
+
         return new WorkerStatus
         {
             RpcVersion = ZemaxRpcProtocol.Version,
             ManifestFingerprint = StaticToolManifest.ContractFingerprint,
             ZosApiLoaded = true,
+            WorkerVersion = workerAssembly.GetName().Version?.ToString() ?? "unknown",
+            ZosApiAssemblyVersion = zosAssembly.GetName().Version?.ToString(),
+            ZosApiFileVersion = zosFileVersion,
             Connected = session.IsConnected,
             ConnectionMode = session.CurrentMode?.ToString() ?? "not-connected",
-            ZosApiAssembly = typeof(ZOSAPI.ZOSAPI_Connection).Assembly.Location,
+            ZosApiAssembly = zosLocation,
             OpticStudioDataDirectory = session.ZemaxDataDir,
             CurrentLicenseStatus = session.CurrentLicenseStatus,
             LastLicenseStatus = session.LastLicenseStatus,
@@ -170,6 +189,7 @@ internal sealed class WorkerRpcServer
     {
         JobId = job.JobId,
         ToolName = job.ToolName,
+        ParentOperationId = job.ParentOperationId,
         State = job.State.ToString(),
         Fraction = job.Progress,
         QueuePosition = job.QueuePosition,
@@ -178,26 +198,34 @@ internal sealed class WorkerRpcServer
 
     private void EnqueueProgress(WorkerJobStatus job)
     {
-        _events.Enqueue(new ZemaxRpcEnvelope
+        var message = new ZemaxRpcEnvelope
         {
             Kind = ZemaxRpcProtocol.Progress,
             OperationId = job.JobId,
             Payload = JsonSerializer.SerializeToElement(new OperationProgress
             {
                 OperationId = job.JobId,
+                ParentOperationId = job.ParentOperationId,
                 ToolName = job.ToolName,
                 Fraction = job.Fraction,
                 QueuePosition = job.QueuePosition,
                 State = job.State,
                 Message = job.Message
             }, _jsonOptions)
-        });
-        _eventSignal.Release();
+        };
+
+        // Background optimizers can publish progress very quickly while the
+        // Host or MCP client is slow. Keep only the newest state per job so
+        // memory usage scales with active jobs, not with update frequency.
+        if (_coalescedProgress.TryAdd(job.JobId, message))
+            _eventSignal.Release();
+        else
+            _coalescedProgress[job.JobId] = message;
     }
 
     private void EnqueueSnapshot(string path)
     {
-        _events.Enqueue(new ZemaxRpcEnvelope
+        _snapshotEvents.Enqueue(new ZemaxRpcEnvelope
         {
             Kind = ZemaxRpcProtocol.SnapshotCreated,
             Payload = JsonSerializer.SerializeToElement(new SnapshotCreatedEvent { Path = path }, _jsonOptions)
@@ -210,8 +238,15 @@ internal sealed class WorkerRpcServer
         while (!cancellationToken.IsCancellationRequested)
         {
             await _eventSignal.WaitAsync(cancellationToken).ConfigureAwait(false);
-            while (_events.TryDequeue(out var message))
-                await WriteAsync(writer, message).ConfigureAwait(false);
+
+            // Snapshot notifications represent durable safety artifacts and are
+            // never coalesced. Progress is latest-state data and can be merged.
+            while (_snapshotEvents.TryDequeue(out var snapshot))
+                await WriteAsync(writer, snapshot).ConfigureAwait(false);
+
+            foreach (var operationId in _coalescedProgress.Keys)
+                if (_coalescedProgress.TryRemove(operationId, out var progress))
+                    await WriteAsync(writer, progress).ConfigureAwait(false);
         }
     }
 

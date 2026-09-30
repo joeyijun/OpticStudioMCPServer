@@ -49,7 +49,11 @@ public class SaveFileTool
             {
                 _constraintStore.SaveToFile(savedPath);
             }
-            catch (Exception ex)
+            catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
             {
                 warnings.Add("The Zemax lens file was saved successfully, but the optimization-constraint sidecar could not be saved: " + ex.Message);
             }
