@@ -55,4 +55,15 @@ $env:ZEMAX_MCP_TOKEN = "paste-the-token-from-copy-secure-setup"
 ./scripts/verify-live-mcp.ps1 -Endpoint "http://192.168.8.1:8000/mcp" -VerifySafety
 ```
 
-The safety check reads the current title/author/notes and requests those same values. In read-only mode it verifies that the request is blocked before ZOS-API mutation; in read/write mode it verifies that the Host reports a newly created `.zos` snapshot before the no-op assignment. It never saves or intentionally changes the current optical system.
+The safety check reads the current title/author/notes and requests those same values. In read-only mode it verifies that the request is blocked before ZOS-API mutation; in read/write mode it verifies that the Host reports a newly created cross-version `.zmx` snapshot before the no-op assignment. It never saves or intentionally changes the current optical system.
+
+For deeper licensed-machine acceptance, supply a disposable lens fixture. The functional verifier first copies it to a temporary working file, then performs real edit/readback checks and writes a JSON report:
+
+```powershell
+./scripts/verify-live-functional.ps1 `
+  -FixturePath "C:\ZemaxValidation\sequential-fixture.zmx" `
+  -VerifyOptimization `
+  -VerifyBackgroundJobs
+```
+
+Use a purpose-built non-sequential fixture with `-VerifyNsc`, or a tolerance fixture with `-VerifyTolerance`.
