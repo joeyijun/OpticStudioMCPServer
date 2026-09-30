@@ -155,14 +155,22 @@ try {
     } | Out-Null
 
     Invoke-Check "read-system-baseline" {
-        if ("zemax_get_system" -notin $script:tools) { throw "Active profile does not expose zemax_get_system." }
-        $system = Get-ToolPayload (Invoke-Tool "zemax_get_system")
-        $script:systemMode = [string]$system.systemMode
-        $script:surfaceCountBefore = [int]$system.numberOfSurfaces
-        "mode=$($script:systemMode), surfaces=$($script:surfaceCountBefore)"
+        if ("zemax_get_system" -in $script:tools) {
+            $system = Get-ToolPayload (Invoke-Tool "zemax_get_system")
+            $script:systemMode = [string]$system.systemMode
+            $script:surfaceCountBefore = [int]$system.numberOfSurfaces
+            return "mode=$($script:systemMode), surfaces=$($script:surfaceCountBefore)"
+        }
+        if ("zemax_get_nonsequential_system_settings" -in $script:tools) {
+            $nscSettings = Get-ToolPayload (Invoke-Tool "zemax_get_nonsequential_system_settings")
+            $script:systemMode = [string]$nscSettings.systemMode
+            $script:surfaceCountBefore = 0
+            return "mode=$($script:systemMode), NSC-focused profile"
+        }
+        throw "Active profile exposes neither zemax_get_system nor zemax_get_nonsequential_system_settings."
     } | Out-Null
 
-    if ($systemMode -notmatch "NonSequential") {
+    if ($systemMode -notmatch "NonSequential" -and "zemax_get_system" -in $tools) {
         $script:addedSurface = 0
         $mutationTools = @("zemax_add_surface", "zemax_set_surface", "zemax_remove_surface")
         $missingMutation = @($mutationTools | Where-Object { $_ -notin $tools })
@@ -257,7 +265,7 @@ try {
 
     Invoke-Check "save-temp-fixture" {
         if ("zemax_save_file" -notin $tools) { throw "Active profile does not expose zemax_save_file." }
-        $saved = Get-ToolPayload (Invoke-Tool "zemax_save_file" @{ filePath = $workingCopy })
+        $saved = Get-ToolPayload (Invoke-Tool "zemax_save_file")
         if (-not (Test-Path -LiteralPath ([string]$saved.filePath))) { throw "SaveFile did not produce a file." }
         [string]$saved.filePath
     } | Out-Null
