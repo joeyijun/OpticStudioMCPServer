@@ -96,6 +96,12 @@ The Host pipe reader only parses and routes frames. It records snapshot creation
 
 Background jobs that outlive the original MCP request remain observable through job/status state. Queue length, metadata history, and large result-payload history have separate bounds. Cancellation has an independent drain deadline; if a cancelled ZOS-API job cannot stop within that grace period, the Worker generation is terminated so the Host can start cleanly.
 
+## Long-running optical tools
+
+Long-running NSC tracing and sequential tolerancing use the same bounded Worker Job lifecycle as optimization. The synchronous implementation owns the ZOS-API tool, polls through `ISystemTool.WaitWithTimeout`, cooperatively cancels and drains on caller cancellation/timeout, and always closes the tool before the next COM operation. Background mode wraps that same implementation in `McpJobManager`; it does not create a second execution path.
+
+Tolerancing result extraction is structured rather than text-parser-first: the Worker requests a temporary ZTD data-retention file, closes Tolerancing, opens the official Tolerance Data Viewer, reads Monte Carlo column metadata/statistics and Sensitivity data, then deletes the temporary ZTD. Monte Carlo lens files are explicitly disabled.
+
 ## Client identity and control lease
 
 OpticStudio ownership is independent of MCP transport sessions. An owned background Job keeps the control lease alive beyond the normal idle timeout and is bound to the Worker generation that created it; terminal Job state or generation replacement releases the hold. Identity is resolved in this order:
