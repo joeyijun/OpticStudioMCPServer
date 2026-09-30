@@ -60,6 +60,7 @@ public static class ToolsetCatalog
         ["zemax_add_configuration_operand"] = "sequential-editing",
         ["zemax_add_operand"] = "optimization",
         ["zemax_add_surface"] = "sequential-editing",
+        ["zemax_batch_set_surfaces"] = "sequential-editing",
         ["zemax_aperture_throughput"] = "analysis",
         ["zemax_cardinal_points"] = "analysis",
         ["zemax_chromatic_focal_shift"] = "analysis",
@@ -214,7 +215,7 @@ public static class ToolsetCatalog
 
     private static readonly HashSet<string> HighImpactTools = new HashSet<string>(StringComparer.Ordinal)
     {
-        "zemax_add_configuration_operand", "zemax_add_operand", "zemax_add_surface", "zemax_clear_vignetting", "zemax_constrained_optimize",
+        "zemax_add_configuration_operand", "zemax_add_operand", "zemax_add_surface", "zemax_batch_set_surfaces", "zemax_clear_vignetting", "zemax_constrained_optimize",
         "zemax_delete_configuration_operand", "zemax_export_analysis", "zemax_export_glass_catalog", "zemax_forbes_merit_function", "zemax_global_search",
         "zemax_hammer", "zemax_load_merit_function_file", "zemax_multistart_optimize", "zemax_new_system", "zemax_optimization_wizard", "zemax_optimize",
         "zemax_pop", "zemax_quick_focus", "zemax_remove_operand", "zemax_remove_surface", "zemax_save_file", "zemax_save_merit_function_file", "zemax_scale_lens",
@@ -254,7 +255,7 @@ public static class ToolsetCatalog
                 "zemax_get_wavelength_settings", "zemax_get_stop_surface", "zemax_get_first_order_data",
                 "zemax_get_surface", "zemax_get_aspheric_surface", "zemax_get_surface_aperture",
                 "zemax_get_surface_solves", "zemax_get_extra_data", "zemax_get_global_matrix", "zemax_get_vignetting",
-                "zemax_add_surface", "zemax_remove_surface", "zemax_set_surface", "zemax_set_surface_type",
+                "zemax_add_surface", "zemax_batch_set_surfaces", "zemax_remove_surface", "zemax_set_surface", "zemax_set_surface_type",
                 "zemax_set_surface_parameter", "zemax_set_surface_solve", "zemax_set_surface_aperture",
                 "zemax_set_aspheric_surface", "zemax_set_extra_data", "zemax_set_fields", "zemax_set_wavelengths",
                 "zemax_set_stop_surface", "zemax_set_number_of_fields", "zemax_set_number_of_wavelengths",
@@ -283,7 +284,7 @@ public static class ToolsetCatalog
                 "zemax_get_environment", "zemax_get_units", "zemax_get_field_settings", "zemax_get_wavelength_settings",
                 "zemax_get_stop_surface", "zemax_get_first_order_data", "zemax_get_surface",
                 "zemax_get_configuration", "zemax_get_configuration_operands", "zemax_get_surface_solves",
-                "zemax_set_surface", "zemax_set_surface_solve", "zemax_set_fields", "zemax_set_wavelengths",
+                "zemax_batch_set_surfaces", "zemax_set_surface", "zemax_set_surface_solve", "zemax_set_fields", "zemax_set_wavelengths",
                 "zemax_set_stop_surface", "zemax_set_current_configuration",
                 "zemax_get_merit_function", "zemax_get_variables", "zemax_add_operand", "zemax_remove_operand",
                 "zemax_operand_help", "zemax_search_operands", "zemax_optimization_wizard", "zemax_optimize",
