@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Session;
 using ZOSAPI;
+using ZOSAPI.Editors.NCE;
 
 namespace ZemaxMCP.Server.Tools.NonSequential;
 
@@ -28,7 +29,20 @@ public sealed class GetNscDetectorTool
         int RoiStartRow = 0,
         int RoiStartColumn = 0,
         double[][]? RoiPixels = null,
-        string? FluxUnit = null);
+        string? FluxUnit = null,
+        double? PixelPitchX = null,
+        double? PixelPitchY = null,
+        double? PixelArea = null,
+        string? PositionUnit = null,
+        string? PixelOrientation = null,
+        double? RoiFluxSum = null,
+        double? RoiFluxIntegral = null,
+        double? RoiFractionOfDetectorFlux = null,
+        double? LaunchedFlux = null,
+        double? RoiFractionOfLaunchedFlux = null,
+        double? TotalDetectorFractionOfLaunchedFlux = null,
+        double? MissedRayCount = null,
+        string? NormalizationCaveat = null);
 
     [ZemaxTool(Name = "zemax_get_nsc_detector")]
     [Description("Read NSC detector dimensions, total incident flux, ray hits and optionally a bounded ROI flux/irradiance pixel matrix. Pixel values are native OpticStudio data (not automatically power-normalized). Use after tracing and verify source-power units.")]
@@ -40,11 +54,13 @@ public sealed class GetNscDetectorTool
         [Description("ROI start column, 0-based in detector's native column ordering.")] int startColumn = 0,
         [Description("ROI height; 0 = remaining detector rows.")] int rowCount = 0,
         [Description("ROI width; 0 = remaining detector columns.")] int columnCount = 0,
+        [Description("Optional positive launched source flux from the SAME ray trace in the detector's native flux units; used only to calculate explicitly normalized ratios.")] double? launchedFlux = null,
         CancellationToken cancellationToken = default)
     {
         if (objectNumber < 1)
             return new Result(false, "objectNumber must be at least 1.", objectNumber, null, null, 0, 0, 0, null);
-        if (dataType is not (0 or 1) || startRow < 0 || startColumn < 0 || rowCount < 0 || columnCount < 0)
+        if (dataType is not (0 or 1) || startRow < 0 || startColumn < 0 || rowCount < 0 || columnCount < 0 ||
+            (launchedFlux.HasValue && (launchedFlux.Value <= 0 || double.IsNaN(launchedFlux.Value) || double.IsInfinity(launchedFlux.Value))))
             return new Result(false, "dataType must be 0/1 and ROI coordinates/sizes cannot be negative.", objectNumber, null, null, 0, 0, 0, null);
 
         try
@@ -112,7 +128,37 @@ public sealed class GetNscDetectorTool
                         objectNumber, row.TypeName, row.Comment, columns, rows,
                         totalPixels, row.TypeData.DetectorShowAs.ToString());
 
+                // Only a rectangular detector has a simple, defensible
+                // constant pixel area and orientation. Other detector classes
+                // retain an explicit "unknown" scale, not a guessed spacing.
+                double? pitchX = null, pitchY = null, pixelArea = null;
+                string? orientation = null;
+                if (row.Type == ObjectType.DetectorRectangle &&
+                    row.ObjectData is IObjectDetectorRectangle rect)
+                {
+                    var nx = rect.NumberXPixels;
+                    var ny = rect.NumberYPixels;
+                    if (nx > 0 && ny > 0 && (ulong)nx * (ulong)ny == totalPixels &&
+                        rect.XHalfWidth > 0 && rect.YHalfWidth > 0 &&
+                        !double.IsNaN(rect.XHalfWidth) && !double.IsInfinity(rect.XHalfWidth) &&
+                        !double.IsNaN(rect.YHalfWidth) && !double.IsInfinity(rect.YHalfWidth))
+                    {
+                        // GetDetectorDimensions is not consistently documented
+                        // as X/Y vs row/column order between ZOS releases.
+                        // Geometry and linear index follow the explicit detector
+                        // object (#X pixels, #Y pixels), not an inferred swap.
+                        columns = (uint)nx;
+                        rows = (uint)ny;
+                        pitchX = 2d * rect.XHalfWidth / nx;
+                        pitchY = 2d * rect.YHalfWidth / ny;
+                        pixelArea = pitchX * pitchY;
+                        orientation = "native lower-left (-X,-Y); +column is +X, +row is +Y; not screen-image orientation";
+                    }
+                }
+
                 double[][]? pixelGrid = null;
+                double? roiSum = null, roiIntegral = null, roiDetectorFraction = null,
+                    roiLaunchedFraction = null;
                 if (includePixels)
                 {
                     var height = rowCount == 0 ? (long)rows - startRow : rowCount;
@@ -138,6 +184,20 @@ public sealed class GetNscDetectorTool
                             pixelGrid[y][x] = value;
                         }
                     }
+                    roiSum = pixelGrid.Sum(line => line.Sum());
+                    // Flux-per-area integrates to flux only if a real, uniform
+                    // physical pixel area is known; volume dataType=1 is
+                    // absorbed flux and is NOT area-weighted.
+                    roiIntegral = dataType == 0 ||
+                        row.Type == ObjectType.DetectorVolume ? roiSum :
+                        pixelArea.HasValue ? roiSum * pixelArea.Value : null;
+                    if (roiIntegral.HasValue &&
+                        (double.IsNaN(roiIntegral.Value) || double.IsInfinity(roiIntegral.Value)))
+                        throw new InvalidOperationException("The ROI flux integral is non-finite.");
+                    if (roiIntegral.HasValue && totalFlux.HasValue && totalFlux.Value > 0)
+                        roiDetectorFraction = roiIntegral.Value / totalFlux.Value;
+                    if (roiIntegral.HasValue && launchedFlux.HasValue)
+                        roiLaunchedFraction = roiIntegral.Value / launchedFlux.Value;
                 }
 
                 return new Result(
@@ -145,8 +205,16 @@ public sealed class GetNscDetectorTool
                     columns, rows, totalPixels, row.TypeData.DetectorShowAs.ToString(),
                     totalFlux, rayHits,
                     includePixels ? (dataType == 0 ? "incident-flux" :
-                        row.Type == ZOSAPI.Editors.NCE.ObjectType.DetectorVolume ? "absorbed-flux" : "flux-per-area") : null,
-                    startRow, startColumn, pixelGrid, "OpticStudio native NSC source-flux units");
+                        row.Type == ObjectType.DetectorVolume ? "absorbed-flux" : "flux-per-area") : null,
+                    startRow, startColumn, pixelGrid, "OpticStudio native NSC source-flux units",
+                    pitchX, pitchY, pixelArea, pitchX.HasValue ? "lens units" : null,
+                    orientation, roiSum, roiIntegral, roiDetectorFraction,
+                    launchedFlux, roiLaunchedFraction,
+                    launchedFlux.HasValue && totalFlux.HasValue ? totalFlux.Value / launchedFlux.Value : null,
+                    null,
+                    "Detector hit counts may include repeated or split ray hits; total rays that missed the detector cannot be inferred from them. " +
+                    "ROI pixel summation is incoherent. source normalization requires identical units, sources and trace. " +
+                    "For non-rectangular detectors the exact pixel physical area and ROI flux-integral may be unavailable.");
             }, cancellationToken);
         }
         catch (OperationCanceledException)
