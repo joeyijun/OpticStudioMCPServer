@@ -34,6 +34,7 @@ internal static class Program
             await VerifyCancelledLeaseWaitAsync().ConfigureAwait(false);
             ScopedCredentialAssertions.Verify();
             VerifyJobOwnershipRegistry();
+            WorkerTaskLedgerAssertions.Verify();
             VerifyStrictArgumentBinding();
             await VerifyWriteGateCancellationClassificationAsync().ConfigureAwait(false);
             await VerifyContractMismatchRejectedAsync().ConfigureAwait(false);
@@ -43,7 +44,7 @@ internal static class Program
             await VerifyProgressEventDispatchAsync().ConfigureAwait(false);
             await VerifyMcpHttpToWorkerEndToEndAsync().ConfigureAwait(false);
             await VerifyScopedCredentialHttpAsync().ConfigureAwait(false);
-            Console.WriteLine("Private RPC v3 contract negotiation, recovery, event dispatch, static discovery, identity, Origin, and MCP HTTP E2E verification passed.");
+            Console.WriteLine("Private RPC v3 contract negotiation, recovery, Task ledger, event dispatch, static discovery, identity, Origin, and MCP HTTP E2E verification passed.");
             return 0;
         }
         catch (Exception ex)
