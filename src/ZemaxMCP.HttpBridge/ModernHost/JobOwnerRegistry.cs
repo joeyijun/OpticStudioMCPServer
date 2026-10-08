@@ -87,7 +87,8 @@ internal sealed class JobOwnerRegistry
         var args = original.Arguments == null
             ? new Dictionary<string, JsonElement>(StringComparer.Ordinal)
             : new Dictionary<string, JsonElement>(original.Arguments, StringComparer.Ordinal);
-        args["limit"] = JsonSerializer.SerializeToElement(128);
+        // Worker retains up to 128 terminal + 64 queued + 1 running Job.
+        args["limit"] = JsonSerializer.SerializeToElement(193);
         return new CallToolRequestParams
         {
             Name = original.Name,
