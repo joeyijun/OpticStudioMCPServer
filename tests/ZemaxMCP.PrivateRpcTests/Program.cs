@@ -32,6 +32,7 @@ internal static class Program
             VerifyOriginBoundary();
             await VerifyBackgroundJobLeaseRetentionAsync().ConfigureAwait(false);
             await VerifyCancelledLeaseWaitAsync().ConfigureAwait(false);
+            ScopedCredentialAssertions.Verify();
             VerifyStrictArgumentBinding();
             await VerifyWriteGateCancellationClassificationAsync().ConfigureAwait(false);
             await VerifyContractMismatchRejectedAsync().ConfigureAwait(false);
@@ -40,6 +41,7 @@ internal static class Program
             await VerifyClientCancellationRecoveryBarrierAsync().ConfigureAwait(false);
             await VerifyProgressEventDispatchAsync().ConfigureAwait(false);
             await VerifyMcpHttpToWorkerEndToEndAsync().ConfigureAwait(false);
+            await VerifyScopedCredentialHttpAsync().ConfigureAwait(false);
             Console.WriteLine("Private RPC v3 contract negotiation, recovery, event dispatch, static discovery, identity, Origin, and MCP HTTP E2E verification passed.");
             return 0;
         }
@@ -457,6 +459,117 @@ internal static class Program
             process.WaitForExit(3000);
             if (succeeded) try { Directory.Delete(testRoot, recursive: true); } catch { }
         }
+    }
+
+    private static async Task VerifyScopedCredentialHttpAsync()
+    {
+        var root = FindRepositoryRoot();
+        var host = Path.Combine(root, "src", "ZemaxMCP.HttpBridge", "bin", "Release", "net10.0-windows", "ZemaxMCP.Host.exe");
+        var worker = Environment.ProcessPath ?? throw new InvalidOperationException("Test executable path is unavailable.");
+        var port = ReserveLoopbackPort();
+        var testRoot = Path.Combine(Path.GetTempPath(), "ZemaxMCP-scoped-http-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(testRoot);
+        var file = Path.Combine(testRoot, "clients.json");
+        var workerLog = Path.Combine(testRoot, "fake-worker-started.txt");
+        const string reader = "reader-credential-e2e-test-01234567890123456789";
+        const string writer = "writer-credential-e2e-test-01234567890123456789";
+        ScopedCredentialAssertions.Write(file, ("reader", "read-only", reader), ("writer", "read-write", writer));
+        var startInfo = new ProcessStartInfo(host,
+            $"--worker \"{worker}\" --host 127.0.0.1 --port {port} --log-dir \"{testRoot}\" " +
+            $"--client-credentials-file \"{file}\" --allowed-host 127.0.0.1 --allowed-origin http://127.0.0.1:*")
+        {
+            UseShellExecute = false,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        startInfo.Environment.Remove("ZEMAX_MCP_TOKEN");
+        startInfo.Environment.Remove("ZEMAX_MCP_CLIENTS_FILE");
+        startInfo.Environment["ZEMAX_MCP_FAKE_WORKER_LOG"] = workerLog;
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start scoped Host E2E.");
+        var success = false;
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
+            var endpoint = new Uri($"http://127.0.0.1:{port}/mcp");
+            var deadline = DateTime.UtcNow.AddSeconds(15);
+            HttpResponseMessage? first = null;
+            while (DateTime.UtcNow < deadline && !process.HasExited)
+            {
+                try
+                {
+                    first = await SendScopedAsync(client, endpoint, 101, "tools/list", null, reader).ConfigureAwait(false);
+                    if (first.IsSuccessStatusCode) break;
+                    first.Dispose();
+                }
+                catch (HttpRequestException) { }
+                catch (TaskCanceledException) { }
+                await Task.Delay(100).ConfigureAwait(false);
+            }
+            if (first == null || !first.IsSuccessStatusCode)
+                throw new InvalidOperationException("Scoped Host did not accept an authenticated stateless tools/list.");
+            using (first)
+            {
+                var response = await ReadFirstMcpPayloadAsync(first).ConfigureAwait(false);
+                if (!response.Contains("zemax_get_system", StringComparison.Ordinal) ||
+                    response.Contains("zemax_open_file", StringComparison.Ordinal) ||
+                    response.Contains("zemax_set_surface", StringComparison.Ordinal) ||
+                    response.Contains("zemax_job_cancel", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Read-only scoped credential leaked a Caution or HighImpact command.");
+            }
+
+            using (var denied = await SendScopedAsync(client, endpoint, 102, "tools/call", "zemax_open_file", reader).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(denied).ConfigureAwait(false);
+                if (!body.Contains("does not permit", StringComparison.OrdinalIgnoreCase) ||
+                    !body.Contains("isError", StringComparison.OrdinalIgnoreCase) || File.Exists(workerLog))
+                    throw new InvalidOperationException("Scoped read-only call bypassed authorization before Worker startup.");
+            }
+
+            using (var list = await SendScopedAsync(client, endpoint, 103, "tools/list", null, writer).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(list).ConfigureAwait(false);
+                if (!list.IsSuccessStatusCode || !body.Contains("zemax_set_surface", StringComparison.Ordinal) ||
+                    !body.Contains("zemax_open_file", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Write credential could not discover its authorized tools.");
+            }
+
+            using (var run = await SendScopedAsync(client, endpoint, 104, "tools/call", "zemax_status", writer).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(run).ConfigureAwait(false);
+                if (!run.IsSuccessStatusCode || !body.Contains("echo-ok", StringComparison.Ordinal) ||
+                    !File.Exists(workerLog))
+                    throw new InvalidOperationException("Scoped writer did not reach the Worker.");
+            }
+
+            // Removing the reader revokes its bearer immediately. The Host
+            // must not cache stale auth decisions or silently fall back.
+            ScopedCredentialAssertions.Write(file, ("writer", "read-write", writer));
+            using (var revoked = await SendScopedAsync(client, endpoint, 105, "tools/list", null, reader).ConfigureAwait(false))
+                if (revoked.StatusCode != HttpStatusCode.Unauthorized)
+                    throw new InvalidOperationException("Revoked read-only credential was still accepted.");
+
+            File.WriteAllText(file, "{ malformed");
+            using (var malformed = await SendScopedAsync(client, endpoint, 106, "tools/list", null, writer).ConfigureAwait(false))
+                if (malformed.StatusCode != HttpStatusCode.ServiceUnavailable)
+                    throw new InvalidOperationException("Malformed live credential update did not fail closed.");
+
+            success = true;
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill();
+            process.WaitForExit(3000);
+            if (success) try { Directory.Delete(testRoot, recursive: true); } catch { }
+        }
+    }
+
+    private static Task<HttpResponseMessage> SendScopedAsync(
+        HttpClient client, Uri endpoint, int id, string method, string? toolName, string bearer)
+    {
+        var body = Build2026Body(id, method, toolName, "spoofable-client-name", "same-instance-id");
+        var request = Create2026Request(endpoint, body, method, toolName);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearer);
+        return client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
     }
 
     private static Task<HttpResponseMessage> Send2026ListToolsAsync(HttpClient client, Uri endpoint, int id, string clientName, string instanceId)
