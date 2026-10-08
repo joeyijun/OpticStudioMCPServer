@@ -68,6 +68,21 @@ internal static class StaticToolManifestAssertions
             if (!detectorSchema.TryGetProperty(field, out _))
                 throw new InvalidOperationException("Detector ROI tool is missing the published field " + field);
 
+        foreach (var pair in new[] {
+            (Name: "zemax_energy_budget", Domain: "analysis",
+                RequiredField: "gridSize"),
+            (Name: "zemax_ray_footprint", Domain: "analysis",
+                RequiredField: "maxPointsPerSurface")
+        })
+        {
+            var entry = StaticToolManifest.GetRequired(pair.Name);
+            if (entry.DomainId != pair.Domain || entry.Impact != "ReadOnly" ||
+                !StaticToolManifest.IsAllowed("sequential-design", pair.Name, readOnly: true) ||
+                StaticToolManifest.IsAllowed("nonsequential-stray-light", pair.Name, readOnly: false) ||
+                !entry.InputSchema.GetProperty("properties").TryGetProperty(pair.RequiredField, out _))
+                throw new InvalidOperationException("Engineering analysis tool schema/permission contract regressed: " + pair.Name);
+        }
+
         var snapshotList = StaticToolManifest.GetRequired("zemax_snapshot_list").InputSchema.GetProperty("properties");
         if (snapshotList.GetProperty("limit").GetProperty("default").GetInt32() != 25)
             throw new InvalidOperationException("Snapshot listing must preserve its bounded newest-first default.");
