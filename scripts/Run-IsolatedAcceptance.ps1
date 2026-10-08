@@ -1,12 +1,16 @@
 [CmdletBinding()]
 param(
-    [string]$PackageRoot = (Join-Path $PSScriptRoot 'runtime'),
+    [string]$PackageRoot = '',
     [string]$ZemaxRoot = '',
     [string]$SamplesRoot = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Zemax\Samples'),
     [switch]$AllowWorkerTermination,
     [switch]$PlanOnly
 )
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($PackageRoot)) {
+    # Windows PowerShell 5.1 -File does not reliably expose PSScriptRoot during parameter binding.
+    $PackageRoot = Join-Path $PSScriptRoot 'runtime'
+}
 $PackageRoot = (Resolve-Path -LiteralPath $PackageRoot).Path
 foreach ($file in @('Host\ZemaxMCP.Host.exe', 'ZemaxMCP.Worker.exe', 'VERSION.txt')) {
     if (-not (Test-Path -LiteralPath (Join-Path $PackageRoot $file) -PathType Leaf)) { throw "Missing package file: $file" }

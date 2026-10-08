@@ -13,6 +13,18 @@ try {
     $parameters=@{PackageRoot=(Join-Path $fixtureRoot 'package');ZemaxRoot=(Join-Path $fixtureRoot 'zemax');SamplesRoot=(Join-Path $fixtureRoot 'samples')}
     $plan=@(& (Join-Path $PSScriptRoot 'Run-IsolatedAcceptance.ps1') @parameters -PlanOnly)
     if ($plan.Count -ne 4 -or @($plan | Where-Object { -not $_.Name -or -not $_.Path }).Count) { throw 'Isolated fixture plan regressed.' }
+    $entryRoot = Join-Path $fixtureRoot 'entry with spaces'
+    [void][IO.Directory]::CreateDirectory($entryRoot)
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Run-IsolatedAcceptance.ps1') -Destination $entryRoot
+    Copy-Item -LiteralPath $parameters.PackageRoot -Destination (Join-Path $entryRoot 'runtime') -Recurse
+    # A fresh 5.1 process reproduces -File parameter binding; an in-process invocation masks it.
+    $entryOutput = @(& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile `
+        -ExecutionPolicy Bypass -File (Join-Path $entryRoot 'Run-IsolatedAcceptance.ps1') `
+        -ZemaxRoot $parameters.ZemaxRoot -SamplesRoot $parameters.SamplesRoot -PlanOnly 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw "PowerShell 5.1 default runtime entry failed: $entryOutput" }
+    foreach ($phase in $plan) {
+        if (($entryOutput | Out-String) -notmatch [regex]::Escape($phase.Name)) { throw "Missing entry phase: $($phase.Name)" }
+    }
     $rejected=$false
     try { & (Join-Path $PSScriptRoot 'Run-IsolatedAcceptance.ps1') @parameters | Out-Null }
     catch { if ($_.Exception.Message -match 'AllowWorkerTermination') {$rejected=$true} else {throw} }
@@ -36,4 +48,4 @@ try {
         Remove-Item -LiteralPath $resolved -Recurse -Force
     }
 }
-Write-Output 'Isolated acceptance planning, permission/process-ownership rejection and PowerShell syntax passed; no processes started.'
+Write-Output 'Isolated acceptance planning, Windows PowerShell 5.1 -File default runtime, permission/process-ownership rejection and syntax passed; no Host/Worker processes started.'
