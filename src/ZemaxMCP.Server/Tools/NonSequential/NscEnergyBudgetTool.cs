@@ -65,6 +65,9 @@ public sealed class NscEnergyBudgetTool
                         var row = nce.GetObjectAt(id) ?? throw new InvalidOperationException($"NSC object {id} is missing.");
                         if (!NscObjectClassification.IsDetector(row))
                             throw new InvalidOperationException($"NSC object {id} ({row.TypeName}) is not a detector.");
+                        if (row.Type is ZOSAPI.Editors.NCE.ObjectType.DetectorColor or
+                            ZOSAPI.Editors.NCE.ObjectType.DetectorPolar)
+                            throw new InvalidOperationException($"Color/polar detector {id} needs its dedicated detector API and cannot be used in the generic flux budget.");
                         if (!nce.GetDetectorData(id, 0, 0, out var flux) ||
                             !nce.GetDetectorData(id, -3, 0, out var hits) ||
                             double.IsNaN(flux) || double.IsInfinity(flux) ||
