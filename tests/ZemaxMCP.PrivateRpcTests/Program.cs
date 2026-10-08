@@ -193,7 +193,8 @@ internal static class Program
         catch (InvalidOperationException ex) when (ex.Message.Contains("currently leased", StringComparison.OrdinalIgnoreCase)) { }
 
         lease.ReleaseGeneration(7);
-        await Task.Delay(80).ConfigureAwait(false);
+        // Dead Worker generations must relinquish idle background ownership
+        // immediately, not after the fifteen-minute inactivity period.
         using var handedOff = await lease.AcquireAsync("client-b", "zemax_status", CancellationToken.None).ConfigureAwait(false);
     }
 
