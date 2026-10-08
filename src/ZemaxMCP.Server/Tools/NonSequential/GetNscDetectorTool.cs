@@ -35,7 +35,7 @@ public sealed class GetNscDetectorTool
     public async Task<Result> ExecuteAsync(
         [Description("NSC detector object number (1-indexed)")] int objectNumber,
         [Description("Read a pixel ROI as a 2D matrix (up to 4096 pixels). False returns detector summary only.")] bool includePixels = false,
-        [Description("Pixel data: 0 = incident flux per pixel, 1 = flux per area (irradiance).")] int dataType = 0,
+        [Description("Native NSC detector data: 0 = incident flux, 1 = flux/area for surface/rectangle detectors or absorbed flux for detector volumes.")] int dataType = 0,
         [Description("ROI start row, 0-based in detector's native row ordering.")] int startRow = 0,
         [Description("ROI start column, 0-based in detector's native column ordering.")] int startColumn = 0,
         [Description("ROI height; 0 = remaining detector rows.")] int rowCount = 0,
@@ -84,6 +84,11 @@ public sealed class GetNscDetectorTool
                         objectNumber, row.TypeName, row.Comment, columns, rows, totalPixels, row.TypeData.DetectorShowAs.ToString());
                 }
 
+                if (row.Type is ZOSAPI.Editors.NCE.ObjectType.DetectorColor or
+                    ZOSAPI.Editors.NCE.ObjectType.DetectorPolar)
+                    return new Result(false, "Color/polar detectors require their dedicated NSC detector-data API; generic flux pixels are not interpreted as irradiance.",
+                        objectNumber, row.TypeName, row.Comment, columns, rows, totalPixels, row.TypeData.DetectorShowAs.ToString());
+
                 // The official GetDetectorData pixel index starts at one.
                 // Index zero is a summary statistic, never pixel (0,0).
                 if (!nce.GetDetectorData(objectNumber, 0, 0, out var totalFlux) ||
@@ -125,7 +130,8 @@ public sealed class GetNscDetectorTool
                     true, null, objectNumber, row.TypeName, row.Comment,
                     columns, rows, totalPixels, row.TypeData.DetectorShowAs.ToString(),
                     totalFlux, rayHits,
-                    includePixels ? (dataType == 0 ? "incident-flux" : "flux-per-area") : null,
+                    includePixels ? (dataType == 0 ? "incident-flux" :
+                        row.Type == ZOSAPI.Editors.NCE.ObjectType.DetectorVolume ? "absorbed-flux" : "flux-per-area") : null,
                     startRow, startColumn, pixelGrid, "OpticStudio native NSC source-flux units");
             }, cancellationToken);
         }
