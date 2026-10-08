@@ -97,12 +97,16 @@ public sealed class GetNscDetectorTool
                 // and not an error for a dimensions-only request.
                 double? totalFlux = null;
                 double? rayHits = null;
-                if (nce.GetDetectorData(objectNumber, 0, 0, out var flux) &&
-                    !double.IsNaN(flux) && !double.IsInfinity(flux))
-                    totalFlux = flux;
-                if (nce.GetDetectorData(objectNumber, -3, 0, out var hits) &&
-                    !double.IsNaN(hits) && !double.IsInfinity(hits))
-                    rayHits = hits;
+                if (row.Type is not (ZOSAPI.Editors.NCE.ObjectType.DetectorColor or
+                    ZOSAPI.Editors.NCE.ObjectType.DetectorPolar))
+                {
+                    if (nce.GetDetectorData(objectNumber, 0, 0, out var flux) &&
+                        !double.IsNaN(flux) && !double.IsInfinity(flux))
+                        totalFlux = flux;
+                    if (nce.GetDetectorData(objectNumber, -3, 0, out var hits) &&
+                        !double.IsNaN(hits) && !double.IsInfinity(hits))
+                        rayHits = hits;
+                }
                 if (includePixels && (!totalFlux.HasValue || !rayHits.HasValue))
                     return new Result(false, "Trace the NSC system before requesting pixel data; flux/hit statistics are unavailable.",
                         objectNumber, row.TypeName, row.Comment, columns, rows,
