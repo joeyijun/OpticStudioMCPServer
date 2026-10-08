@@ -49,8 +49,16 @@ if ($packages -notmatch 'ModelContextProtocol\.AspNetCore" Version="2\.1\.0"' -o
   throw "The Host SDK and build-time manifest generator dependencies must remain pinned to verified stable versions."
 }
 if ($hostSource -notmatch 'MapMcp\(' -or $hostSource -notmatch 'WithHttpTransport' -or
-    $hostSource -match 'HttpListener|JsonRpcRequest') {
+    $hostSource -match 'HttpListener|JsonDocument\.Parse\(context\.Request\.Body') {
   throw "The Host must use the official ASP.NET Core MCP transport rather than a hand-written HTTP/JSON-RPC dispatcher."
+}
+$tasksAdapterSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\OfficialTasksAdapter.cs")
+if ($hostSource -notmatch 'Configure<ModelContextProtocol.Server.McpServerOptions>\(adapter.Configure\)' -or
+    $tasksAdapterSource -notmatch 'CallToolWithAlternateHandler' -or
+    $tasksAdapterSource -notmatch 'McpServerRequestHandler' -or
+    $tasksAdapterSource -match 'HttpListener|HttpContext.Response.WriteAsync' -or
+    $hostSource -match '\.WithTasks\(') {
+  throw "The optional Tasks adapter must use official SDK extension handlers, not a custom MCP transport or WithTasks auto-wrapping."
 }
 if ($hostSource -notmatch 'toolset = options\.Toolset') {
   throw "Structured Host health must report the active toolset so live release verification can interpret the policy-visible catalogue."
