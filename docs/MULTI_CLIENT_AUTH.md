@@ -47,4 +47,12 @@ To revoke a client, remove its entry from the JSON file. To rotate, replace the 
 
 A token identifies the client, not the arbitrary `clientInfo` name it sends. Different tokens cannot impersonate each other's control lease by spoofing the same name or instance ID.
 
+## Job ownership and diagnostics
+
+In scoped mode, every newly created background Job is registered against its authenticated credential ID and the active Worker generation. `zemax_job_status` and `zemax_job_cancel` reject IDs not owned by the caller; `zemax_job_list` returns only the caller's records and strips foreign result payloads. Task ownership continues to apply to completed Job history (subject to bounded retention), and a Worker-generation replacement invalidates old Job handles.
+
+The older process-global `zemax_multistart_status` / `zemax_multistart_stop` APIs are hidden and blocked in scoped mode because they lack an owner/Job ID; use `zemax_job_status` / `zemax_job_cancel` instead. In scoped deployments `/mcp/health` and `/mcp/activity` return only a redacted heartbeat and the calling credential's role, never a global Job/operation list. Full legacy diagnostic responses remain available in single-user and shared-token modes.
+
+These checks are implemented in the Host before invoking Worker RPC for direct Job status/cancel and after a Worker list response for result filtering. A non-owner cannot force Job cancellation by guessing an ID. A revoked client's already running COM task is **not** automatically terminated; it remains subject to its normal cancellation/timeout/recovery lifecycle.
+
 **Scope:** This provides per-client authentication, strict mutation authorization, lease ownership, and revocation. It does **not** yet provide confidential per-client partitions of historical Job results, health diagnostics, or optical files, and revocation does not abort a running ZOS-API operation. Do not expose one Host to mutually untrusted tenants; use separate OpticStudio processes / Hosts for that level of isolation.
