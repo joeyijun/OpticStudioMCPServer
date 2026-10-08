@@ -36,6 +36,7 @@ payloads. New result fields and new tools should follow these rules.
   and polar detectors require dedicated API calls rather than generic flux
   decoding. These values are not interchangeable or guaranteed to be a
   visually upright heatmap.
+- Dimensions-only inspection stays valid when a newly opened detector has not been traced: unavailable summary power/hits are **null**, never invented as zero or used as an efficiency measurement.
 - One response contains at most **4096 pixels**. Larger images require
   multiple explicit, non-overlapping ROIs; never truncate silently.
 - `zemax_nsc_energy_budget` reports incident flux for **individual** detector
