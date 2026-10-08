@@ -76,7 +76,7 @@ internal static class Program
             },
             IsError = false
         };
-        var filtered = JobOwnerRegistry.FilterList(mixed, "scoped:a", 7, registry);
+        var filtered = JobOwnerRegistry.FilterList(mixed, "scoped:a", 7, registry, 1);
         var text = (filtered.Content.Single() as TextContentBlock)?.Text ?? string.Empty;
         if (filtered.IsError == true || !text.Contains("client-a-private", StringComparison.Ordinal) ||
             text.Contains("client-b-private", StringComparison.Ordinal) ||
@@ -88,7 +88,7 @@ internal static class Program
             Content = new List<ContentBlock> { new TextContentBlock { Text = "{\"unexpected\":true}" } },
             IsError = false
         };
-        if (JobOwnerRegistry.FilterList(invalid, "scoped:a", 7, registry).IsError != true)
+        if (JobOwnerRegistry.FilterList(invalid, "scoped:a", 7, registry, 50).IsError != true)
             throw new InvalidOperationException("Malformed Worker job-list data did not fail closed.");
         var wrongSingle = new CallToolResult
         {
@@ -97,6 +97,23 @@ internal static class Program
         };
         if (JobOwnerRegistry.ValidateSingleResult(wrongSingle, "owned-1").IsError != true)
             throw new InvalidOperationException("Job status/cancel returned a different owner's result despite authorized request parameters.");
+
+        var defaultList = new CallToolRequestParams
+        {
+            Name = "zemax_job_list",
+            Arguments = new Dictionary<string, JsonElement>()
+        };
+        if (!JobOwnerRegistry.TryGetRequestedListLimit(defaultList, out var defaultLimit) ||
+            defaultLimit != 50 ||
+            JobOwnerRegistry.ExpandListRequest(defaultList).Arguments!["limit"].GetInt32() != 128)
+            throw new InvalidOperationException("Scoped Job listing must fetch the whole bounded Worker history.");
+        var invalidLimit = new CallToolRequestParams
+        {
+            Name = "zemax_job_list",
+            Arguments = new Dictionary<string, JsonElement> { ["limit"] = JsonSerializer.SerializeToElement(500) }
+        };
+        if (JobOwnerRegistry.TryGetRequestedListLimit(invalidLimit, out _))
+            throw new InvalidOperationException("Scoped Job list incorrectly accepted an invalid public limit.");
 
         registry.ReleaseGeneration(7);
         if (registry.IsOwned("scoped:a", "owned-1", 7))
