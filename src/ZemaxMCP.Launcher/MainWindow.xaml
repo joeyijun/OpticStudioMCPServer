@@ -365,8 +365,10 @@
                   ToolTip="Stop the local MCP service" Click="Stop_Click"/>
           <Button Content="Refresh" Style="{StaticResource ActionButton}" MinWidth="74" Height="34" Padding="10,5" Margin="0,0,7,0"
                   ToolTip="Refresh live service status" Click="RefreshStatus_Click"/>
-          <Button Content="Test MCP" Style="{StaticResource ActionButton}" MinWidth="80" Height="34" Padding="10,5" Margin="0,0,9,0"
-                  ToolTip="Test the currently selected MCP endpoint" Click="TestMcp_Click"/>
+          <Button Content="Check connection" Style="{StaticResource ActionButton}" MinWidth="120" Height="34" Padding="9,5" Margin="0,0,7,0"
+                  ToolTip="Inspect Host, authentication, Worker, ZOS-API and license without changing the optical system" Click="CheckConnection_Click"/>
+          <Button Content="Test MCP tools" Style="{StaticResource ActionButton}" MinWidth="110" Height="34" Padding="9,5" Margin="0,0,9,0"
+                  ToolTip="Actually perform tools/list and a read-only tools/call and inspect Tasks capability; no optical edits or long Jobs" Click="TestMcpTools_Click"/>
           <Button Content="Exit service" Style="{StaticResource ExitButton}" VerticalAlignment="Center"
                   ToolTip="Stop the MCP service and close the launcher" Click="Exit_Click"/>
         </StackPanel>
@@ -640,8 +642,12 @@
                    Padding="12" Text="Select a Job to inspect its details."/>
         </Grid>
         <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+          <TextBox x:Name="TasksPageTaskId" Width="150" Height="32" Margin="0,0,8,0" Padding="7,5"
+                   ToolTip="Optional exact MCP Task ID returned by an AI client. Not a Worker Job ID."/>
+          <Button Content="Get Task result" Style="{StaticResource ActionButton}"
+                  MinWidth="112" Margin="0,0,9,0" Click="TasksPageGetTask_Click"/>
           <Button x:Name="TasksPageViewResult" Content="View Job result" Style="{StaticResource ActionButton}" IsEnabled="False"
-                  MinWidth="130" Margin="0,0,9,0" Click="TasksPageViewResult_Click"/>
+                  MinWidth="118" Margin="0,0,9,0" Click="TasksPageViewResult_Click"/>
           <Button x:Name="TasksPageCancel" Content="Request cancel" Style="{StaticResource SmallButton}" IsEnabled="False"
                   MinWidth="130" Click="TasksPageCancel_Click"/>
         </StackPanel>
