@@ -692,6 +692,24 @@ internal static class Program
                 if (!started.IsSuccessStatusCode || !body.Contains("fake-owned-job", StringComparison.Ordinal))
                     throw new InvalidOperationException("The scoped test Job did not register its creator: " + body);
             }
+            // The Launcher consumes /health and /activity. Those endpoints
+            // must obey exactly the same scoped ownership confidentiality as
+            // explicit Job status/list and official Tasks.
+            foreach (var route in new[] { "/health", "/activity" })
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, endpoint + route);
+                request.Headers.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", writer);
+                using var response = await client.SendAsync(request).ConfigureAwait(false);
+                var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode ||
+                    body.Contains("fake-owned-job", StringComparison.Ordinal) ||
+                    body.Contains("token:scoped:writer-two", StringComparison.Ordinal) ||
+                    body.Contains("zemax_run_nsc_ray_trace", StringComparison.Ordinal) ||
+                    body.Contains("private-job-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Scoped diagnostic endpoint exposed a foreign background Job: " + route);
+            }
+
             using (var foreignStatus = await SendScopedAsync(client, endpoint, 109, "tools/call", "zemax_job_status", writer,
                        new { jobId = "fake-owned-job" }).ConfigureAwait(false))
             {
