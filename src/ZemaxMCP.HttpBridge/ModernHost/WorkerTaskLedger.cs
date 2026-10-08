@@ -112,24 +112,24 @@ internal sealed class WorkerTaskLedger
                 !_tasks.TryGetValue(taskId, out var entry) || IsTerminal(entry.State))
                 return;
 
-            switch (job.State)
+            switch (job.State?.ToUpperInvariant())
             {
-                case "Queued":
-                case "Running":
-                case "Cancelling":
+                case "QUEUED":
+                case "RUNNING":
+                case "CANCELLING":
                     if (!entry.WorkerFinished)
                         entry.Message = job.Message ?? job.State;
                     break;
-                case "Completed":
+                case "COMPLETED":
                     // Worker completion is not the actual CallToolResult. Until
                     // it is fetched and validated, tasks/get must say working.
                     entry.WorkerFinished = true;
                     entry.Message = "Worker Job completed; waiting for the actual tool result.";
                     break;
-                case "Cancelled":
+                case "CANCELLED":
                     FinishLocked(entry, "cancelled", job.Message ?? "Worker Job cancelled.", null);
                     break;
-                case "Failed":
+                case "FAILED":
                     // A Worker Job exception is a tool-domain error, not a
                     // JSON-RPC protocol failure. Retain isError=true as the result.
                     FinishLocked(entry, "completed", job.Message ?? "Worker Job failed.",
