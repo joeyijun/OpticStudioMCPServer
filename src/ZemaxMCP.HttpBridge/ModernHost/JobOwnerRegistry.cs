@@ -71,6 +71,31 @@ internal sealed class JobOwnerRegistry
         return true;
     }
 
+    internal static bool TryGetRequestedListLimit(CallToolRequestParams request, out int limit)
+    {
+        limit = 50;
+        if (request.Arguments == null || !request.Arguments.TryGetValue("limit", out var value))
+            return true;
+        if (value.ValueKind != JsonValueKind.Number ||
+            !value.TryGetInt32(out limit) || limit is < 1 or > 128)
+            return false;
+        return true;
+    }
+
+    internal static CallToolRequestParams ExpandListRequest(CallToolRequestParams original)
+    {
+        var args = original.Arguments == null
+            ? new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+            : new Dictionary<string, JsonElement>(original.Arguments, StringComparer.Ordinal);
+        args["limit"] = JsonSerializer.SerializeToElement(128);
+        return new CallToolRequestParams
+        {
+            Name = original.Name,
+            Arguments = args,
+            Meta = original.Meta
+        };
+    }
+
     internal static CallToolResult Denied() => new()
     {
         Content = new List<ContentBlock>
@@ -97,7 +122,7 @@ internal sealed class JobOwnerRegistry
         catch (JsonException) { return Denied(); }
     }
 
-    internal static CallToolResult FilterList(CallToolResult result, string clientId, long generation, JobOwnerRegistry registry)
+    internal static CallToolResult FilterList(CallToolResult result, string clientId, long generation, JobOwnerRegistry registry, int requestedLimit)
     {
         if (result.IsError == true) return result;
         var content = new List<ContentBlock>(result.Content.Count);
@@ -117,7 +142,7 @@ internal sealed class JobOwnerRegistry
                     if (!TryReadJobId(job, out var id)) return Denied();
                     if (registry.IsOwned(clientId, id, generation)) filtered.Add(job.Clone());
                 }
-                content.Add(new TextContentBlock { Text = JsonSerializer.Serialize(filtered) });
+                content.Add(new TextContentBlock { Text = JsonSerializer.Serialize(filtered.Take(requestedLimit)) });
             }
             catch (JsonException) { return Denied(); }
         }
