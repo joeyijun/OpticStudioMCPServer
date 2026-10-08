@@ -71,9 +71,7 @@ internal static class Program
                     return new ListToolsResult
                     {
                         Tools = StaticToolManifest.All
-                            .Where(entry => StaticToolManifest.IsAllowed(
-                                options.Toolset, entry.Name,
-                                options.ReadOnly || ClientCredentialStore.IsReadOnly(request.User)))
+                            .Where(entry => IsAuthorizedTool(options, request.User, entry))
                             .Select(entry => new Tool
                             {
                                 Name = entry.Name,
@@ -85,9 +83,8 @@ internal static class Program
                 })
                 .WithCallToolHandler(async (request, cancellationToken) =>
                 {
-                    if (!StaticToolManifest.IsAllowed(
-                            options.Toolset, request.Params.Name,
-                            options.ReadOnly || ClientCredentialStore.IsReadOnly(request.User)))
+                    if (!StaticToolManifest.TryGet(request.Params.Name, out var requestedTool) ||
+                        !IsAuthorizedTool(options, request.User, requestedTool))
                     {
                         return new CallToolResult
                         {
@@ -340,6 +337,17 @@ internal static class Program
             catch (JsonException) { }
         }
         return false;
+    }
+
+    private static bool IsAuthorizedTool(HostOptions options, ClaimsPrincipal? principal, ToolManifestEntry entry)
+    {
+        if (!StaticToolManifest.IsAllowed(options.Toolset, entry.Name, options.ReadOnly))
+            return false;
+        // The legacy global --read-only switch intentionally allows Caution
+        // operations. Per-credential read-only is stricter: only actual ReadOnly
+        // impact commands are admitted, including to tools/list.
+        return !ClientCredentialStore.IsReadOnly(principal) ||
+               string.Equals(entry.Impact, "ReadOnly", StringComparison.Ordinal);
     }
 
     private static bool HasValidToken(HttpContext context, string token)
