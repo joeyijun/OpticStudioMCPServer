@@ -57,8 +57,8 @@
       </Grid>
     </Border>
     <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
-      <Button Content="Close" MinWidth="84" Margin="0,0,8,0" Click="Close_Click"/>
-      <Button Content="Install and start" Background="#006ADC" BorderBrush="#006ADC" Foreground="White" Click="Install_Click"/>
+      <Button x:Name="CloseButton" Content="Close" MinWidth="84" Margin="0,0,8,0" Click="Close_Click"/>
+      <Button x:Name="InstallButton" Content="Install and start" Background="#006ADC" BorderBrush="#006ADC" Foreground="White" Click="Install_Click"/>
     </StackPanel>
   </Grid>
 </Window>

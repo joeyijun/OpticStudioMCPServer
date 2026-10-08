@@ -1,3 +1,5 @@
+using ZemaxMCP.Rpc;
+
 namespace ZemaxMCP.HttpBridge.ModernHost;
 
 /// <summary>
@@ -9,32 +11,131 @@ internal sealed class OpticStudioControlLease
 {
     private readonly object _sync = new();
     private readonly SemaphoreSlim _execution = new(1, 1);
-    private readonly TimeSpan _idleTimeout = TimeSpan.FromMinutes(15);
+    private readonly TimeSpan _idleTimeout;
+    private readonly Dictionary<string, JobHold> _jobHolds = new(StringComparer.Ordinal);
     private string? _ownerClientId;
     private DateTimeOffset _lastActivity;
     private string? _activeOperation;
 
+    public OpticStudioControlLease(TimeSpan? idleTimeout = null)
+    {
+        _idleTimeout = idleTimeout ?? TimeSpan.FromMinutes(15);
+        if (_idleTimeout <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(idleTimeout));
+    }
+
     public async Task<IDisposable> AcquireAsync(string clientId, string operation, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(clientId)) clientId = "anonymous";
+
+        // Reject a different live owner immediately, but do not register a new
+        // owner or extend idle activity while still waiting for the execution
+        // semaphore. A caller may cancel during that wait.
         lock (_sync)
         {
-            var expired = _ownerClientId != null && DateTimeOffset.UtcNow - _lastActivity > _idleTimeout && _activeOperation == null;
-            if (expired) _ownerClientId = null;
-            if (_ownerClientId != null && !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
+            if (!IsExpiredLocked() &&
+                _ownerClientId != null &&
+                !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
                 throw new InvalidOperationException("OpticStudio control is currently leased to another MCP client.");
-            _ownerClientId = clientId;
-            _lastActivity = DateTimeOffset.UtcNow;
         }
 
         await _execution.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // Revalidate after the wait: ownership may have changed while
+            // this request was queued behind another operation.
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_sync)
+            {
+                if (IsExpiredLocked()) _ownerClientId = null;
+                if (_ownerClientId != null &&
+                    !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
+                    throw new InvalidOperationException("OpticStudio control is currently leased to another MCP client.");
+
+                _ownerClientId = clientId;
+                _activeOperation = operation;
+                _lastActivity = DateTimeOffset.UtcNow;
+            }
+            return new Releaser(this, clientId);
+        }
+        catch
+        {
+            _execution.Release();
+            throw;
+        }
+    }
+
+    private bool IsExpiredLocked() =>
+        _ownerClientId != null &&
+        DateTimeOffset.UtcNow - _lastActivity > _idleTimeout &&
+        _activeOperation == null &&
+        _jobHolds.Count == 0;
+
+    public bool ReleaseOwnership(string clientId)
+    {
+        if (string.IsNullOrWhiteSpace(clientId)) return false;
         lock (_sync)
         {
-            _activeOperation = operation;
+            if (_activeOperation != null || _jobHolds.Count != 0 ||
+                !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
+                return false;
+
+            _ownerClientId = null;
+            _lastActivity = DateTimeOffset.UtcNow;
+            return true;
+        }
+    }
+
+    public bool RetainForJob(string clientId, string jobId, long generation)
+    {
+        if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(jobId) || generation <= 0) return false;
+        lock (_sync)
+        {
+            if (!string.Equals(_ownerClientId, clientId, StringComparison.Ordinal)) return false;
+            _jobHolds[jobId] = new JobHold(clientId, generation);
+            _lastActivity = DateTimeOffset.UtcNow;
+            return true;
+        }
+    }
+
+    public void ObserveJob(long generation, WorkerJobStatus job)
+    {
+        if (generation <= 0 || string.IsNullOrWhiteSpace(job.JobId)) return;
+        if (!IsTerminal(job.State)) return;
+        lock (_sync)
+        {
+            if (_jobHolds.TryGetValue(job.JobId, out var hold) && hold.Generation == generation)
+            {
+                _jobHolds.Remove(job.JobId);
+                _lastActivity = DateTimeOffset.UtcNow;
+            }
+        }
+    }
+
+    public void ReleaseGeneration(long generation)
+    {
+        if (generation <= 0) return;
+        lock (_sync)
+        {
+            var invalidated = _jobHolds.Where(pair => pair.Value.Generation == generation)
+                .Select(pair => pair.Key).ToArray();
+            foreach (var jobId in invalidated)
+                _jobHolds.Remove(jobId);
+
+            // The old Worker is gone and can no longer own the lens. After
+            // its background holds disappear, release its idle owner too so
+            // another authenticated client can take the replacement Worker
+            // immediately rather than wait 15 minutes. Never revoke another
+            // active foreground call or a newer-generation Job hold.
+            if (invalidated.Length > 0 && _activeOperation == null && _jobHolds.Count == 0)
+                _ownerClientId = null;
             _lastActivity = DateTimeOffset.UtcNow;
         }
-        return new Releaser(this, clientId);
     }
+
+    private static bool IsTerminal(string? state) =>
+        string.Equals(state, "Completed", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(state, "Cancelled", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(state, "Failed", StringComparison.OrdinalIgnoreCase);
 
     public object GetHealth()
     {
@@ -42,6 +143,8 @@ internal sealed class OpticStudioControlLease
         {
             owner = _ownerClientId,
             activeOperation = _activeOperation,
+            backgroundJobs = _jobHolds.Keys.OrderBy(value => value, StringComparer.Ordinal).ToArray(),
+            backgroundJobCount = _jobHolds.Count,
             lastActivity = _lastActivity == default ? (DateTimeOffset?)null : _lastActivity,
             idleTimeoutSeconds = (int)_idleTimeout.TotalSeconds
         };
@@ -59,6 +162,8 @@ internal sealed class OpticStudioControlLease
         }
         _execution.Release();
     }
+
+    private sealed record JobHold(string ClientId, long Generation);
 
     private sealed class Releaser : IDisposable
     {

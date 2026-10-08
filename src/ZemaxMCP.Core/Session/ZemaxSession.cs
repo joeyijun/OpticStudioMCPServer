@@ -342,6 +342,54 @@ public class ZemaxSession : IZemaxSession
             }, cancellationToken);
     }
 
+    public async Task<string> RestoreSnapshotAsync(string snapshotPath, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(snapshotPath))
+            throw new ArgumentException("Snapshot path is required.", nameof(snapshotPath));
+
+        var fullSnapshotPath = Path.GetFullPath(snapshotPath);
+        if (!File.Exists(fullSnapshotPath))
+            throw new FileNotFoundException("Snapshot file does not exist.", fullSnapshotPath);
+
+        return await ExecuteAsync(
+            "RestoreSnapshot",
+            new Dictionary<string, object?> { ["SnapshotFileName"] = Path.GetFileName(fullSnapshotPath) },
+            system =>
+            {
+                var restoredDirectory = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "ZemaxMCP",
+                    "restored");
+                Directory.CreateDirectory(restoredDirectory);
+
+                var extension = Path.GetExtension(fullSnapshotPath);
+                var baseName = Path.GetFileNameWithoutExtension(fullSnapshotPath);
+                var workingPath = Path.Combine(
+                    restoredDirectory,
+                    DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff", System.Globalization.CultureInfo.InvariantCulture) +
+                    "_" + Guid.NewGuid().ToString("N") + "_" + baseName + "_restored" + extension);
+
+                File.Copy(fullSnapshotPath, workingPath, overwrite: false);
+                try
+                {
+                    if (!system.LoadFile(workingPath, false))
+                        throw new IOException("OpticStudio did not load the restored working copy.");
+
+                    CurrentFilePath = workingPath;
+                    // Restored working copies are user-editable documents, not
+                    // disposable cache entries. Never prune them automatically.
+                    _logger.LogInformation("Restored safety snapshot into working copy: {WorkingPath}", workingPath);
+                    return workingPath;
+                }
+                catch
+                {
+                    try { if (File.Exists(workingPath)) File.Delete(workingPath); } catch { }
+                    throw;
+                }
+            },
+            cancellationToken);
+    }
+
     public async Task<bool> NewSystemAsync(CancellationToken cancellationToken = default)
     {
         return await ExecuteAsync(

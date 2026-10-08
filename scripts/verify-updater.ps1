@@ -3,7 +3,18 @@ param([string]$Configuration = "Release")
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 $updater = Join-Path $root "src\ZemaxMCP.Updater\bin\$Configuration\net48\ZemaxMCP.Updater.exe"
+$updaterSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Updater\Program.cs")
 if (-not (Test-Path -LiteralPath $updater)) { throw "Updater build output is missing." }
+if ($updaterSource -notmatch 'var cleanupBackup = false' -or
+    $updaterSource -notmatch 'cleanupBackup = true' -or
+    $updaterSource -notmatch 'cleanupBackup = false' -or
+    $updaterSource -notmatch 'backup has been preserved at' -or
+    -not [regex]::IsMatch(
+        $updaterSource,
+        'finally\s*\{[\s\S]*?if\s*\(cleanupBackup\s*&&[\s\S]*?Directory\.Delete\(backup, true\)',
+        [Text.RegularExpressions.RegexOptions]::Singleline)) {
+  throw "Updater rollback failures must preserve the previous-installation backup and report its recovery path."
+}
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("ZemaxMCP-updater-test-" + [guid]::NewGuid().ToString("N"))
 $install = Join-Path $testRoot "install"
 $staging = Join-Path $testRoot "staging"
@@ -14,14 +25,46 @@ try {
   Set-Content -LiteralPath (Join-Path $install "obsolete.txt") -Value "old-state"
   New-Item -ItemType Directory -Force -Path (Join-Path $install "logs") | Out-Null
   Set-Content -LiteralPath (Join-Path $install "logs\preserved.log") -Value "runtime-state"
+  $runtimeNames = @('launcher-settings.json','launcher-settings.json.bak','clients.json','update.log')
+  foreach ($runtimeName in $runtimeNames) {
+    Set-Content -LiteralPath (Join-Path $install $runtimeName) -Value "retained-$runtimeName"
+    Set-Content -LiteralPath (Join-Path $staging $runtimeName) -Value "must-not-overwrite-$runtimeName"
+  }
+  New-Item -ItemType Directory -Force -Path (Join-Path $install 'shortcut-icons') | Out-Null
+  Set-Content -LiteralPath (Join-Path $install 'shortcut-icons\retained.ico') -Value 'retained-icon'
   Set-Content -LiteralPath (Join-Path $staging "Start-Zemax-MCP.exe") -Value "new-launcher"
   Set-Content -LiteralPath (Join-Path $staging "added.txt") -Value "new-state"
+  Set-Content -LiteralPath (Join-Path $staging "Install.exe") -Value "package-only-installer"
+  Set-Content -LiteralPath (Join-Path $staging "Portable-Install.cmd") -Value "package-only-portable-script"
   & $updater --staging $staging --install $install --parent-pid 0 --restart false
   if ($LASTEXITCODE -ne 0 -or (Get-Content -Raw (Join-Path $install "Start-Zemax-MCP.exe")).Trim() -ne "new-launcher" -or
       -not (Test-Path -LiteralPath (Join-Path $install "added.txt")) -or (Test-Path -LiteralPath (Join-Path $install "obsolete.txt")) -or
+      (Test-Path -LiteralPath (Join-Path $install "Install.exe")) -or
+      (Test-Path -LiteralPath (Join-Path $install "Portable-Install.cmd")) -or
       (Get-Content -Raw (Join-Path $install "logs\preserved.log")).Trim() -ne "runtime-state") {
     throw "Updater did not apply a valid staged update correctly."
   }
+  foreach ($runtimeName in $runtimeNames) {
+    if ((Get-Content -Raw (Join-Path $install $runtimeName)).Trim() -ne "retained-$runtimeName") { throw "Upgrade replaced runtime data: $runtimeName" }
+  }
+  if (-not (Test-Path (Join-Path $install 'shortcut-icons\retained.ico'))) { throw 'Upgrade removed shortcut icon cache.' }
+
+  # Allow a short exclusive staging lock to clear: one invocation must succeed.
+  Add-Type -TypeDefinition @'
+using System.IO;
+using System.Threading;
+public static class ZemaxUpgradeTestLock {
+    public static void Hold(string path, int milliseconds) {
+        var stream = File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        var thread = new Thread(() => { Thread.Sleep(milliseconds); stream.Dispose(); });
+        thread.IsBackground = true;
+        thread.Start();
+    }
+}
+'@
+  [ZemaxUpgradeTestLock]::Hold((Join-Path $staging 'added.txt'), 3000)
+  & $updater --staging $staging --install $install --parent-pid 0 --restart false
+  if ($LASTEXITCODE -ne 0) { throw 'Updater did not recover from a temporary sharing violation.' }
 
   Set-Content -LiteralPath (Join-Path $failureStaging "Start-Zemax-MCP.exe") -Value "broken-launcher"
   $lockedFile = Join-Path $failureStaging "locked.bin"
@@ -34,11 +77,19 @@ try {
       (Get-Content -Raw (Join-Path $install "logs\preserved.log")).Trim() -ne "runtime-state") {
     throw "Updater rollback did not restore the previous installation."
   }
+  foreach ($runtimeName in $runtimeNames) {
+    if ((Get-Content -Raw (Join-Path $install $runtimeName)).Trim() -ne "retained-$runtimeName") { throw "Rollback replaced runtime data: $runtimeName" }
+  }
 }
 finally {
-  if (Test-Path -LiteralPath $testRoot) { Remove-Item -LiteralPath $testRoot -Recurse -Force }
+  if (Test-Path -LiteralPath $testRoot) {
+    $resolvedTestRoot = (Resolve-Path -LiteralPath $testRoot).Path
+    if (-not $resolvedTestRoot.StartsWith([IO.Path]::GetTempPath(), [StringComparison]::OrdinalIgnoreCase) -or
+        [IO.Path]::GetFileName($resolvedTestRoot) -notlike 'ZemaxMCP-updater-test-*') { throw 'Unsafe updater fixture cleanup path.' }
+    Remove-Item -LiteralPath $resolvedTestRoot -Recurse -Force
+  }
 }
-Write-Host "Updater apply and rollback behavior verified."
+Write-Host "Updater apply, transient lock retry, runtime preferences/credentials preservation, rollback, and backup contracts verified."
 # The rollback scenario intentionally executes the updater once with exit code
 # 1. All assertions above have verified that failure and its recovery, so do
 # not leak the expected native exit code into the hosting PowerShell process.

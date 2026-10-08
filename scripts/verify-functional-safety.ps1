@@ -57,12 +57,39 @@ foreach ($requiredTool in @("SpotDiagramTool.cs", "RmsSpotTool.cs", "CardinalPoi
 
 # These Stage A/B/C fixes are release-safety contracts rather than style. Keep
 # explicit false/empty semantics, normalized ray bounds and cancellation wired.
+$batchSetSurfaces = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Server\Tools\LensData\BatchSetSurfacesTool.cs") -Raw
+$snapshotTools = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Server\Tools\System\SnapshotTools.cs") -Raw
+$zemaxSession = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Core\Session\ZemaxSession.cs") -Raw
 $setSurface = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Server\Tools\LensData\SetSurfaceTool.cs") -Raw
 if ($setSurface -notmatch 'material is not null' -or
     $setSurface -notmatch 'comment is not null' -or
     $setSurface -notmatch 'surface\.IsStop = isStop\.Value' -or
     $setSurface -notmatch 'MakeSolveFixed\(\)') {
     throw "zemax_set_surface must preserve omitted-vs-explicit-clear semantics."
+}
+if ($batchSetSurfaces -notmatch 'Distinct\(\)\.Count\(\) != edits\.Count' -or
+    $batchSetSurfaces -notmatch 'originals = edits\.ToDictionary' -or
+    $batchSetSurfaces -notmatch 'VerifyReadback\(' -or
+    $batchSetSurfaces -notmatch 'RestoreState\(' -or
+    $batchSetSurfaces -notmatch 'rolledBack = true' -or
+    $batchSetSurfaces -notmatch 'new Result\(false, ex\.Message, edits\?\.Count \?\? 0, 0, rolledBack' -or
+    $batchSetSurfaces -notmatch 'catch \(OperationCanceledException\)') {
+    throw "zemax_batch_set_surfaces must prevalidate the whole batch, use one transactional operation, independently read back writes, report rollback truthfully, rollback touched surfaces, and preserve cancellation."
+}
+
+if ($snapshotTools -notmatch 'ResolveSnapshot\(' -or
+    $snapshotTools -notmatch 'Path\.GetFileName\(snapshotFileName\)' -or
+    $snapshotTools -notmatch 'FileAttributes\.ReparsePoint' -or
+    $snapshotTools -notmatch 'system\.CopySystem\(\)' -or
+    $snapshotTools -notmatch 'comparison\.LoadFile\(snapshotPath, false\)' -or
+    $snapshotTools -notmatch 'FormatDouble' -or
+    $snapshotTools -notmatch 'RestoreSnapshotAsync\(snapshotPath' -or
+    $zemaxSession -notmatch '"RestoreSnapshot"' -or
+    $zemaxSession -notmatch 'File\.Copy\(fullSnapshotPath, workingPath, overwrite: false\)' -or
+    $zemaxSession -notmatch 'Guid\.NewGuid\(\)' -or
+    $zemaxSession -notmatch 'CurrentFilePath = workingPath' -or
+    $zemaxSession -match 'PruneRestoredWorkingCopies|restoredDirectory[\s\S]{0,500}\.Delete\(\)') {
+    throw "Snapshot tools must confine names to the snapshot directory, reject reparse points, compare through a copied system, preserve non-finite values, restore into a unique working file, and never prune restored user-editable files."
 }
 
 foreach ($rayFile in @("RayTraceTool.cs", "RayTraceExtendedTool.cs")) {

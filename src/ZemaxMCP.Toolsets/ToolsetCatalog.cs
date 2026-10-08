@@ -60,6 +60,7 @@ public static class ToolsetCatalog
         ["zemax_add_configuration_operand"] = "sequential-editing",
         ["zemax_add_operand"] = "optimization",
         ["zemax_add_surface"] = "sequential-editing",
+        ["zemax_batch_set_surfaces"] = "sequential-editing",
         ["zemax_aperture_throughput"] = "analysis",
         ["zemax_cardinal_points"] = "analysis",
         ["zemax_chromatic_focal_shift"] = "analysis",
@@ -103,6 +104,7 @@ public static class ToolsetCatalog
         ["zemax_get_nsc_detector"] = "non-sequential",
         ["zemax_get_nsc_object_parameters"] = "non-sequential",
         ["zemax_get_nsc_objects"] = "non-sequential",
+        ["zemax_nsc_scene_summary"] = "non-sequential",
         ["zemax_get_polarization"] = "polarization",
         ["zemax_get_ray_aiming"] = "system",
         ["zemax_get_ray_aiming_settings"] = "system",
@@ -114,6 +116,7 @@ public static class ToolsetCatalog
         ["zemax_get_system_files"] = "files",
         ["zemax_get_system_metadata"] = "system",
         ["zemax_get_tolerances"] = "tolerance",
+        ["zemax_tolerance_summary"] = "tolerance",
         ["zemax_get_units"] = "system",
         ["zemax_get_variables"] = "optimization",
         ["zemax_get_vignetting"] = "sequential-editing",
@@ -142,11 +145,14 @@ public static class ToolsetCatalog
         ["zemax_quick_focus"] = "sequential-editing",
         ["zemax_ray_fan"] = "analysis",
         ["zemax_ray_trace"] = "analysis",
+        ["zemax_ray_trace_diagnostics"] = "analysis",
         ["zemax_ray_trace_extended"] = "analysis",
         ["zemax_relative_illumination"] = "analysis",
         ["zemax_remove_operand"] = "optimization",
         ["zemax_remove_surface"] = "sequential-editing",
         ["zemax_restart"] = "administration",
+        ["zemax_run_nsc_ray_trace"] = "non-sequential",
+        ["zemax_run_tolerancing"] = "tolerance",
         ["zemax_rms_spot"] = "analysis",
         ["zemax_save_file"] = "files",
         ["zemax_save_merit_function_file"] = "files",
@@ -180,6 +186,9 @@ public static class ToolsetCatalog
         ["zemax_set_variable_constraints"] = "optimization",
         ["zemax_set_vignetting"] = "sequential-editing",
         ["zemax_set_wavelengths"] = "sequential-editing",
+        ["zemax_snapshot_diff"] = "files",
+        ["zemax_snapshot_list"] = "files",
+        ["zemax_snapshot_restore"] = "files",
         ["zemax_spot_diagram"] = "analysis",
         ["zemax_status"] = "administration",
         ["zemax_tool_catalog"] = "system"
@@ -196,32 +205,109 @@ public static class ToolsetCatalog
         "zemax_get_apodization", "zemax_get_aspheric_surface", "zemax_get_clear_semi_diameter_margin", "zemax_get_configuration",
         "zemax_get_configuration_operands", "zemax_get_environment", "zemax_get_extra_data", "zemax_get_field_settings", "zemax_get_first_order_data",
         "zemax_get_glass_catalogs", "zemax_get_glasses", "zemax_get_global_matrix", "zemax_get_material_catalog_settings", "zemax_get_merit_function",
-        "zemax_get_mtf_units", "zemax_get_nonsequential_system_settings", "zemax_get_nsc_detector", "zemax_get_nsc_object_parameters", "zemax_get_nsc_objects",
+        "zemax_get_mtf_units", "zemax_get_nonsequential_system_settings", "zemax_get_nsc_detector", "zemax_get_nsc_object_parameters", "zemax_get_nsc_objects", "zemax_nsc_scene_summary",
         "zemax_get_polarization", "zemax_get_ray_aiming", "zemax_get_ray_aiming_settings", "zemax_get_stop_surface", "zemax_get_surface",
         "zemax_get_surface_aperture", "zemax_get_surface_solves", "zemax_get_system", "zemax_get_system_files", "zemax_get_system_metadata",
-        "zemax_get_tolerances", "zemax_get_units", "zemax_get_variables", "zemax_get_vignetting", "zemax_get_wavelength_settings", "zemax_huygens_psf",
+        "zemax_get_tolerances", "zemax_tolerance_summary", "zemax_get_units", "zemax_get_variables", "zemax_get_vignetting", "zemax_get_wavelength_settings", "zemax_huygens_psf",
         "zemax_job_list", "zemax_job_status", "zemax_lateral_color", "zemax_list_surface_types", "zemax_longitudinal_aberration", "zemax_multistart_status",
-        "zemax_opd_fan", "zemax_operand_help", "zemax_pupil_aberration_fan", "zemax_ray_fan", "zemax_ray_trace", "zemax_ray_trace_extended",
-        "zemax_relative_illumination", "zemax_rms_spot", "zemax_search_operands", "zemax_seidel_coefficients", "zemax_spot_diagram", "zemax_status", "zemax_tool_catalog"
+        "zemax_opd_fan", "zemax_operand_help", "zemax_pupil_aberration_fan", "zemax_ray_fan", "zemax_ray_trace", "zemax_ray_trace_diagnostics", "zemax_ray_trace_extended",
+        "zemax_relative_illumination", "zemax_rms_spot", "zemax_search_operands", "zemax_seidel_coefficients", "zemax_snapshot_diff", "zemax_snapshot_list",
+        "zemax_spot_diagram", "zemax_status", "zemax_tool_catalog"
     };
 
     private static readonly HashSet<string> CautionTools = new HashSet<string>(StringComparer.Ordinal)
     {
-        "zemax_connect", "zemax_disconnect", "zemax_job_cancel", "zemax_multistart_stop", "zemax_open_file", "zemax_restart"
+        "zemax_connect", "zemax_disconnect", "zemax_job_cancel", "zemax_multistart_stop", "zemax_open_file", "zemax_restart", "zemax_run_nsc_ray_trace", "zemax_run_tolerancing"
     };
 
     private static readonly HashSet<string> HighImpactTools = new HashSet<string>(StringComparer.Ordinal)
     {
-        "zemax_add_configuration_operand", "zemax_add_operand", "zemax_add_surface", "zemax_clear_vignetting", "zemax_constrained_optimize",
+        "zemax_add_configuration_operand", "zemax_add_operand", "zemax_add_surface", "zemax_batch_set_surfaces", "zemax_clear_vignetting", "zemax_constrained_optimize",
         "zemax_delete_configuration_operand", "zemax_export_analysis", "zemax_export_glass_catalog", "zemax_forbes_merit_function", "zemax_global_search",
         "zemax_hammer", "zemax_load_merit_function_file", "zemax_multistart_optimize", "zemax_new_system", "zemax_optimization_wizard", "zemax_optimize",
-        "zemax_pop", "zemax_quick_focus", "zemax_remove_operand", "zemax_remove_surface", "zemax_save_file", "zemax_save_merit_function_file", "zemax_scale_lens",
+        "zemax_pop", "zemax_quick_focus", "zemax_remove_operand", "zemax_remove_surface", "zemax_snapshot_restore", "zemax_save_file", "zemax_save_merit_function_file", "zemax_scale_lens",
         "zemax_set_afocal_mode", "zemax_set_aperture", "zemax_set_apodization", "zemax_set_aspheric_surface", "zemax_set_clear_semi_diameter_margin",
         "zemax_set_configuration_operand_value", "zemax_set_current_configuration", "zemax_set_environment", "zemax_set_extra_data", "zemax_set_fields",
         "zemax_set_mtf_units", "zemax_set_number_of_configurations", "zemax_set_number_of_fields", "zemax_set_number_of_wavelengths", "zemax_set_off_axis_conic",
         "zemax_set_polarization", "zemax_set_ray_aiming", "zemax_set_stop_surface", "zemax_set_surface", "zemax_set_surface_aperture", "zemax_set_surface_parameter",
         "zemax_set_surface_solve", "zemax_set_surface_type", "zemax_set_system_metadata", "zemax_set_variable_constraints", "zemax_set_vignetting", "zemax_set_wavelengths"
     };
+
+    // Focused profiles deliberately expose a task-sized subset instead of
+    // every tool in each broad domain. FullExpert remains the compatibility
+    // escape hatch with the complete contract.
+    private static readonly IReadOnlyDictionary<string, HashSet<string>> FocusedProfileTools =
+        new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            [BasicViewing] = NewToolSet(
+                "zemax_status", "zemax_tool_catalog",
+                "zemax_get_system", "zemax_get_system_metadata", "zemax_get_environment", "zemax_get_units",
+                "zemax_get_aperture_settings", "zemax_get_advanced_system_settings", "zemax_get_ray_aiming_settings",
+                "zemax_get_material_catalog_settings", "zemax_get_configuration", "zemax_get_field_settings",
+                "zemax_get_wavelength_settings", "zemax_get_stop_surface", "zemax_get_first_order_data",
+                "zemax_get_surface", "zemax_get_surface_aperture", "zemax_get_vignetting",
+                "zemax_cardinal_points", "zemax_fft_mtf", "zemax_fft_psf", "zemax_spot_diagram",
+                "zemax_rms_spot", "zemax_ray_fan", "zemax_ray_trace", "zemax_ray_trace_diagnostics", "zemax_field_curvature_distortion",
+                "zemax_chromatic_focal_shift", "zemax_lateral_color", "zemax_relative_illumination",
+                "zemax_seidel_coefficients", "zemax_geometric_mtf", "zemax_huygens_psf",
+                "zemax_diffraction_encircled_energy"),
+
+            [SequentialDesign] = NewToolSet(
+                "zemax_status", "zemax_tool_catalog", "zemax_connect", "zemax_disconnect",
+                "zemax_open_file", "zemax_save_file", "zemax_new_system", "zemax_snapshot_list", "zemax_snapshot_diff", "zemax_snapshot_restore", "zemax_export_analysis",
+                "zemax_get_system", "zemax_get_system_metadata", "zemax_get_environment", "zemax_get_units",
+                "zemax_get_aperture_settings", "zemax_get_advanced_system_settings", "zemax_get_ray_aiming_settings",
+                "zemax_get_material_catalog_settings", "zemax_get_polarization", "zemax_get_mtf_units",
+                "zemax_get_configuration", "zemax_get_configuration_operands", "zemax_get_field_settings",
+                "zemax_get_wavelength_settings", "zemax_get_stop_surface", "zemax_get_first_order_data",
+                "zemax_get_surface", "zemax_get_aspheric_surface", "zemax_get_surface_aperture",
+                "zemax_get_surface_solves", "zemax_get_extra_data", "zemax_get_global_matrix", "zemax_get_vignetting",
+                "zemax_add_surface", "zemax_batch_set_surfaces", "zemax_remove_surface", "zemax_set_surface", "zemax_set_surface_type",
+                "zemax_set_surface_parameter", "zemax_set_surface_solve", "zemax_set_surface_aperture",
+                "zemax_set_aspheric_surface", "zemax_set_extra_data", "zemax_set_fields", "zemax_set_wavelengths",
+                "zemax_set_stop_surface", "zemax_set_number_of_fields", "zemax_set_number_of_wavelengths",
+                "zemax_set_current_configuration", "zemax_set_number_of_configurations",
+                "zemax_set_configuration_operand_value", "zemax_add_configuration_operand",
+                "zemax_delete_configuration_operand", "zemax_set_environment", "zemax_set_apodization",
+                "zemax_set_ray_aiming", "zemax_set_polarization", "zemax_set_mtf_units",
+                "zemax_quick_focus", "zemax_scale_lens",
+                "zemax_cardinal_points", "zemax_fft_mtf", "zemax_fft_mtf_vs_field", "zemax_fft_psf",
+                "zemax_spot_diagram", "zemax_rms_spot", "zemax_ray_fan", "zemax_opd_fan",
+                "zemax_ray_trace", "zemax_ray_trace_diagnostics", "zemax_ray_trace_extended", "zemax_field_curvature_distortion",
+                "zemax_chromatic_focal_shift", "zemax_lateral_color", "zemax_relative_illumination",
+                "zemax_seidel_coefficients", "zemax_geometric_mtf", "zemax_huygens_psf"),
+
+            [NonSequentialStrayLight] = NewToolSet(
+                "zemax_status", "zemax_tool_catalog", "zemax_connect", "zemax_disconnect",
+                "zemax_open_file", "zemax_save_file", "zemax_new_system", "zemax_snapshot_list", "zemax_snapshot_restore", "zemax_get_system_files",
+                "zemax_get_system_metadata", "zemax_get_environment", "zemax_get_material_catalog_settings",
+                "zemax_get_polarization", "zemax_get_nonsequential_system_settings",
+                "zemax_get_nsc_objects", "zemax_get_nsc_object_parameters", "zemax_get_nsc_detector",
+                "zemax_nsc_scene_summary", "zemax_run_nsc_ray_trace",
+                "zemax_job_status", "zemax_job_list", "zemax_job_cancel", "zemax_export_analysis"),
+
+            [OptimizationTolerance] = NewToolSet(
+                "zemax_status", "zemax_tool_catalog", "zemax_connect", "zemax_disconnect",
+                "zemax_open_file", "zemax_save_file", "zemax_snapshot_list", "zemax_snapshot_diff", "zemax_snapshot_restore", "zemax_get_system", "zemax_get_system_metadata",
+                "zemax_get_environment", "zemax_get_units", "zemax_get_field_settings", "zemax_get_wavelength_settings",
+                "zemax_get_stop_surface", "zemax_get_first_order_data", "zemax_get_surface",
+                "zemax_get_configuration", "zemax_get_configuration_operands", "zemax_get_surface_solves",
+                "zemax_batch_set_surfaces", "zemax_set_surface", "zemax_set_surface_solve", "zemax_set_fields", "zemax_set_wavelengths",
+                "zemax_set_stop_surface", "zemax_set_current_configuration",
+                "zemax_get_merit_function", "zemax_get_variables", "zemax_add_operand", "zemax_remove_operand",
+                "zemax_operand_help", "zemax_search_operands", "zemax_optimization_wizard", "zemax_optimize",
+                "zemax_constrained_optimize", "zemax_global_search", "zemax_hammer", "zemax_multistart_optimize",
+                "zemax_multistart_status", "zemax_multistart_stop", "zemax_set_variable_constraints",
+                "zemax_forbes_merit_function", "zemax_load_merit_function_file", "zemax_save_merit_function_file",
+                "zemax_job_status", "zemax_job_list", "zemax_job_cancel", "zemax_get_tolerances", "zemax_tolerance_summary", "zemax_run_tolerancing",
+                "zemax_cardinal_points", "zemax_fft_mtf", "zemax_fft_mtf_vs_field", "zemax_fft_psf",
+                "zemax_spot_diagram", "zemax_rms_spot", "zemax_ray_fan", "zemax_opd_fan",
+                "zemax_ray_trace", "zemax_ray_trace_diagnostics", "zemax_field_curvature_distortion", "zemax_chromatic_focal_shift",
+                "zemax_relative_illumination", "zemax_seidel_coefficients")
+        };
+
+    private static HashSet<string> NewToolSet(params string[] names) =>
+        new HashSet<string>(names, StringComparer.Ordinal);
 
     public static IReadOnlyDictionary<string, string> ExplicitToolDomains => ToolDomains;
 
@@ -237,7 +323,7 @@ public static class ToolsetCatalog
     {
         BasicViewing => new[] { "system", "sequential-editing", "analysis", "administration" },
         SequentialDesign => new[] { "system", "sequential-editing", "analysis", "polarization", "files", "administration" },
-        NonSequentialStrayLight => new[] { "system", "non-sequential", "analysis", "files", "administration" },
+        NonSequentialStrayLight => new[] { "system", "non-sequential", "analysis", "optimization", "polarization", "files", "administration" },
         OptimizationTolerance => new[] { "system", "sequential-editing", "analysis", "optimization", "tolerance", "polarization", "files", "administration" },
         _ => Domains.Select(domain => domain.Id)
     };
@@ -258,9 +344,20 @@ public static class ToolsetCatalog
     public static bool IsToolAllowed(string profile, string? toolName)
     {
         if (string.IsNullOrWhiteSpace(toolName)) return false;
-        return ToolDomains.TryGetValue(toolName!, out var domainId) &&
-               EnabledDomains(profile).Contains(domainId, StringComparer.Ordinal) &&
-               EnabledImpacts(profile).Contains(GetImpact(toolName!).ToString(), StringComparer.Ordinal);
+        var normalized = NormalizeProfile(profile);
+        if (!ToolDomains.TryGetValue(toolName!, out var domainId)) return false;
+        if (normalized != FullExpert &&
+            (!FocusedProfileTools.TryGetValue(normalized, out var focused) || !focused.Contains(toolName!)))
+            return false;
+        return EnabledDomains(normalized).Contains(domainId, StringComparer.Ordinal) &&
+               EnabledImpacts(normalized).Contains(GetImpact(toolName!).ToString(), StringComparer.Ordinal);
+    }
+
+    public static IReadOnlyCollection<string> EnabledTools(string profile)
+    {
+        var normalized = NormalizeProfile(profile);
+        if (normalized == FullExpert) return ToolDomains.Keys.OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        return FocusedProfileTools[normalized].OrderBy(name => name, StringComparer.Ordinal).ToArray();
     }
 
     public static string GetDomainId(string toolName)

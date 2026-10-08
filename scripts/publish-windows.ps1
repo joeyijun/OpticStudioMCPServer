@@ -128,6 +128,7 @@ if ($null -eq $launcherAssemblyVersion) { throw "Could not determine the launche
 $launcherVersion = $launcherAssemblyVersion.ToString(3)
 Set-Content -LiteralPath (Join-Path $publish "VERSION.txt") -Value $launcherVersion -NoNewline
 Copy-Item "$root\installer\Portable-Install.cmd" "$publish\Portable-Install.cmd" -Force
+Copy-Item "$root\src\ZemaxMCP.Launcher\Assets\ZemaxMCP.ico" "$publish\ZemaxMCP.ico" -Force
 Copy-Item "$root\installer\Start-Zemax-MCP.cmd" "$publish\Start-Zemax-MCP.cmd" -Force
 Copy-Item "$root\LICENSE" "$publish\LICENSE" -Force
 Copy-Item "$root\THIRD_PARTY_NOTICES.md" "$publish\THIRD_PARTY_NOTICES.md" -Force

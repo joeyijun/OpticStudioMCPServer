@@ -8,6 +8,7 @@ public sealed class SnapshotCreatedEvent
 public sealed class OperationProgress
 {
     public string OperationId { get; set; } = string.Empty;
+    public string? ParentOperationId { get; set; }
     public string ToolName { get; set; } = string.Empty;
     public double? Fraction { get; set; }
     public int QueuePosition { get; set; }

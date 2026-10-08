@@ -9,8 +9,8 @@ internal static class StaticToolManifestAssertions
     [ModuleInitializer]
     internal static void VerifyStaticToolManifestContract()
     {
-        if (StaticToolManifest.All.Count != 126)
-            throw new InvalidOperationException("Static Host tool manifest must contain all 126 Worker commands.");
+        if (StaticToolManifest.All.Count != 135)
+            throw new InvalidOperationException("Static Host tool manifest must contain all 135 Worker commands.");
         if (StaticToolManifest.ContractFingerprint.Length != 64 ||
             StaticToolManifest.ContractFingerprint.Any(character => !Uri.IsHexDigit(character)))
             throw new InvalidOperationException("Static tool contract fingerprint must be a SHA-256 hex digest.");
@@ -34,6 +34,70 @@ internal static class StaticToolManifestAssertions
             throw new InvalidOperationException("Global read-only mode must reject HighImpact tools.");
         if (StaticToolManifest.IsAllowed("basic-viewing", openFileEntry.Name, readOnly: false))
             throw new InvalidOperationException("The basic-viewing profile must remain stricter than the global read-only switch.");
+
+        var expectedProfileCounts = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["basic-viewing"] = 34,
+            ["sequential-design"] = 79,
+            ["nonsequential-stray-light"] = 24,
+            ["optimization-tolerance"] = 66,
+            ["full-expert"] = 135
+        };
+        foreach (var pair in expectedProfileCounts)
+        {
+            var actual = StaticToolManifest.All.Count(tool => StaticToolManifest.IsAllowed(pair.Key, tool.Name, readOnly: false));
+            if (actual != pair.Value)
+                throw new InvalidOperationException($"Tool profile {pair.Key} exposes {actual} tools; expected {pair.Value}. Profiles must remain task-sized and explicitly reviewed.");
+        }
+        if (StaticToolManifest.IsAllowed("nonsequential-stray-light", "zemax_set_surface", readOnly: false) ||
+            StaticToolManifest.IsAllowed("optimization-tolerance", "zemax_get_nsc_objects", readOnly: false))
+            throw new InvalidOperationException("Focused profiles leaked unrelated editor domains back into tools/list.");
+
+        var snapshotList = StaticToolManifest.GetRequired("zemax_snapshot_list").InputSchema.GetProperty("properties");
+        if (snapshotList.GetProperty("limit").GetProperty("default").GetInt32() != 25)
+            throw new InvalidOperationException("Snapshot listing must preserve its bounded newest-first default.");
+
+        var snapshotDiff = StaticToolManifest.GetRequired("zemax_snapshot_diff").InputSchema;
+        var snapshotDiffRequired = snapshotDiff.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
+        if (!snapshotDiffRequired.SetEquals(new[] { "snapshotFileName" }) ||
+            snapshotDiff.GetProperty("properties").GetProperty("maxDifferences").GetProperty("default").GetInt32() != 50 ||
+            snapshotDiff.GetProperty("properties").GetProperty("maxSurfaces").GetProperty("default").GetInt32() != 500)
+            throw new InvalidOperationException("Snapshot diff must require only a snapshot file name and preserve bounded output defaults.");
+
+        var snapshotRestore = StaticToolManifest.GetRequired("zemax_snapshot_restore").InputSchema;
+        var snapshotRestoreRequired = snapshotRestore.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
+        if (!snapshotRestoreRequired.SetEquals(new[] { "snapshotFileName" }))
+            throw new InvalidOperationException("Snapshot restore must accept only the snapshot file name as its required public argument.");
+
+        var tolerancing = StaticToolManifest.GetRequired("zemax_run_tolerancing").InputSchema.GetProperty("properties");
+        if (tolerancing.GetProperty("criterion").GetProperty("default").GetString() != "RMSSpotRadius" ||
+            tolerancing.GetProperty("monteCarloRuns").GetProperty("default").GetInt32() != 20 ||
+            tolerancing.GetProperty("timeoutSeconds").GetProperty("default").GetDouble() != 300 ||
+            tolerancing.GetProperty("runInBackground").GetProperty("default").GetBoolean() != true)
+            throw new InvalidOperationException("Structured tolerancing must preserve bounded criterion, Monte Carlo, timeout, and background defaults.");
+
+        var nscTrace = StaticToolManifest.GetRequired("zemax_run_nsc_ray_trace").InputSchema.GetProperty("properties");
+        if (nscTrace.GetProperty("clearDetectors").GetProperty("default").GetBoolean() != true ||
+            nscTrace.GetProperty("timeoutSeconds").GetProperty("default").GetDouble() != 60 ||
+            nscTrace.GetProperty("runInBackground").GetProperty("default").GetBoolean() != true)
+            throw new InvalidOperationException("Managed NSC ray trace must preserve safe detector clearing, timeout, and background defaults.");
+
+        var batchSurfaces = StaticToolManifest.GetRequired("zemax_batch_set_surfaces").InputSchema;
+        var batchRequired = batchSurfaces.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
+        if (!batchRequired.SetEquals(new[] { "edits" }))
+            throw new InvalidOperationException("zemax_batch_set_surfaces must require only the edits array.");
+        var batchItems = batchSurfaces.GetProperty("properties").GetProperty("edits").GetProperty("items");
+        var batchItemRequired = batchItems.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
+        if (!batchItemRequired.SetEquals(new[] { "surfaceNumber" }) ||
+            !batchItems.GetProperty("properties").TryGetProperty("thickness", out _) ||
+            !batchItems.GetProperty("properties").TryGetProperty("isStop", out _))
+            throw new InvalidOperationException("Batch surface-edit schema must preserve required surfaceNumber and nullable edit fields.");
+
+        var rayDiagnostics = StaticToolManifest.GetRequired("zemax_ray_trace_diagnostics").InputSchema.GetProperty("properties");
+        if (rayDiagnostics.GetProperty("fieldSampling").GetProperty("default").GetInt32() != 5 ||
+            rayDiagnostics.GetProperty("pupilSampling").GetProperty("default").GetInt32() != 5 ||
+            rayDiagnostics.GetProperty("maxFailures").GetProperty("default").GetInt32() != 50)
+            throw new InvalidOperationException("Ray-trace diagnostics must preserve bounded sampling defaults.");
 
         var setFields = StaticToolManifest.GetRequired("zemax_set_fields").InputSchema;
         var setFieldsRequired = setFields.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);

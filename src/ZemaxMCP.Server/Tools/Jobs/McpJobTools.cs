@@ -11,9 +11,10 @@ public sealed class McpJobTools
     public McpJobTools(McpJobManager jobs) => _jobs = jobs;
 
     public record JobInfo(
-        string JobId, string ToolName, string State, int QueuePosition,
+        string JobId, string ToolName, string? ParentOperationId, string State, int QueuePosition,
         double? ProgressPercent, string Message, DateTimeOffset QueuedAt,
-        DateTimeOffset? StartedAt, DateTimeOffset? CompletedAt, double? ElapsedSeconds, object? Result);
+        DateTimeOffset? StartedAt, DateTimeOffset? CompletedAt, double? ElapsedSeconds,
+        bool ResultExpired, object? Result);
 
     [ZemaxTool(Name = "zemax_job_status")]
     [Description("Get state, queue position, elapsed time, and progress for a background Zemax job.")]
@@ -21,8 +22,31 @@ public sealed class McpJobTools
         ToInfo(_jobs.Get(jobId));
 
     [ZemaxTool(Name = "zemax_job_list")]
-    [Description("List recent background Zemax jobs, including queued, running, completed, cancelled, and failed jobs.")]
-    public IReadOnlyList<JobInfo> List() => _jobs.List().Select(ToInfo).Where(x => x != null).Cast<JobInfo>().ToArray();
+    [Description("List recent background Zemax jobs with bounded output. Optionally filter by lifecycle state.")]
+    public IReadOnlyList<JobInfo> List(
+        [Description("Maximum jobs to return (1-193), newest first")] int limit = 50,
+        [Description("Optional state filter: Queued, Running, Cancelling, Completed, Cancelled, or Failed")] string? state = null)
+    {
+        const int maximumVisibleJobs = McpJobManager.DefaultMaxHistory + McpJobManager.DefaultMaxPending + 1;
+        if (limit is < 1 or > maximumVisibleJobs)
+            throw new ArgumentOutOfRangeException(nameof(limit), $"limit must be between 1 and {maximumVisibleJobs}.");
+
+        McpJobState? filter = null;
+        if (!string.IsNullOrWhiteSpace(state))
+        {
+            if (!Enum.TryParse<McpJobState>(state.Trim(), ignoreCase: true, out var parsed))
+                throw new ArgumentException("state must be Queued, Running, Cancelling, Completed, Cancelled, or Failed.", nameof(state));
+            filter = parsed;
+        }
+
+        return _jobs.List()
+            .Where(job => !filter.HasValue || job.State == filter.Value)
+            .Take(limit)
+            .Select(ToInfo)
+            .Where(info => info != null)
+            .Cast<JobInfo>()
+            .ToArray();
+    }
 
     [ZemaxTool(Name = "zemax_job_cancel")]
     [Description("Request cooperative cancellation of a queued or running Zemax job. A running ZOS-API call stops at its next safe cancellation point without restarting the MCP server.")]
@@ -33,8 +57,9 @@ public sealed class McpJobTools
     }
 
     internal static JobInfo? ToInfo(McpJobSnapshot? job) => job == null ? null : new JobInfo(
-        job.JobId, job.ToolName, job.State.ToString(), job.QueuePosition,
+        job.JobId, job.ToolName, job.ParentOperationId, job.State.ToString(), job.QueuePosition,
         job.Progress is { } progress ? Math.Round(progress * 100, 1) : null,
         job.Message, job.QueuedAt, job.StartedAt, job.CompletedAt,
-        job.Elapsed?.TotalSeconds is { } elapsed ? Math.Round(elapsed, 1) : null, job.Result);
+        job.Elapsed?.TotalSeconds is { } elapsed ? Math.Round(elapsed, 1) : null,
+        job.ResultExpired, job.Result);
 }

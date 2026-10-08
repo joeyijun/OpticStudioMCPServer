@@ -52,13 +52,14 @@ public class RayTraceExtendedTool
                     if (wavelength > wavelengthCount)
                         throw new ArgumentOutOfRangeException(nameof(wavelength), $"Wavelength must be between 1 and {wavelengthCount}.");
 
+                    var calculateOpd = target == lastSurface;
                     var ray = system.Tools.OpenBatchRayTrace();
                     if (ray == null)
                         throw new InvalidOperationException("OpticStudio did not open Batch Ray Trace.");
                     try
                     {
                         var apiSuccess = ray.SingleRayNormUnpol(
-                            RaysType.Real, target, wavelength, hx, hy, px, py, true,
+                            RaysType.Real, target, wavelength, hx, hy, px, py, calculateOpd,
                             out var error, out var vignette,
                             out var x, out var y, out var z,
                             out var l, out var m, out var n,
@@ -75,6 +76,10 @@ public class RayTraceExtendedTool
                     }
                     finally { ray.Close(); }
                 }, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {

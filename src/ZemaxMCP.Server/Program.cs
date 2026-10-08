@@ -94,7 +94,20 @@ internal static class ServerApplication
             builder.Services.AddSingleton<OperandSearchService>();
             builder.Services.AddSingleton<ConstraintStore>();
             builder.Services.AddSingleton<MultistartState>();
-            builder.Services.AddSingleton<McpJobManager>();
+            builder.Services.AddSingleton(_ =>
+            {
+                var recoverySeconds = ReadPositiveIntEnvironment("ZEMAX_MCP_JOB_RECOVERY_TIMEOUT_SECONDS", 60);
+                return new McpJobManager(
+                    cancellationGrace: TimeSpan.FromSeconds(recoverySeconds),
+                    hardRecoveryAction: snapshot =>
+                    {
+                        Log.Fatal(
+                            "Background job {JobId} ({ToolName}) did not stop after cancellation; terminating Worker generation for Host recovery.",
+                            snapshot.JobId,
+                            snapshot.ToolName);
+                        Environment.Exit(70);
+                    });
+            });
             builder.Services.AddSingleton<ZemaxMCP.Server.Tooling.WorkerToolRegistry>();
 
             var host = builder.Build();
@@ -121,6 +134,12 @@ internal static class ServerApplication
             workerPipe?.Dispose();
             Log.CloseAndFlush();
         }
+    }
+
+    private static int ReadPositiveIntEnvironment(string name, int fallback)
+    {
+        var raw = Environment.GetEnvironmentVariable(name);
+        return int.TryParse(raw, out var value) && value > 0 ? value : fallback;
     }
 
     private static string? ReadOption(string[] args, string option)

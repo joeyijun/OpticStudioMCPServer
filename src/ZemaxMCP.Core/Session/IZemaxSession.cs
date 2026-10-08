@@ -56,5 +56,6 @@ public interface IZemaxSession : IDisposable
 
     Task<bool> OpenFileAsync(string filePath, CancellationToken cancellationToken = default);
     Task<bool> SaveFileAsync(string? filePath = null, CancellationToken cancellationToken = default);
+    Task<string> RestoreSnapshotAsync(string snapshotPath, CancellationToken cancellationToken = default);
     Task<bool> NewSystemAsync(CancellationToken cancellationToken = default);
 }

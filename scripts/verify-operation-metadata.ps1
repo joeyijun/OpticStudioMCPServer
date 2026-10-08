@@ -63,7 +63,7 @@ if ([string]::IsNullOrWhiteSpace($domainLookup) -or $domainLookup -match 'Starts
 $profileDomains = @{
     'basic-viewing' = @('system', 'sequential-editing', 'analysis', 'administration')
     'sequential-design' = @('system', 'sequential-editing', 'analysis', 'polarization', 'files', 'administration')
-    'nonsequential-stray-light' = @('system', 'non-sequential', 'analysis', 'files', 'administration')
+    'nonsequential-stray-light' = @('system', 'non-sequential', 'analysis', 'optimization', 'polarization', 'files', 'administration')
     'optimization-tolerance' = @('system', 'sequential-editing', 'analysis', 'optimization', 'tolerance', 'polarization', 'files', 'administration')
     'full-expert' = @('system', 'sequential-editing', 'non-sequential', 'analysis', 'optimization', 'tolerance', 'polarization', 'files', 'administration')
 }
@@ -84,8 +84,9 @@ $profiles = @{
 if ($toolset -notmatch 'public static IEnumerable<string> EnabledImpacts' -or $toolset -notmatch 'ToolImpact\.ReadOnly') {
     throw "Toolset profiles must declare their allowed impacts as well as their domains."
 }
-if (-not [regex]::IsMatch($toolset, 'EnabledImpacts\(profile\)[\s\S]*?GetImpact\(toolName!?', [Text.RegularExpressions.RegexOptions]::Singleline)) {
-    throw "Toolset admission must compose explicit domain and impact metadata."
+if (-not [regex]::IsMatch($toolset, 'EnabledImpacts\((?:profile|normalized)\)[\s\S]*?GetImpact\(toolName!?', [Text.RegularExpressions.RegexOptions]::Singleline) -or
+    $toolset -notmatch 'FocusedProfileTools') {
+    throw "Toolset admission must compose explicit domain/impact metadata with the reviewed focused-profile allowlists."
 }
 $domainByTool = @{}
 foreach ($match in $domainMatches) { $domainByTool[$match.Groups[1].Value] = $match.Groups[2].Value }
@@ -108,7 +109,14 @@ if (@($expectedHighImpact | Where-Object { $_ -notin $toolsetHighImpact }).Count
     throw "Toolset HighImpact metadata must match the authoritative safety catalogue."
 }
 foreach ($profile in $profiles.Keys) {
+    $focusedTools = @()
     if ($profile -ne 'full-expert') {
+        $caseName = [regex]::Escape($profileCases[$profile])
+        $focusedMatch = [regex]::Match($toolset, '(?s)\[' + $caseName + '\]\s*=\s*NewToolSet\((?<names>.*?)\)')
+        if (-not $focusedMatch.Success) { throw "Toolset '$profile' is missing its explicit focused allowlist." }
+        $focusedTools = @([regex]::Matches($focusedMatch.Groups['names'].Value, '"(zemax_[^"]+)"') |
+            ForEach-Object { $_.Groups[1].Value })
+        if ($focusedTools.Count -eq 0) { throw "Toolset '$profile' focused allowlist cannot be empty." }
         $domainList = ($profileDomains[$profile] | ForEach-Object { '"' + $_ + '"' }) -join ', '
         $expectedCase = $profileCases[$profile] + ' => new[] { ' + $domainList + ' }'
         if ($toolset -notmatch [regex]::Escape($expectedCase)) {
@@ -120,11 +128,13 @@ foreach ($profile in $profiles.Keys) {
     }
     foreach ($tool in $profiles[$profile].present) {
         $allowed = $domainByTool[$tool] -in $profileDomains[$profile]
+        if ($profile -ne 'full-expert') { $allowed = $allowed -and ($tool -in $focusedTools) }
         if ($profile -eq 'basic-viewing') { $allowed = $allowed -and $impactByTool[$tool] -eq 'ReadOnly' }
         if (-not $allowed) { throw "Toolset '$profile' must include '$tool'." }
     }
     foreach ($tool in $profiles[$profile].absent) {
         $allowed = $domainByTool[$tool] -in $profileDomains[$profile]
+        if ($profile -ne 'full-expert') { $allowed = $allowed -and ($tool -in $focusedTools) }
         if ($profile -eq 'basic-viewing') { $allowed = $allowed -and $impactByTool[$tool] -eq 'ReadOnly' }
         if ($allowed) { throw "Toolset '$profile' must exclude '$tool'." }
     }

@@ -11,12 +11,15 @@ internal sealed class HostOptions
     public string McpPath { get; private set; } = "/mcp";
     public string LogDirectory { get; private set; } = Path.Combine(AppContext.BaseDirectory, "logs");
     public string AccessToken { get; private set; } = Environment.GetEnvironmentVariable("ZEMAX_MCP_TOKEN") ?? string.Empty;
+    public string ClientCredentialsFile { get; private set; } = Environment.GetEnvironmentVariable("ZEMAX_MCP_CLIENTS_FILE") ?? string.Empty;
     public int WorkerStartupTimeoutSeconds { get; private set; } = 90;
     public int RequestTimeoutSeconds { get; private set; } = 300;
     public int RequestWriteTimeoutSeconds { get; private set; } = 10;
     public int HardRecoveryTimeoutSeconds { get; private set; } = 360;
+    public int JobRecoveryTimeoutSeconds { get; private set; } = 60;
     public int CancellationWriteTimeoutSeconds { get; private set; } = 5;
     public bool ReadOnly { get; private set; }
+    public bool EnableOfficialTasks { get; private set; } = true;
     public string Toolset { get; private set; } = "full-expert";
     public string SnapshotDirectory { get; private set; } = Environment.GetEnvironmentVariable("ZEMAX_MCP_SNAPSHOT_DIR") ??
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZemaxMCP", "snapshots");
@@ -48,12 +51,18 @@ internal sealed class HostOptions
                 case "--request-timeout-seconds": options.RequestTimeoutSeconds = ParseRange(value, option, 10, 3600); break;
                 case "--request-write-timeout-seconds": options.RequestWriteTimeoutSeconds = ParseRange(value, option, 1, 60); break;
                 case "--hard-recovery-timeout-seconds": options.HardRecoveryTimeoutSeconds = ParseRange(value, option, 20, 7200); break;
+                case "--job-recovery-timeout-seconds": options.JobRecoveryTimeoutSeconds = ParseRange(value, option, 5, 1800); break;
                 case "--cancellation-write-timeout-seconds": options.CancellationWriteTimeoutSeconds = ParseRange(value, option, 1, 30); break;
                 case "--allowed-origin": options._allowedOrigins.Add(OriginRule.Parse(value)); break;
                 case "--allowed-host": options._allowedHosts.Add(ParseHost(value, option)); break;
                 case "--read-only": options.ReadOnly = ParseBoolean(value, option); break;
+                case "--enable-official-tasks": options.EnableOfficialTasks = ParseBoolean(value, option); break;
                 case "--toolset": options.Toolset = value; break;
                 case "--snapshot-dir": options.SnapshotDirectory = value; break;
+                case "--client-credentials-file":
+                    if (string.IsNullOrWhiteSpace(value)) throw new ArgumentException("--client-credentials-file cannot be empty.");
+                    options.ClientCredentialsFile = value;
+                    break;
                 // The superseded bridge test switches are intentionally rejected
                 // so test-only faults cannot leak into product execution.
                 default: throw new ArgumentException("Unknown Host option: " + args[i]);
@@ -62,14 +71,26 @@ internal sealed class HostOptions
 
         if (string.IsNullOrWhiteSpace(options.WorkerPath)) throw new ArgumentException("--worker cannot be empty.");
         if (string.IsNullOrWhiteSpace(options.Host)) throw new ArgumentException("--host cannot be empty.");
+        if (options.ClientCredentialsFile.Length != 0 && string.IsNullOrWhiteSpace(options.ClientCredentialsFile))
+            throw new ArgumentException("ZEMAX_MCP_CLIENTS_FILE cannot be whitespace.");
         if (options.HardRecoveryTimeoutSeconds <= options.RequestTimeoutSeconds)
             throw new ArgumentException("--hard-recovery-timeout-seconds must be greater than --request-timeout-seconds.");
         // Local loopback use may remain tokenless for zero-setup desktop clients.
         // Any non-loopback binding exposes the MCP endpoint beyond this machine
         // and therefore requires explicit bearer authentication, whether the
         // binding is a wildcard, a concrete LAN address, or a host name.
-        if (!IsLoopback(options.Host) && string.IsNullOrWhiteSpace(options.AccessToken))
-            throw new ArgumentException("LAN sharing requires ZEMAX_MCP_TOKEN to be configured.");
+        if (!string.IsNullOrWhiteSpace(options.ClientCredentialsFile) &&
+            !string.IsNullOrWhiteSpace(options.AccessToken))
+            throw new ArgumentException("ZEMAX_MCP_TOKEN and --client-credentials-file/ZEMAX_MCP_CLIENTS_FILE are mutually exclusive.");
+        if (!string.IsNullOrWhiteSpace(options.ClientCredentialsFile))
+        {
+            options.ClientCredentialsFile = Path.GetFullPath(options.ClientCredentialsFile);
+            _ = new ClientCredentialStore(options.ClientCredentialsFile);
+        }
+        if (!IsLoopback(options.Host) &&
+            string.IsNullOrWhiteSpace(options.AccessToken) &&
+            string.IsNullOrWhiteSpace(options.ClientCredentialsFile))
+            throw new ArgumentException("LAN sharing requires ZEMAX_MCP_TOKEN or a client credential file.");
         if (options._allowedHosts.Count == 0)
         {
             if (IsWildcardBind(options.Host))

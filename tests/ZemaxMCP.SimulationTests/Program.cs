@@ -2,6 +2,7 @@ using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Services.GlassCatalog;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Services.Jobs;
+using ZemaxMCP.Server.Tools.Base;
 
 internal static class Program
 {
@@ -10,10 +11,14 @@ internal static class Program
         try
         {
             VerifyOperationMetadataAndSnapshotBoundary();
+            VerifyScientificNumberTruthfulness();
+            VerifyStructuredMtf();
             VerifyGlassCatalogSafety();
             await VerifyStaDispatcherAsync();
             await VerifyJobManagerAsync();
-            Console.WriteLine("Core safety abstraction, glass-catalog integrity, STA dispatcher, and server job simulation tests passed.");
+            await VerifyJobLimitsAsync();
+            await VerifyJobHardRecoveryAsync();
+            Console.WriteLine("Core safety abstraction, scientific-number truthfulness, glass-catalog integrity, STA dispatcher, and bounded server job simulation tests passed.");
             return 0;
         }
         catch (Exception exception)
@@ -57,6 +62,41 @@ internal static class Program
             Environment.SetEnvironmentVariable("ZEMAX_MCP_SNAPSHOT_DIR", oldSnapshots);
             try { Directory.Delete(root, true); } catch { }
         }
+    }
+
+    private static void VerifyScientificNumberTruthfulness()
+    {
+        Assert(double.PositiveInfinity.OpticalDimension() == null &&
+               double.PositiveInfinity.OpticalDimensionState() == "PositiveInfinity",
+               "Optical infinity must be explicitly represented, not fabricated as a finite number.");
+        Assert(double.NegativeInfinity.OpticalDimension() == null &&
+               double.NegativeInfinity.OpticalDimensionState() == "NegativeInfinity", "Infinity sign was lost.");
+        Assert(1.25.OpticalDimension() == 1.25 && 1.25.OpticalDimensionState() == "Finite", "Finite dimension changed.");
+        AssertThrows<InvalidDataException>(() => double.NaN.OpticalDimension(), "NaN dimensions must remain errors.");
+        Assert(Math.Abs(1.25.Sanitize() - 1.25) < 1e-12, "Finite scientific values must be preserved exactly.");
+        AssertThrows<InvalidDataException>(
+            () => double.NaN.Sanitize(),
+            "NaN must not be rewritten into a plausible finite measurement.");
+        AssertThrows<InvalidDataException>(
+            () => double.PositiveInfinity.Sanitize(),
+            "Infinity must not be rewritten into an arbitrary finite measurement.");
+        Assert(double.PositiveInfinity.SanitizeRadius() == 0,
+            "Infinite optical radius should retain the established plane-surface convention.");
+        AssertThrows<InvalidDataException>(
+            () => double.NaN.SanitizeRadius(),
+            "NaN radius must not be misreported as a plane surface.");
+    }
+
+    private static void VerifyStructuredMtf()
+    {
+        var field = ZemaxMCP.Server.Tools.Analysis.MtfSeriesReader.Read("视场：0 度", 1,
+            new[] { 0.0, 10.0 }, new double[,] { { 1, 1 }, { 0.8, 0.7 } });
+        Assert(field.FieldLabel == "视场：0 度" && field.TangentialMtf![1] == 0.8 && field.SagittalMtf![1] == 0.7,
+            "Structured MTF must preserve localized labels and distinguish tangential/sagittal columns.");
+        AssertThrows<InvalidDataException>(() => ZemaxMCP.Server.Tools.Analysis.MtfSeriesReader.Read("bad", 1,
+            new[] { 0.0 }, new double[,] { { double.NaN, 1 } }), "Invalid MTF measurements must fail.");
+        AssertThrows<InvalidDataException>(() => ZemaxMCP.Server.Tools.Analysis.MtfSeriesReader.Read("bad", 1,
+            new[] { 0.0, 10.0 }, new double[,] { { 1, 1 } }), "MTF shape mismatch must fail.");
     }
 
     private static void VerifyGlassCatalogSafety()
@@ -160,6 +200,117 @@ internal static class Program
         Assert(jobs.Cancel(queued.JobId, out _), "Queued/running job could not be cancelled.");
         var terminal = await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert(terminal.State == McpJobState.Cancelled, "Cancelled job did not reach a terminal cancelled state.");
+        Assert(terminal.Elapsed == terminal.CompletedAt - terminal.StartedAt, "Cancelled elapsed time must end at cancellation.");
+        await Task.Delay(70);
+        Assert(jobs.Get(terminal.JobId)!.Elapsed == terminal.Elapsed, "Cancelled elapsed time must not grow on later polling.");
+    }
+
+    private static async Task VerifyJobLimitsAsync()
+    {
+        using (var boundedQueue = new McpJobManager(maxHistory: 4, maxPending: 2))
+        {
+            var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            boundedQueue.Enqueue("blocking", async context =>
+            {
+                started.TrySetResult();
+                await release.Task.WaitAsync(context.CancellationToken);
+            });
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            boundedQueue.Enqueue("queued-1", _ => Task.CompletedTask);
+            boundedQueue.Enqueue("queued-2", _ => Task.CompletedTask);
+            AssertThrows<InvalidOperationException>(
+                () => boundedQueue.Enqueue("queued-overflow", _ => Task.CompletedTask),
+                "Background jobs beyond the configured pending limit must be rejected.");
+            release.TrySetResult();
+        }
+
+        using (var boundedHistory = new McpJobManager(maxHistory: 3, maxPending: 8, maxResultHistory: 2))
+        {
+            var completedCount = 0;
+            var allCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            boundedHistory.JobChanged += snapshot =>
+            {
+                if (snapshot.State == McpJobState.Completed &&
+                    snapshot.ToolName.StartsWith("history-", StringComparison.Ordinal) &&
+                    Interlocked.Increment(ref completedCount) == 5)
+                    allCompleted.TrySetResult();
+            };
+
+            for (var index = 0; index < 5; index++)
+            {
+                var resultValue = index;
+                boundedHistory.Enqueue("history-" + index, context =>
+                {
+                    context.SetResult(new string('x', 1024) + resultValue);
+                    return Task.CompletedTask;
+                });
+            }
+
+            await allCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Task.Delay(50);
+            var retained = boundedHistory.List();
+            Assert(retained.Count == 3, "Completed job history must be trimmed to the configured retention limit.");
+            Assert(retained.All(job => job.State == McpJobState.Completed), "Retained job history unexpectedly contains non-terminal jobs.");
+            foreach (var job in retained)
+                Assert(job.Elapsed == job.CompletedAt - job.StartedAt, "Completed job elapsed time must stop at completion.");
+            var finished = retained[0];
+            await Task.Delay(70);
+            Assert(boundedHistory.Get(finished.JobId)!.Elapsed == finished.Elapsed, "Terminal elapsed time must not grow on later polling.");
+            Assert(retained.Count(job => !job.ResultExpired && job.Result != null) == 2,
+                "Only the configured newest result payloads should remain resident.");
+            Assert(retained.Count(job => job.ResultExpired && job.Result == null) == 1,
+                "Older retained job metadata must explicitly mark its discarded result payload.");
+        }
+    }
+
+    private static async Task VerifyJobHardRecoveryAsync()
+    {
+        var recovery = new TaskCompletionSource<McpJobSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var jobs = new McpJobManager(
+            maxHistory: 4,
+            maxPending: 2,
+            cancellationGrace: TimeSpan.FromMilliseconds(75),
+            hardRecoveryAction: snapshot => recovery.TrySetResult(snapshot));
+
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var never = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var job = jobs.Enqueue("hung-background-job", async context =>
+        {
+            started.TrySetResult();
+            await never.Task;
+            // Simulate an abandoned, non-cooperative COM operation returning
+            // after the hard-recovery decision was already published.
+            context.SetResult("late-result-must-not-leak");
+            context.ReportProgress(1, "late success");
+        });
+
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var queuedExecuted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var waiting = jobs.Enqueue("must-not-run-after-hard-recovery", _ =>
+        {
+            queuedExecuted.TrySetResult();
+            return Task.CompletedTask;
+        });
+        Assert(jobs.Cancel(job.JobId, out _), "A running background job could not enter cancellation.");
+        var hardFailure = await recovery.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert(hardFailure.JobId == job.JobId && hardFailure.State == McpJobState.Failed,
+            "A non-draining background job did not transition to failed hard-recovery state.");
+        Assert(hardFailure.Message.Contains("hard recovery", StringComparison.OrdinalIgnoreCase),
+            "Hard-recovery failure did not explain why the Worker generation must be replaced.");
+        var abandoned = jobs.Get(waiting.JobId);
+        Assert(abandoned is { State: McpJobState.Failed } && !queuedExecuted.Task.IsCompleted,
+            "A queued background job was not failed when its Worker generation required hard recovery.");
+        AssertThrows<InvalidOperationException>(
+            () => jobs.Enqueue("unsafe-post-recovery", _ => Task.CompletedTask),
+            "A Worker with an orphaned COM call must reject all new background jobs.");
+        never.TrySetResult();
+        await Task.Delay(100);
+        var stillFailed = jobs.Get(job.JobId);
+        Assert(stillFailed is { State: McpJobState.Failed, Result: null } &&
+               stillFailed.Message.Contains("hard recovery", StringComparison.OrdinalIgnoreCase),
+            "A late COM result/progress resurrected an already-failed Job after hard recovery.");
     }
 
     private static void Assert(bool condition, string message)

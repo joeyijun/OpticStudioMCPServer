@@ -13,6 +13,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '10.0.x' }
+      - name: Verify README Markdown tables
+        shell: pwsh
+        run: ./scripts/verify-readme-tables.ps1
       - name: Verify MCP tool registration
         shell: pwsh
         run: ./scripts/verify-tool-registration.ps1
@@ -39,6 +42,9 @@ jobs:
           dotnet build src/ZemaxMCP.Launcher/ZemaxMCP.Launcher.csproj -c Release
           dotnet build src/ZemaxMCP.Installer/ZemaxMCP.Installer.csproj -c Release
           dotnet build src/ZemaxMCP.Updater/ZemaxMCP.Updater.csproj -c Release
+      - name: Smoke-test launcher materials and rounded tray menu
+        shell: pwsh
+        run: powershell -NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File .\scripts\test-launcher-materials.ps1 -Configuration Release
       - name: Verify discovery, configuration paths, and icons
         shell: pwsh
         run: ./scripts/verify-desktop-components.ps1 -Configuration Release

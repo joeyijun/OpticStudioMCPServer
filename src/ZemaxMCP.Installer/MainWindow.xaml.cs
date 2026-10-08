@@ -2,16 +2,25 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using System.Threading.Tasks;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using ZemaxMCP.DesktopShared;
 
 namespace ZemaxMCP.Installer;
 
 public partial class MainWindow : Window
 {
-    public MainWindow() { InitializeComponent(); Status.Text = "Destination: " + InstallDirectory; }
+    private bool _installing;
+    public MainWindow() { InitializeComponent(); Status.Text = "Destination: " + InstallDirectory; Closing += (_, e) => { if (_installing) e.Cancel = true; }; }
     private static string InstallDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZemaxMCP");
 
-    private void Install_Click(object sender, RoutedEventArgs e)
+    private async void Install_Click(object sender, RoutedEventArgs e)
     {
+        if (_installing) return;
+        _installing = true;
+        InstallButton.IsEnabled = false;
+        CloseButton.IsEnabled = false;
         try
         {
             var source = AppDomain.CurrentDomain.BaseDirectory;
@@ -23,31 +32,75 @@ public partial class MainWindow : Window
                 StringComparison.OrdinalIgnoreCase);
             if (!alreadyInstalled)
             {
-                Status.Text = Directory.Exists(target) && Directory.EnumerateFileSystemEntries(target).Any()
+                var existingLauncher = Path.Combine(target, "Start-Zemax-MCP.exe");
+                var hasExistingInstall = File.Exists(existingLauncher);
+                Status.Text = hasExistingInstall
                     ? "Updating the existing installation. Stopping the old launcher…"
                     : "Installing Zemax MCP…";
-                StopExistingProcesses();
-                foreach (var file in Directory.GetFiles(source))
+                await Task.Run(() =>
                 {
-                    var name = Path.GetFileName(file);
-                    if (!name.StartsWith("Install", StringComparison.OrdinalIgnoreCase)) File.Copy(file, Path.Combine(target, name), true);
-                }
-                foreach (var directory in Directory.GetDirectories(source)) CopyDirectory(directory, Path.Combine(target, Path.GetFileName(directory)));
+                    if (hasExistingInstall) RunUpdater(source, target);
+                    else { StopExistingProcesses(); CopyInitialInstall(source, target); }
+                });
             }
             var launcher = Path.Combine(target, "Start-Zemax-MCP.exe");
             if (!File.Exists(launcher)) throw new FileNotFoundException("The release package is missing Start-Zemax-MCP.exe.");
             CreateDesktopShortcut(launcher);
             Status.Text = "Installed successfully. A desktop shortcut was created. Starting Zemax MCP…";
             Process.Start(launcher);
+            _installing = false;
             Close();
         }
         catch (Exception ex) { Status.Text = "Installation failed: " + ex.Message; }
+        finally { _installing = false; InstallButton.IsEnabled = true; CloseButton.IsEnabled = true; }
     }
-    private static void CopyDirectory(string source, string target)
+    private static void CopyInitialInstall(string source, string target)
     {
         Directory.CreateDirectory(target);
-        foreach (var file in Directory.GetFiles(source)) File.Copy(file, Path.Combine(target, Path.GetFileName(file)), true);
-        foreach (var folder in Directory.GetDirectories(source)) CopyDirectory(folder, Path.Combine(target, Path.GetFileName(folder)));
+        foreach (var file in Directory.GetFiles(source))
+        {
+            var name = Path.GetFileName(file);
+            if (IsPackageOnlyFile(name) || InstallRuntimeData.IsFile(name)) continue;
+            InstallRuntimeData.WithRetry(() => File.Copy(file, Path.Combine(target, name), true));
+        }
+        foreach (var folder in Directory.GetDirectories(source))
+        {
+            var name = Path.GetFileName(folder);
+            if (InstallRuntimeData.IsDirectory(name)) continue;
+            CopyInitialInstall(folder, Path.Combine(target, name));
+        }
+    }
+
+    private static bool IsPackageOnlyFile(string name) =>
+        name.Equals("Install.exe", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("Portable-Install.cmd", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("release.zip", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("release-manifest.json", StringComparison.OrdinalIgnoreCase);
+
+    private static void RunUpdater(string source, string target)
+    {
+        var updater = Path.Combine(source, "ZemaxMCP.Updater.exe");
+        if (!File.Exists(updater))
+            throw new FileNotFoundException("The release package is missing ZemaxMCP.Updater.exe.", updater);
+
+        var arguments =
+            "--staging \"" + source.TrimEnd(Path.DirectorySeparatorChar) +
+            "\" --install \"" + target.TrimEnd(Path.DirectorySeparatorChar) +
+            "\" --parent-pid 0 --restart false";
+        using var process = Process.Start(new ProcessStartInfo(updater, arguments)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true
+        }) ?? throw new InvalidOperationException("Could not start ZemaxMCP.Updater.exe.");
+
+        if (!process.WaitForExit(240000))
+        {
+            // Do not kill a transactional updater halfway through replacement/rollback.
+            throw new TimeoutException("The updater is still running after 240 seconds. Do not start another installation; check update.log for recovery details.");
+        }
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException(
+                "The update could not be applied or rolled back cleanly. Check %LOCALAPPDATA%\\ZemaxMCP\\update.log; any preserved recovery backup path is recorded there.");
     }
     private static void StopExistingProcesses()
     {
@@ -76,8 +129,25 @@ public partial class MainWindow : Window
         shortcut.TargetPath = target;
         shortcut.WorkingDirectory = Path.GetDirectoryName(target);
         shortcut.Description = "Start Zemax MCP HTTP bridge";
-        shortcut.IconLocation = target + ",0";
+        shortcut.IconLocation = CreateShortcutIcon(Path.GetDirectoryName(target)!) + ",0";
         shortcut.Save();
+        SHChangeNotify(0x00002000, 0x0005, Path.Combine(desktop, "Start Zemax MCP.lnk"), IntPtr.Zero);
+        SHChangeNotify(0x08000000, 0, null, IntPtr.Zero);
     }
-    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+    internal static string CreateShortcutIcon(string install)
+    {
+        var source = Path.Combine(install, "ZemaxMCP.ico");
+        if (!File.Exists(source)) return Path.Combine(install, "Start-Zemax-MCP.exe");
+        var bytes = File.ReadAllBytes(source);
+        using var sha = SHA256.Create();
+        var hash = BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
+        var directory = Path.Combine(install, "shortcut-icons");
+        Directory.CreateDirectory(directory);
+        var icon = Path.Combine(directory, "zemax-" + hash + ".ico");
+        if (!File.Exists(icon)) InstallRuntimeData.WithRetry(() => File.WriteAllBytes(icon, bytes));
+        return icon;
+    }
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern void SHChangeNotify(uint eventId, uint flags, string? item1, IntPtr item2);
+    private void Close_Click(object sender, RoutedEventArgs e) { if (!_installing) Close(); }
 }

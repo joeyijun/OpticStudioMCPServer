@@ -25,6 +25,7 @@ if ($export -notmatch 'AnalysisBmpHelper\.TryExportBmp\(results, tempImagePath, 
     throw "zemax_export_analysis must propagate cancellation into BMP rendering, check TXT export truthfully, use atomic commits, and never fall back to a different requested format."
 }
 
+$rayDiagnostics = Get-Content -LiteralPath (Join-Path $analysisRoot "RayTraceDiagnosticsTool.cs") -Raw
 $pop = Get-Content -LiteralPath (Join-Path $analysisRoot "PopTool.cs") -Raw
 if ($pop -notmatch 'RestoreTemporaryResampling' -or
     $pop -notmatch 'analysis\.Terminate\(\)' -or
@@ -34,12 +35,29 @@ if ($pop -notmatch 'RestoreTemporaryResampling' -or
     $pop -match '\bdynamic\b') {
     throw "zemax_pop must retain typed result retrieval, cancellable analysis/BMP execution, temporary LDE-state restoration, and explicit output overwrite policy."
 }
+if ($rayDiagnostics -notmatch 'MaximumSampledRays' -or
+    $rayDiagnostics -notmatch 'LocateFirstProblemSurface' -or
+    $rayDiagnostics -notmatch 'SingleRayNormUnpol' -or
+    $rayDiagnostics -notmatch 'CancellationToken cancellationToken' -or
+    $rayDiagnostics -notmatch 'ValidateFiniteTrace') {
+    throw "zemax_ray_trace_diagnostics must remain bounded, cancellable, based on actual batch-ray error/vignette codes, and localize problem rays by progressive surface tracing."
+}
 
+$nscRayTrace = Get-Content -LiteralPath (Join-Path $nscRoot "RunNscRayTraceTool.cs") -Raw
 $detector = Get-Content -LiteralPath (Join-Path $nscRoot "GetNscDetectorTool.cs") -Raw
 if ($detector -notmatch 'out var rows, out var columns' -or
     $detector -notmatch 'expectedPixels = checked\(\(ulong\)rows \* columns\)' -or
     $detector -notmatch 'CancellationToken cancellationToken') {
     throw "zemax_get_nsc_detector must retain official Rows/Cols ordering, size cross-check, and cancellation."
+}
+
+if ($nscRayTrace -notmatch 'OpenNSCRayTrace\(\)' -or
+    $nscRayTrace -notmatch 'trace\.SaveRays = false' -or
+    $nscRayTrace -notmatch 'RunBounded\(' -or
+    $nscRayTrace -notmatch 'CancelAndDrain\(' -or
+    $nscRayTrace -notmatch 'McpJobManager' -or
+    $nscRayTrace -notmatch 'timeoutSeconds \+ 30') {
+    throw "zemax_run_nsc_ray_trace must use the official NSC trace tool, avoid unreviewed ZRD output, remain bounded/cancellable, and support managed background Jobs."
 }
 
 $objects = Get-Content -LiteralPath (Join-Path $nscRoot "GetNscObjectsTool.cs") -Raw
@@ -53,11 +71,31 @@ if ($objects -notmatch 'startObject > numberOfObjects' -or $objects -notmatch 'V
 }
 
 $tolerances = Get-Content -LiteralPath (Join-Path $toleranceRoot "GetTolerancesTool.cs") -Raw
+$runTolerancing = Get-Content -LiteralPath (Join-Path $toleranceRoot "RunTolerancingTool.cs") -Raw
 if ($tolerances -notmatch 'ReadUsedFinite' -or
     $tolerances -notmatch 'row\.IsParam1Used' -or
     $tolerances -notmatch 'startRow > numberOfOperands' -or
     $tolerances -notmatch 'CancellationToken cancellationToken') {
     throw "zemax_get_tolerances must retain used-field semantics, strict pagination/finite bounds, and cancellation."
+}
+if ($runTolerancing -notmatch 'OpenTolerancing\(\)' -or
+    $runTolerancing -notmatch 'SaveTolDataFile = true' -or
+    $runTolerancing -notmatch 'TolDataFile = Path.GetFileName\(ztdPath\)' -or
+    $runTolerancing -notmatch 'NumberToSave = 0' -or
+    $runTolerancing -notmatch 'OpenToleranceDataViewer\(\)' -or
+    $runTolerancing -notmatch 'viewer.IsAsynchronous' -or
+    $runTolerancing -notmatch 'viewer.RunAndWaitForCompletion\(\)' -or
+    $runTolerancing -notmatch 'ViewerDiagnostic' -or
+    $runTolerancing -notmatch 'MonteCarloData' -or
+    $runTolerancing -notmatch 'SensitivityData' -or
+    $runTolerancing -notmatch 'thresholdDirection must be LessOrEqual or GreaterOrEqual' -or
+    $runTolerancing -notmatch 'CanonicalCriterionName' -or
+    $runTolerancing -notmatch 'CanonicalCompName' -or
+    $runTolerancing -notmatch 'CanonicalFieldName' -or
+    $runTolerancing -notmatch 'FiniteOrNull' -or
+    $runTolerancing -notmatch 'McpJobManager' -or
+    $runTolerancing -notmatch 'RunBounded\(') {
+    throw "zemax_run_tolerancing must use the official Tolerancing/ZTD/DataViewer path, avoid Monte Carlo lens-file output, preserve non-finite truthfulness, require explicit yield direction, remain bounded/cancellable, and support managed Jobs."
 }
 
 Write-Host "Stage F specialized contract guards passed: POP, NSC, tolerancing, BMP rendering, and generic exports retain reviewed safety/data-integrity behavior."

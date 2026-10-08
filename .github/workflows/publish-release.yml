@@ -18,6 +18,7 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
@@ -66,8 +67,39 @@ jobs:
             throw "Release $($release.tag_name) must contain exactly one ZemaxMCP-win-x64.zip asset. Available assets: $available"
           }
 
+          git fetch --force --no-tags origin "refs/tags/$($release.tag_name):refs/tags/$($release.tag_name)"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not fetch release tag $($release.tag_name)."
+          }
+          $releaseSha = (git rev-list -n 1 $release.tag_name).Trim()
+          if ([string]::IsNullOrWhiteSpace($releaseSha)) {
+            throw "Could not resolve release tag $($release.tag_name) to a commit SHA."
+          }
+
           "release_tag=$($release.tag_name)" >> $env:GITHUB_OUTPUT
+          "release_sha=$releaseSha" >> $env:GITHUB_OUTPUT
           "asset_id=$($asset[0].id)" >> $env:GITHUB_OUTPUT
+      - name: Require green release CI at exact tagged commit
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.release.outputs.release_sha }}
+        run: |
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json"; "X-GitHub-Api-Version" = "2022-11-28"; "User-Agent" = "zemax-mcp-release-signer" }
+          $sha = $env:RELEASE_SHA.Trim()
+          if ([string]::IsNullOrWhiteSpace($sha)) {
+            throw "The release tag did not resolve to a commit SHA."
+          }
+
+          $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/workflows/release.yml/runs?head_sha=$sha&status=success&per_page=100"
+          $runs = Invoke-RestMethod -Uri $uri -Headers $headers
+          $matching = @($runs.workflow_runs | Where-Object {
+            $_.head_sha -eq $sha -and $_.status -eq "completed" -and $_.conclusion -eq "success"
+          })
+          if ($matching.Count -eq 0) {
+            throw "Release signing is blocked: Verify Windows desktop components has no successful run for exact release commit $sha."
+          }
+          Write-Host "Release gate passed for $sha using CI run $($matching[0].id)."
       - name: Download the existing release ZIP
         shell: pwsh
         env:

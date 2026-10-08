@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using ModelContextProtocol;
 using ModelContextProtocol.AspNetCore;
@@ -46,26 +47,34 @@ internal static class Program
             builder.WebHost.UseSetting("AllowedHosts", string.Join(";", options.AllowedHosts));
             builder.Host.UseSerilog();
             builder.Services.AddSingleton(options);
+            var credentialStore = string.IsNullOrWhiteSpace(options.ClientCredentialsFile)
+                ? null
+                : new ClientCredentialStore(options.ClientCredentialsFile);
             var workerClient = new WorkerRpcClient(options);
             builder.Services.AddSingleton(workerClient);
             var controlLease = new OpticStudioControlLease();
+            workerClient.JobStateChanged += controlLease.ObserveJob;
+            workerClient.GenerationEnded += controlLease.ReleaseGeneration;
+            var jobOwners = new JobOwnerRegistry();
+            workerClient.GenerationEnded += jobOwners.ReleaseGeneration;
+            builder.Services.AddSingleton(jobOwners);
             builder.Services.AddSingleton(controlLease);
             var activity = new McpActivityMonitor();
             builder.Services.AddSingleton(activity);
-            builder.Services
+            var mcpBuilder = builder.Services
                 .AddMcpServer(server => server.ServerInfo = new()
                 {
                     Name = "zemax-mcp",
                     Version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "unknown"
                 })
                 .WithHttpTransport(transport => transport.Stateless = true)
-                .WithListToolsHandler(async (_, _) =>
+                .WithListToolsHandler(async (request, _) =>
                 {
                     await Task.CompletedTask.ConfigureAwait(false);
                     return new ListToolsResult
                     {
                         Tools = StaticToolManifest.All
-                            .Where(entry => StaticToolManifest.IsAllowed(options.Toolset, entry.Name, options.ReadOnly))
+                            .Where(entry => IsAuthorizedTool(options, request.User, entry))
                             .Select(entry => new Tool
                             {
                                 Name = entry.Name,
@@ -75,9 +84,30 @@ internal static class Program
                             .ToList()
                     };
                 })
-                .WithCallToolHandler(async (request, cancellationToken) =>
-                {
-                    if (!StaticToolManifest.IsAllowed(options.Toolset, request.Params.Name, options.ReadOnly))
+
+                ;
+
+            if (options.EnableOfficialTasks)
+            {
+                var taskLedger = new WorkerTaskLedger();
+                workerClient.JobStateChanged += taskLedger.ObserveJob;
+                workerClient.GenerationEnded += taskLedger.ReleaseGeneration;
+                var adapter = new OfficialTasksAdapter(taskLedger, workerClient, jobOwners,
+                    credentialStore != null, ResolveTaskIdentity, HandleToolCallAsync);
+                builder.Services.Configure<ModelContextProtocol.Server.McpServerOptions>(adapter.Configure);
+            }
+            else
+            {
+                mcpBuilder.WithCallToolHandler((request, cancellationToken) =>
+                    new ValueTask<CallToolResult>(HandleToolCallAsync(request, cancellationToken)));
+            }
+
+            async Task<CallToolResult> HandleToolCallAsync(
+                ModelContextProtocol.Server.RequestContext<CallToolRequestParams> request,
+                CancellationToken cancellationToken)
+            {
+                    if (!StaticToolManifest.TryGet(request.Params.Name, out var requestedTool) ||
+                        !IsAuthorizedTool(options, request.User, requestedTool))
                     {
                         return new CallToolResult
                         {
@@ -94,7 +124,6 @@ internal static class Program
 
                     var clientId = ResolveControlIdentity(request);
                     using var call = activity.Begin(clientId, request.Params.Name);
-                    using var lease = await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false);
 
                     Func<OperationProgress, CancellationToken, Task>? progressHandler = null;
                     if (request.Params.ProgressToken is { } progressToken)
@@ -115,8 +144,69 @@ internal static class Program
                         };
                     }
 
-                    return await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
-                });
+                    var scoped = !string.IsNullOrWhiteSpace(options.ClientCredentialsFile);
+                    var jobOperation = request.Params.Name is "zemax_job_status" or "zemax_job_list" or "zemax_job_cancel";
+                    if (scoped && jobOperation && request.Params.Name != "zemax_job_list")
+                    {
+                        if (!JobOwnerRegistry.TryGetJobId(request.Params, out var requestedJobId) ||
+                            !jobOwners.IsOwned(clientId, requestedJobId, workerClient.CurrentGeneration))
+                            return JobOwnerRegistry.Denied();
+                    }
+
+                    // Scoped Job status/list/cancel are metadata operations:
+                    // authorize by immutable creator identity and generation,
+                    // not by the optical-system edit lease. Other clients can
+                    // observe their own Jobs even while a foreign Job owns the
+                    // optical system.
+                    CallToolResult result;
+                    if (scoped && jobOperation)
+                    {
+                        var requestedLimit = 50;
+                        if (request.Params.Name == "zemax_job_list" &&
+                            !JobOwnerRegistry.TryGetRequestedListLimit(request.Params, out requestedLimit))
+                            return new CallToolResult
+                            {
+                                Content = new List<ContentBlock>
+                                {
+                                    new TextContentBlock { Text = "Job list limit must be an integer between 1 and 128." }
+                                },
+                                IsError = true
+                            };
+
+                        var workerRequest = request.Params.Name == "zemax_job_list"
+                            ? JobOwnerRegistry.ExpandListRequest(request.Params)
+                            : request.Params;
+                        result = await workerClient.CallToolAsync(workerRequest, cancellationToken, progressHandler).ConfigureAwait(false);
+                        if (request.Params.Name == "zemax_job_list")
+                            result = JobOwnerRegistry.FilterList(result, clientId, workerClient.CurrentGeneration, jobOwners, requestedLimit);
+                        else if (JobOwnerRegistry.TryGetJobId(request.Params, out var authorizedJobId))
+                            result = JobOwnerRegistry.ValidateSingleResult(result, authorizedJobId);
+                    }
+                    else
+                    {
+                        using (await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false))
+                        {
+                            result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
+                            if (TryGetStartedJobId(request.Params.Name, result, out var jobId))
+                            {
+                                var generation = workerClient.CurrentGeneration;
+                                if (scoped) jobOwners.Register(clientId, jobId, generation);
+                                if (controlLease.RetainForJob(clientId, jobId, generation) &&
+                                    workerClient.TryGetJobStatus(generation, jobId, out var latestJob) &&
+                                    latestJob != null)
+                                {
+                                    controlLease.ObserveJob(generation, latestJob);
+                                }
+                            }
+                        }
+                    }
+
+                    if (string.Equals(request.Params.Name, "zemax_disconnect", StringComparison.Ordinal) &&
+                        IsSuccessfulDisconnect(result))
+                        controlLease.ReleaseOwnership(clientId);
+
+                    return result;
+            }
 
             var app = builder.Build();
             var worker = app.Services.GetRequiredService<WorkerRpcClient>();
@@ -129,10 +219,55 @@ internal static class Program
                     context.Response.StatusCode = StatusCodes.Status204NoContent;
                     return;
                 }
-                if (context.Request.Path.StartsWithSegments(options.McpPath) && !HasValidToken(context, options.AccessToken))
+                ClientCredentialStore.Credential? scopedCredential = null;
+                if (context.Request.Path.StartsWithSegments(options.McpPath))
                 {
-                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                    context.Response.Headers.WWWAuthenticate = "Bearer";
+                    if (credentialStore != null)
+                    {
+                        try
+                        {
+                            scopedCredential = credentialStore.Authenticate(context.Request.Headers.Authorization.ToString());
+                        }
+                        catch (Exception ex)
+                        {
+                            // Missing or malformed credential files revoke all
+                            // access until repaired. Never fall back to legacy
+                            // shared-token or unauthenticated local access.
+                            Log.Error(ex, "Client credential file cannot be read; failing closed");
+                            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                            return;
+                        }
+                        if (scopedCredential == null)
+                        {
+                            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                            context.Response.Headers.WWWAuthenticate = "Bearer";
+                            return;
+                        }
+                    }
+                    else if (!HasValidToken(context, options.AccessToken))
+                    {
+                        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                        context.Response.Headers.WWWAuthenticate = "Bearer";
+                        return;
+                    }
+                }
+
+                if (credentialStore != null &&
+                    (string.Equals(context.Request.Path.Value, options.McpPath + "/health", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(context.Request.Path.Value, options.McpPath + "/activity", StringComparison.OrdinalIgnoreCase)))
+                {
+                    // These legacy diagnostic endpoints carry all clients' Jobs,
+                    // progress and lease identities. Never expose their full
+                    // payload in scoped mode; return a safe liveness response.
+                    context.Response.StatusCode = StatusCodes.Status200OK;
+                    await context.Response.WriteAsJsonAsync(new
+                    {
+                        bridgeRunning = true,
+                        authenticationMode = "scoped",
+                        clientId = scopedCredential!.Id,
+                        permission = scopedCredential.Permission,
+                        jobDiagnostics = "per-client job tools only"
+                    }).ConfigureAwait(false);
                     return;
                 }
 
@@ -146,7 +281,10 @@ internal static class Program
 
                 var claims = new List<Claim>
                 {
-                    new("zemax-mcp-auth-profile", string.IsNullOrWhiteSpace(options.AccessToken) ? "local" : "shared-token"),
+                    new("zemax-mcp-auth-profile", scopedCredential != null
+                        ? "scoped:" + scopedCredential.Id
+                        : string.IsNullOrWhiteSpace(options.AccessToken) ? "local" : "shared-token"),
+                    new("zemax-mcp-permission", scopedCredential?.Permission ?? "read-write"),
                     new("zemax-mcp-remote-endpoint", context.Connection.RemoteIpAddress?.ToString() ?? "local")
                 };
                 if (!string.IsNullOrWhiteSpace(instanceHeader)) claims.Add(new Claim("zemax-mcp-client-instance", instanceHeader));
@@ -170,6 +308,10 @@ internal static class Program
                 {
                     bridgeRunning = true,
                     mcpServerRunning = status != null,
+                    hostVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown",
+                    workerVersion = status?.WorkerVersion,
+                    zosApiAssemblyVersion = status?.ZosApiAssemblyVersion,
+                    zosApiFileVersion = status?.ZosApiFileVersion,
                     rpcVersion = ZemaxRpcProtocol.Version,
                     manifestFingerprint = StaticToolManifest.ContractFingerprint,
                     workerRpcVersion = status?.RpcVersion,
@@ -182,7 +324,7 @@ internal static class Program
                     lastConnectionError = status?.LastConnectionError,
                     zemaxDataDirectory = status?.OpticStudioDataDirectory ?? "Not reported",
                     loadedZosApiFiles = new { zosApi = status?.ZosApiAssembly },
-                    authenticationRequired = !string.IsNullOrWhiteSpace(options.AccessToken),
+                    authenticationRequired = !string.IsNullOrWhiteSpace(options.AccessToken) || credentialStore != null,
                     originValidationEnabled = true,
                     readOnly = options.ReadOnly,
                     snapshotDirectory = status?.SnapshotDirectory ?? options.SnapshotDirectory,
@@ -191,6 +333,7 @@ internal static class Program
                     requestTimeoutSeconds = options.RequestTimeoutSeconds,
                     requestWriteTimeoutSeconds = options.RequestWriteTimeoutSeconds,
                     hardRecoveryTimeoutSeconds = options.HardRecoveryTimeoutSeconds,
+                    jobRecoveryTimeoutSeconds = options.JobRecoveryTimeoutSeconds,
                     cancellationWriteTimeoutSeconds = options.CancellationWriteTimeoutSeconds,
                     lastClient = activityHealth.LastClient,
                     lastTool = activityHealth.LastTool,
@@ -226,6 +369,77 @@ internal static class Program
         finally { await Log.CloseAndFlushAsync().ConfigureAwait(false); }
     }
 
+    internal static bool TryGetStartedJobId(string toolName, CallToolResult result, out string jobId)
+    {
+        jobId = string.Empty;
+        if (result.IsError == true ||
+            toolName is "zemax_job_status" or "zemax_job_list" or "zemax_job_cancel" or
+                        "zemax_multistart_status" or "zemax_multistart_stop")
+            return false;
+
+        foreach (var content in result.Content.OfType<TextContentBlock>())
+        {
+            if (string.IsNullOrWhiteSpace(content.Text)) continue;
+            try
+            {
+                using var document = JsonDocument.Parse(content.Text);
+                if (document.RootElement.ValueKind != JsonValueKind.Object) continue;
+                if (document.RootElement.TryGetProperty("success", out var success) &&
+                    success.ValueKind == JsonValueKind.False)
+                    return false;
+                if (document.RootElement.TryGetProperty("jobId", out var id) &&
+                    id.ValueKind == JsonValueKind.String &&
+                    !string.IsNullOrWhiteSpace(id.GetString()))
+                {
+                    jobId = id.GetString()!;
+                    return true;
+                }
+            }
+            catch (JsonException) { }
+        }
+        return false;
+    }
+
+    private static bool IsSuccessfulDisconnect(CallToolResult result)
+    {
+        if (result.IsError == true) return false;
+        foreach (var content in result.Content.OfType<TextContentBlock>())
+        {
+            if (string.IsNullOrWhiteSpace(content.Text)) continue;
+            try
+            {
+                using var document = JsonDocument.Parse(content.Text);
+                if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                    document.RootElement.TryGetProperty("success", out var success) &&
+                    success.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                    return success.GetBoolean();
+            }
+            catch (JsonException) { }
+        }
+        return false;
+    }
+
+    private static bool IsAuthorizedTool(HostOptions options, ClaimsPrincipal? principal, ToolManifestEntry entry)
+    {
+        // The legacy multistart status/stop tools expose one process-global
+        // optimizer state without a Job ID. Scoped clients must use the
+        // owner-bound zemax_job_status/zemax_job_cancel variants instead.
+        if (!string.IsNullOrWhiteSpace(options.ClientCredentialsFile) &&
+            entry.Name is "zemax_multistart_status" or "zemax_multistart_stop")
+            return false;
+        if (!string.IsNullOrWhiteSpace(options.ClientCredentialsFile) &&
+            (principal?.FindFirst("zemax-mcp-auth-profile")?.Value?.StartsWith("scoped:", StringComparison.Ordinal) != true ||
+             principal.FindFirst("zemax-mcp-permission")?.Value is not ("read-only" or "read-write")))
+            return false;
+        if (!StaticToolManifest.IsAllowed(options.Toolset, entry.Name, options.ReadOnly))
+            return false;
+        // The legacy global --read-only switch intentionally allows Caution
+        // operations. Per-credential read-only is stricter: only actual ReadOnly
+        // impact commands are admitted, including to tools/list.
+        return !ClientCredentialStore.IsReadOnly(principal) ||
+               string.Equals(entry.Impact, "ReadOnly", StringComparison.Ordinal);
+    }
+
     private static bool HasValidToken(HttpContext context, string token)
     {
         if (string.IsNullOrWhiteSpace(token)) return true;
@@ -234,6 +448,33 @@ internal static class Program
         var presented = Encoding.UTF8.GetBytes(header.Substring("Bearer ".Length));
         var expected = Encoding.UTF8.GetBytes(token);
         return presented.Length == expected.Length && CryptographicOperations.FixedTimeEquals(presented, expected);
+    }
+
+
+    // Raw Tasks protocol handlers receive JsonRpcRequest rather than the typed
+    // tool context. Reconstruct exactly the same ownership identity so a second
+    // credential cannot access another client's Task, even if it copies metadata.
+    private static string ResolveTaskIdentity(JsonRpcRequest request)
+    {
+        var principal = request.Context?.User;
+        var profile = principal?.FindFirst("zemax-mcp-auth-profile")?.Value;
+        if (!string.IsNullOrWhiteSpace(profile) &&
+            profile is not ("shared-token" or "local"))
+            return "token:" + profile;
+
+        var info = request.Context?.ClientInfo;
+        var name = string.IsNullOrWhiteSpace(info?.Name) ? "unknown" : info.Name.Trim();
+        var version = string.IsNullOrWhiteSpace(info?.Version) ? "unknown" : info.Version.Trim();
+        var endpoint = principal?.FindFirst("zemax-mcp-remote-endpoint")?.Value ?? "unknown";
+        var meta = (request.Params as JsonObject)?["_meta"] as JsonObject;
+        var instanceId = GetRequestClientInstanceId(meta)
+            ?? principal?.FindFirst("zemax-mcp-client-instance")?.Value;
+        if (!string.IsNullOrWhiteSpace(instanceId))
+            return $"client:{name}@{version}|instance:{instanceId}|remote:{endpoint}";
+        var sessionId = principal?.FindFirst("zemax-mcp-session-id")?.Value;
+        if (!string.IsNullOrWhiteSpace(sessionId))
+            return $"client:{name}@{version}|session:{sessionId}|remote:{endpoint}";
+        return $"client:{name}@{version}|remote:{endpoint}";
     }
 
     private static string ResolveControlIdentity(ModelContextProtocol.Server.RequestContext<CallToolRequestParams> request)

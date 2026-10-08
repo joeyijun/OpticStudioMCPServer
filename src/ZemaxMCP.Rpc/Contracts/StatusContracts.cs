@@ -8,6 +8,9 @@ public sealed class WorkerStatus
     public int RpcVersion { get; set; }
     public string ManifestFingerprint { get; set; } = string.Empty;
     public bool ZosApiLoaded { get; set; }
+    public string WorkerVersion { get; set; } = string.Empty;
+    public string? ZosApiAssemblyVersion { get; set; }
+    public string? ZosApiFileVersion { get; set; }
     public bool Connected { get; set; }
     public string ConnectionMode { get; set; } = "unknown";
     public string? ZosApiAssembly { get; set; }
@@ -25,6 +28,7 @@ public sealed class WorkerJobStatus
 {
     public string JobId { get; set; } = string.Empty;
     public string ToolName { get; set; } = string.Empty;
+    public string? ParentOperationId { get; set; }
     public string State { get; set; } = string.Empty;
     public double? Fraction { get; set; }
     public int QueuePosition { get; set; }

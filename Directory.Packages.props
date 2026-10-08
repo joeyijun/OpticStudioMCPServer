@@ -6,6 +6,7 @@
     <!-- MCP SDK -->
     <PackageVersion Include="ModelContextProtocol" Version="2.1.0" />
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.1.0" />
+    <PackageVersion Include="ModelContextProtocol.Extensions.Tasks" Version="2.1.0" />
 
     <!-- Build-time source analysis -->
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />

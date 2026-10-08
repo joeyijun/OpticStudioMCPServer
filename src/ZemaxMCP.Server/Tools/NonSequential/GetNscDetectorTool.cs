@@ -49,7 +49,7 @@ public sealed class GetNscDetectorTool
 
                 var row = nce.GetObjectAt(objectNumber)
                     ?? throw new InvalidOperationException($"OpticStudio returned no NCE row for object {objectNumber}.");
-                if (!row.TypeData.ObjectIsADetector)
+                if (!NscObjectClassification.IsDetector(row))
                     return new Result(false, $"Object {objectNumber} ({row.TypeName}) is not a detector.", objectNumber, row.TypeName, row.Comment, 0, 0, 0, null);
 
                 // ZOS-API 2026 R1 signature is GetDetectorDimensions(ObjectNumber, out Rows, out Cols).

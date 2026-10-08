@@ -2,12 +2,14 @@ using System.Diagnostics;
 using System.IO.Pipes;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Protocol;
 using ZemaxMCP.HttpBridge.ModernHost;
 using ZemaxMCP.Rpc;
+using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.ToolManifest;
 
 namespace ZemaxMCP.PrivateRpcTests;
@@ -27,14 +29,23 @@ internal static class Program
         try
         {
             VerifyActivityOwnership();
+            VerifyOfficialTasksDefaults();
             VerifyOriginBoundary();
+            await VerifyBackgroundJobLeaseRetentionAsync().ConfigureAwait(false);
+            await VerifyCancelledLeaseWaitAsync().ConfigureAwait(false);
+            ScopedCredentialAssertions.Verify();
+            VerifyJobOwnershipRegistry();
+            WorkerTaskLedgerAssertions.Verify();
+            VerifyStrictArgumentBinding();
+            await VerifyWriteGateCancellationClassificationAsync().ConfigureAwait(false);
             await VerifyContractMismatchRejectedAsync().ConfigureAwait(false);
             await VerifyPipeFaultRecoveryAsync().ConfigureAwait(false);
             await VerifyHardTimeoutRecoveryAsync().ConfigureAwait(false);
             await VerifyClientCancellationRecoveryBarrierAsync().ConfigureAwait(false);
             await VerifyProgressEventDispatchAsync().ConfigureAwait(false);
             await VerifyMcpHttpToWorkerEndToEndAsync().ConfigureAwait(false);
-            Console.WriteLine("Private RPC v3 contract negotiation, recovery, event dispatch, static discovery, identity, Origin, and MCP HTTP E2E verification passed.");
+            await VerifyScopedCredentialHttpAsync().ConfigureAwait(false);
+            Console.WriteLine("Private RPC v3 contract negotiation, recovery, Task ledger, event dispatch, static discovery, identity, Origin, and MCP HTTP E2E verification passed.");
             return 0;
         }
         catch (Exception ex)
@@ -42,6 +53,87 @@ internal static class Program
             Console.Error.WriteLine(ex);
             return 1;
         }
+    }
+
+    private static void VerifyOfficialTasksDefaults()
+    {
+        if (!HostOptions.Parse(Array.Empty<string>()).EnableOfficialTasks ||
+            HostOptions.Parse(new[] { "--enable-official-tasks", "false" }).EnableOfficialTasks ||
+            !HostOptions.Parse(new[] { "--enable-official-tasks", "true" }).EnableOfficialTasks)
+            throw new InvalidOperationException("Official Tasks must default on and respect explicit overrides.");
+    }
+
+    private static void VerifyJobOwnershipRegistry()
+    {
+        var registry = new JobOwnerRegistry();
+        registry.Register("scoped:a", "owned-1", 7);
+        registry.Register("scoped:b", "owned-2", 7);
+        if (!registry.IsOwned("scoped:a", "owned-1", 7) ||
+            registry.IsOwned("scoped:b", "owned-1", 7) ||
+            registry.IsOwned("scoped:a", "owned-1", 8))
+            throw new InvalidOperationException("Job ownership is not bound to its authenticated client and Worker generation.");
+
+        var mixed = new CallToolResult
+        {
+            Content = new List<ContentBlock>
+            {
+                new TextContentBlock
+                {
+                    Text = "[{\"jobId\":\"owned-1\",\"result\":\"client-a-private\"}," +
+                           "{\"jobId\":\"owned-2\",\"result\":\"client-b-private\"}," +
+                           "{\"jobId\":\"unknown\",\"result\":\"other-private\"}]"
+                }
+            },
+            IsError = false
+        };
+        var filtered = JobOwnerRegistry.FilterList(mixed, "scoped:a", 7, registry, 1);
+        var text = (filtered.Content.Single() as TextContentBlock)?.Text ?? string.Empty;
+        if (filtered.IsError == true || !text.Contains("client-a-private", StringComparison.Ordinal) ||
+            text.Contains("client-b-private", StringComparison.Ordinal) ||
+            text.Contains("other-private", StringComparison.Ordinal))
+            throw new InvalidOperationException("Job list did not remove foreign result payloads.");
+
+        var invalid = new CallToolResult
+        {
+            Content = new List<ContentBlock> { new TextContentBlock { Text = "{\"unexpected\":true}" } },
+            IsError = false
+        };
+        if (JobOwnerRegistry.FilterList(invalid, "scoped:a", 7, registry, 50).IsError != true)
+            throw new InvalidOperationException("Malformed Worker job-list data did not fail closed.");
+        var wrongSingle = new CallToolResult
+        {
+            Content = new List<ContentBlock> { new TextContentBlock { Text = "{\"jobId\":\"owned-2\",\"result\":\"client-b-private\"}" } },
+            IsError = false
+        };
+        if (JobOwnerRegistry.ValidateSingleResult(wrongSingle, "owned-1").IsError != true)
+            throw new InvalidOperationException("Job status/cancel returned a different owner's result despite authorized request parameters.");
+
+        var defaultList = new CallToolRequestParams
+        {
+            Name = "zemax_job_list",
+            Arguments = new Dictionary<string, JsonElement>()
+        };
+        if (!JobOwnerRegistry.TryGetRequestedListLimit(defaultList, out var defaultLimit) ||
+            defaultLimit != 50 ||
+            JobOwnerRegistry.ExpandListRequest(defaultList).Arguments!["limit"].GetInt32() != 193)
+            throw new InvalidOperationException("Scoped Job listing must fetch the whole bounded Worker history.");
+        var invalidLimit = new CallToolRequestParams
+        {
+            Name = "zemax_job_list",
+            Arguments = new Dictionary<string, JsonElement> { ["limit"] = JsonSerializer.SerializeToElement(500) }
+        };
+        if (JobOwnerRegistry.TryGetRequestedListLimit(invalidLimit, out _))
+            throw new InvalidOperationException("Scoped Job list incorrectly accepted an invalid public limit.");
+
+        registry.ReleaseGeneration(7);
+        if (registry.IsOwned("scoped:a", "owned-1", 7))
+            throw new InvalidOperationException("Worker generation change did not revoke old Job IDs.");
+
+        for (var index = 0; index < JobOwnerRegistry.MaximumRecords + 10; index++)
+            registry.Register("scoped:a", "bounded-" + index, 8);
+        if (registry.IsOwned("scoped:a", "bounded-0", 8) ||
+            !registry.IsOwned("scoped:a", "bounded-" + (JobOwnerRegistry.MaximumRecords + 9), 8))
+            throw new InvalidOperationException("Bounded job owner history did not drop stale entries safely.");
     }
 
     private static void VerifyActivityOwnership()
@@ -83,6 +175,133 @@ internal static class Program
         if (!OriginPolicy.IsAllowed(new Uri("http://192.168.8.20:3000"), lanRules) ||
             OriginPolicy.IsAllowed(new Uri("http://192.168.8.20:3001"), lanRules))
             throw new InvalidOperationException("An explicit LAN Origin must not inherit a wildcard port.");
+    }
+
+    private static async Task VerifyBackgroundJobLeaseRetentionAsync()
+    {
+        var lease = new OpticStudioControlLease(TimeSpan.FromMilliseconds(50));
+        using (await lease.AcquireAsync("client-a", "zemax_global_search", CancellationToken.None).ConfigureAwait(false)) { }
+        if (!lease.RetainForJob("client-a", "job-1", generation: 7))
+            throw new InvalidOperationException("The owning client could not retain control for its background job.");
+
+        await Task.Delay(80).ConfigureAwait(false);
+        try
+        {
+            using var _ = await lease.AcquireAsync("client-b", "zemax_status", CancellationToken.None).ConfigureAwait(false);
+            throw new InvalidOperationException("A background job did not prevent lease expiry and cross-client takeover.");
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("currently leased", StringComparison.OrdinalIgnoreCase)) { }
+
+        lease.ObserveJob(8, new WorkerJobStatus { JobId = "job-1", State = "Completed" });
+        await Task.Delay(80).ConfigureAwait(false);
+        try
+        {
+            using var _ = await lease.AcquireAsync("client-b", "zemax_status", CancellationToken.None).ConfigureAwait(false);
+            throw new InvalidOperationException("A terminal event from the wrong Worker generation released the job lease.");
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("currently leased", StringComparison.OrdinalIgnoreCase)) { }
+
+        lease.ReleaseGeneration(7);
+        // Dead Worker generations must relinquish idle background ownership
+        // immediately, not after the fifteen-minute inactivity period.
+        using var handedOff = await lease.AcquireAsync("client-b", "zemax_status", CancellationToken.None).ConfigureAwait(false);
+    }
+
+    private static async Task VerifyCancelledLeaseWaitAsync()
+    {
+        var lease = new OpticStudioControlLease(TimeSpan.FromMinutes(15));
+        using var active = await lease.AcquireAsync("client-a", "active-operation", CancellationToken.None).ConfigureAwait(false);
+
+        var initialHealth = lease.GetHealth();
+        var lastActivityProperty = initialHealth.GetType().GetProperty("lastActivity")
+            ?? throw new InvalidOperationException("Control lease health no longer exposes lastActivity.");
+        var initialActivity = (DateTimeOffset?)lastActivityProperty.GetValue(initialHealth);
+
+        using var cancelled = new CancellationTokenSource(TimeSpan.FromMilliseconds(30));
+        try
+        {
+            using var unexpected = await lease.AcquireAsync("client-a", "cancelled-waiter", cancelled.Token).ConfigureAwait(false);
+            throw new InvalidOperationException("A blocked control-lease waiter ignored cancellation.");
+        }
+        catch (OperationCanceledException) when (cancelled.IsCancellationRequested) { }
+
+        var afterHealth = lease.GetHealth();
+        var afterActivity = (DateTimeOffset?)lastActivityProperty.GetValue(afterHealth);
+        if (initialActivity != afterActivity)
+            throw new InvalidOperationException("A cancelled waiter changed control-lease activity before acquiring the execution gate.");
+        var operation = afterHealth.GetType().GetProperty("activeOperation")?.GetValue(afterHealth) as string;
+        if (operation != "active-operation")
+            throw new InvalidOperationException("A cancelled waiter replaced the currently running control operation.");
+
+        active.Dispose();
+        using var followupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using var followup = await lease.AcquireAsync("client-a", "followup-operation", followupTimeout.Token).ConfigureAwait(false);
+    }
+
+    private static void VerifyStrictArgumentBinding()
+    {
+        var method = typeof(Program).GetMethod(nameof(StrictBinderFixture), BindingFlags.Static | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Could not resolve the strict-binder test fixture.");
+
+        using (var valid = JsonDocument.Parse("{\"required\":\"ok\",\"optional\":3}"))
+        {
+            var token = new CancellationTokenSource().Token;
+            var values = WorkerToolRegistry.BindArguments(method, valid.RootElement, token);
+            if (!string.Equals(values[0] as string, "ok", StringComparison.Ordinal) ||
+                values[1] is not int optional || optional != 3 ||
+                values[2] is not CancellationToken boundToken || boundToken != token)
+                throw new InvalidOperationException("Worker argument binding did not preserve valid typed arguments and cancellation.");
+        }
+
+        using (var typo = JsonDocument.Parse("{\"required\":\"ok\",\"optoinal\":3}"))
+        {
+            try
+            {
+                WorkerToolRegistry.BindArguments(method, typo.RootElement, CancellationToken.None);
+                throw new InvalidOperationException("An unknown Worker tool argument was silently ignored.");
+            }
+            catch (ArgumentException ex) when (ex.Message.Contains("Unknown tool argument", StringComparison.Ordinal) &&
+                                               ex.Message.Contains("optoinal", StringComparison.Ordinal)) { }
+        }
+
+        using (var missing = JsonDocument.Parse("{\"optional\":3}"))
+        {
+            try
+            {
+                WorkerToolRegistry.BindArguments(method, missing.RootElement, CancellationToken.None);
+                throw new InvalidOperationException("A missing required Worker tool argument was accepted.");
+            }
+            catch (ArgumentException ex) when (ex.Message.Contains("Missing required argument: required", StringComparison.Ordinal)) { }
+        }
+    }
+
+    private static void StrictBinderFixture(string required, int optional = 7, CancellationToken cancellationToken = default) { }
+
+    private static async Task VerifyWriteGateCancellationClassificationAsync()
+    {
+        using var blockedGate = new SemaphoreSlim(0, 1);
+        using var caller = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        using var callerDeadline = CancellationTokenSource.CreateLinkedTokenSource(caller.Token);
+        callerDeadline.CancelAfter(TimeSpan.FromSeconds(2));
+        try
+        {
+            await WorkerRpcClient.WaitForWriteGateAsync(blockedGate, callerDeadline.Token, caller.Token, callerDeadline).ConfigureAwait(false);
+            throw new InvalidOperationException("A caller-cancelled write-lock wait unexpectedly acquired the gate.");
+        }
+        catch (OperationCanceledException) when (caller.IsCancellationRequested) { }
+        catch (TimeoutException)
+        {
+            throw new InvalidOperationException("Caller cancellation while waiting for the RPC write lock was misclassified as a write timeout.");
+        }
+
+        using var timeoutGate = new SemaphoreSlim(0, 1);
+        using var writeDeadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        try
+        {
+            await WorkerRpcClient.WaitForWriteGateAsync(timeoutGate, writeDeadline.Token, CancellationToken.None, writeDeadline).ConfigureAwait(false);
+            throw new InvalidOperationException("An expired write deadline unexpectedly acquired the gate.");
+        }
+        catch (TimeoutException) { }
     }
 
     private static async Task VerifyContractMismatchRejectedAsync()
@@ -296,6 +515,20 @@ internal static class Program
                 !rejectedLeaseBody.Contains("isError", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Two same-name same-IP MCP client instances collapsed into one control identity: " + rejectedLeaseBody);
 
+            var heldBody = await ReadFirstMcpPayloadAsync(heldResponse).ConfigureAwait(false);
+            if (!heldBody.Contains("echo-ok", StringComparison.Ordinal))
+                throw new InvalidOperationException("The held control-lease request did not complete normally.");
+
+            using var disconnect = await Send2026ToolCallAsync(client, endpoint, 6, "zemax_disconnect", "client-a", "instance-a").ConfigureAwait(false);
+            var disconnectBody = await ReadFirstMcpPayloadAsync(disconnect).ConfigureAwait(false);
+            if (!disconnect.IsSuccessStatusCode || !disconnectBody.Contains("success", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("The lease owner could not disconnect cleanly: " + disconnectBody);
+
+            using var handedOff = await Send2026ToolCallAsync(client, endpoint, 7, "zemax_status", "client-a", "instance-b").ConfigureAwait(false);
+            var handedOffBody = await ReadFirstMcpPayloadAsync(handedOff).ConfigureAwait(false);
+            if (!handedOff.IsSuccessStatusCode || !handedOffBody.Contains("echo-ok", StringComparison.Ordinal))
+                throw new InvalidOperationException("A successful zemax_disconnect did not release control ownership for immediate handoff: " + handedOffBody);
+
             using var spoofed = new HttpRequestMessage(HttpMethod.Get, endpoint + "/health");
             spoofed.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
             spoofed.Headers.Host = "attacker.example";
@@ -311,6 +544,421 @@ internal static class Program
             process.WaitForExit(3000);
             if (succeeded) try { Directory.Delete(testRoot, recursive: true); } catch { }
         }
+    }
+
+    private static async Task VerifyScopedCredentialHttpAsync()
+    {
+        var root = FindRepositoryRoot();
+        var host = Path.Combine(root, "src", "ZemaxMCP.HttpBridge", "bin", "Release", "net10.0-windows", "ZemaxMCP.Host.exe");
+        var worker = Environment.ProcessPath ?? throw new InvalidOperationException("Test executable path is unavailable.");
+        var port = ReserveLoopbackPort();
+        var testRoot = Path.Combine(Path.GetTempPath(), "ZemaxMCP-scoped-http-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(testRoot);
+        var file = Path.Combine(testRoot, "clients.json");
+        var workerLog = Path.Combine(testRoot, "fake-worker-started.txt");
+        const string reader = "reader-credential-e2e-test-01234567890123456789";
+        const string writer = "writer-credential-e2e-test-01234567890123456789";
+        const string otherWriter = "other-writer-e2e-98765432109876543210987654321";
+        ScopedCredentialAssertions.Write(file,
+            ("reader", "read-only", reader), ("writer", "read-write", writer),
+            ("writer-two", "read-write", otherWriter));
+        var startInfo = new ProcessStartInfo(host,
+            $"--worker \"{worker}\" --host 127.0.0.1 --port {port} --log-dir \"{testRoot}\" " +
+            $"--client-credentials-file \"{file}\" --allowed-host 127.0.0.1 --allowed-origin http://127.0.0.1:* --enable-official-tasks true")
+        {
+            UseShellExecute = false,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        startInfo.Environment.Remove("ZEMAX_MCP_TOKEN");
+        startInfo.Environment.Remove("ZEMAX_MCP_CLIENTS_FILE");
+        startInfo.Environment["ZEMAX_MCP_FAKE_WORKER_LOG"] = workerLog;
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start scoped Host E2E.");
+        var success = false;
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
+            var endpoint = new Uri($"http://127.0.0.1:{port}/mcp");
+            var deadline = DateTime.UtcNow.AddSeconds(15);
+            HttpResponseMessage? first = null;
+            while (DateTime.UtcNow < deadline && !process.HasExited)
+            {
+                try
+                {
+                    first = await SendScopedAsync(client, endpoint, 101, "tools/list", null, reader).ConfigureAwait(false);
+                    if (first.IsSuccessStatusCode) break;
+                    first.Dispose();
+                }
+                catch (HttpRequestException) { }
+                catch (TaskCanceledException) { }
+                await Task.Delay(100).ConfigureAwait(false);
+            }
+            if (first == null || !first.IsSuccessStatusCode)
+                throw new InvalidOperationException("Scoped Host did not accept an authenticated stateless tools/list.");
+            using (first)
+            {
+                var response = await ReadFirstMcpPayloadAsync(first).ConfigureAwait(false);
+                if (!response.Contains("zemax_get_system", StringComparison.Ordinal) ||
+                    response.Contains("zemax_open_file", StringComparison.Ordinal) ||
+                    response.Contains("zemax_set_surface", StringComparison.Ordinal) ||
+                    response.Contains("zemax_job_cancel", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Read-only scoped credential leaked a Caution or HighImpact command.");
+            }
+
+            using (var denied = await SendScopedAsync(client, endpoint, 102, "tools/call", "zemax_open_file", reader).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(denied).ConfigureAwait(false);
+                if (!body.Contains("does not permit", StringComparison.OrdinalIgnoreCase) ||
+                    !body.Contains("isError", StringComparison.OrdinalIgnoreCase) || File.Exists(workerLog))
+                    throw new InvalidOperationException("Scoped read-only call bypassed authorization before Worker startup.");
+            }
+
+            using (var list = await SendScopedAsync(client, endpoint, 103, "tools/list", null, writer).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(list).ConfigureAwait(false);
+                if (!list.IsSuccessStatusCode || !body.Contains("zemax_set_surface", StringComparison.Ordinal) ||
+                    !body.Contains("zemax_open_file", StringComparison.Ordinal) ||
+                    !body.Contains("zemax_job_cancel", StringComparison.Ordinal) ||
+                    System.Text.RegularExpressions.Regex.IsMatch(body, "\"name\"\\s*:\\s*\"zemax_multistart_status\"") ||
+                    System.Text.RegularExpressions.Regex.IsMatch(body, "\"name\"\\s*:\\s*\"zemax_multistart_stop\""))
+                    throw new InvalidOperationException("Write credential did not enforce modern Job-only access and authorized tools.");
+            }
+
+            using (var run = await SendScopedAsync(client, endpoint, 104, "tools/call", "zemax_status", writer).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(run).ConfigureAwait(false);
+                if (!run.IsSuccessStatusCode || !body.Contains("echo-ok", StringComparison.Ordinal) ||
+                    !File.Exists(workerLog))
+                    throw new InvalidOperationException("Scoped writer did not reach the Worker.");
+            }
+
+            // Both clients deliberately advertise the same clientInfo and
+            // instance ID. The authenticated token ID must own the lease.
+            using (var competing = await SendScopedAsync(client, endpoint, 105, "tools/call", "zemax_status", otherWriter).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(competing).ConfigureAwait(false);
+                if (body.Contains("echo-ok", StringComparison.Ordinal) ||
+                    (!body.Contains("currently leased", StringComparison.OrdinalIgnoreCase) &&
+                     !body.Contains("isError", StringComparison.OrdinalIgnoreCase)))
+                    throw new InvalidOperationException("Two distinct authenticated tokens shared one control lease: " + body);
+            }
+
+            using (var release = await SendScopedAsync(client, endpoint, 106, "tools/call", "zemax_disconnect", writer).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(release).ConfigureAwait(false);
+                if (!release.IsSuccessStatusCode || !body.Contains("success", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Scoped owner could not release its lease.");
+            }
+            using (var handoff = await SendScopedAsync(client, endpoint, 107, "tools/call", "zemax_status", otherWriter).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(handoff).ConfigureAwait(false);
+                if (!handoff.IsSuccessStatusCode || !body.Contains("echo-ok", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Authenticated second client could not acquire the lease after disconnect.");
+            }
+
+            // Only the job creator may view its status/results, list it,
+            // or cancel it; a different authenticated writer is denied.
+            using (var started = await SendScopedAsync(client, endpoint, 108, "tools/call", "zemax_run_nsc_ray_trace", otherWriter).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(started).ConfigureAwait(false);
+                if (!started.IsSuccessStatusCode || !body.Contains("fake-owned-job", StringComparison.Ordinal))
+                    throw new InvalidOperationException("The scoped test Job did not register its creator: " + body);
+            }
+            using (var foreignStatus = await SendScopedAsync(client, endpoint, 109, "tools/call", "zemax_job_status", writer,
+                       new { jobId = "fake-owned-job" }).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(foreignStatus).ConfigureAwait(false);
+                if (!body.Contains("isError", StringComparison.OrdinalIgnoreCase) ||
+                    body.Contains("private-job-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Foreign writer was able to read a scoped Job: " + body);
+            }
+            using (var ownerStatus = await SendScopedAsync(client, endpoint, 110, "tools/call", "zemax_job_status", otherWriter,
+                       new { jobId = "fake-owned-job" }).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(ownerStatus).ConfigureAwait(false);
+                if (!ownerStatus.IsSuccessStatusCode || !body.Contains("private-job-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Job creator could not read its own status/result: " + body);
+            }
+            using (var foreignList = await SendScopedAsync(client, endpoint, 111, "tools/call", "zemax_job_list", writer).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(foreignList).ConfigureAwait(false);
+                if (!foreignList.IsSuccessStatusCode ||
+                    body.Contains("fake-owned-job", StringComparison.Ordinal) ||
+                    body.Contains("private-job-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Foreign writer saw another client's Job history: " + body);
+            }
+            using (var ownerList = await SendScopedAsync(client, endpoint, 112, "tools/call", "zemax_job_list", otherWriter).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(ownerList).ConfigureAwait(false);
+                if (!ownerList.IsSuccessStatusCode ||
+                    !body.Contains("fake-owned-job", StringComparison.Ordinal) ||
+                    !body.Contains("private-job-result", StringComparison.Ordinal) ||
+                    body.Contains("private-unknown-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Scoped Job listing did not filter unowned results: " + body);
+            }
+            using (var foreignCancel = await SendScopedAsync(client, endpoint, 113, "tools/call", "zemax_job_cancel", writer,
+                       new { jobId = "fake-owned-job" }).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(foreignCancel).ConfigureAwait(false);
+                if (!body.Contains("isError", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Foreign writer could cancel another client's Job: " + body);
+            }
+            using (var scopedHealth = await SendScopedGetAsync(client, new Uri(endpoint, endpoint.AbsolutePath.TrimEnd('/') + "/health"), otherWriter).ConfigureAwait(false))
+            {
+                var body = await scopedHealth.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (!scopedHealth.IsSuccessStatusCode || !body.Contains("scoped", StringComparison.Ordinal) ||
+                    body.Contains("fake-owned-job", StringComparison.Ordinal) ||
+                    body.Contains("eventJobs", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Scoped /health leaked cross-client Jobs or Worker event state.");
+            }
+            using (var scopedActivity = await SendScopedGetAsync(client, new Uri(endpoint, endpoint.AbsolutePath.TrimEnd('/') + "/activity"), writer).ConfigureAwait(false))
+            {
+                var body = await scopedActivity.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (!scopedActivity.IsSuccessStatusCode || body.Contains("fake-owned-job", StringComparison.Ordinal) ||
+                    body.Contains("activeOperations", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Scoped /activity leaked cross-client operations.");
+            }
+            using (var ownerCancel = await SendScopedAsync(client, endpoint, 114, "tools/call", "zemax_job_cancel", otherWriter,
+                       new { jobId = "fake-owned-job" }).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(ownerCancel).ConfigureAwait(false);
+                if (!ownerCancel.IsSuccessStatusCode || !body.Contains("Cancelled", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Job creator could not cancel its own Job: " + body);
+            }
+
+
+            // A synchronous tool never becomes a Task merely because the
+            // client advertises Tasks support.
+            using (var inline = await SendTaskAsync(client, endpoint, 1141, "tools/call",
+                       "zemax_status", otherWriter).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(inline).ConfigureAwait(false);
+                if (!inline.IsSuccessStatusCode ||
+                    !payload.Contains("echo-ok", StringComparison.Ordinal) ||
+                    payload.Contains("\"resultType\":\"task\"", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Opt-in changed synchronous tool semantics: " + payload);
+            }
+
+            // Real 2026-07-28 Tasks protocol E2E. Identical spoofable client
+            // metadata must never override the independently authenticated owner.
+            string taskId;
+            using (var created = await SendTaskAsync(client, endpoint, 115, "tools/call",
+                       "zemax_run_nsc_ray_trace", otherWriter).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(created).ConfigureAwait(false);
+                using var json = JsonDocument.Parse(payload);
+                if (!created.IsSuccessStatusCode ||
+                    json.RootElement.GetProperty("result").GetProperty("resultType").GetString() != "task")
+                    throw new InvalidOperationException("Opted-in NSC tool did not return official CreateTaskResult: " + payload);
+                taskId = json.RootElement.GetProperty("result").GetProperty("taskId").GetString()!;
+                if (string.IsNullOrWhiteSpace(taskId))
+                    throw new InvalidOperationException("Official CreateTaskResult did not have a taskId.");
+            }
+
+            foreach (var method in new[] { "tasks/get", "tasks/update", "tasks/cancel" })
+            {
+                using var deniedTask = await SendTaskAsync(client, endpoint, 116, method, null, writer, taskId).ConfigureAwait(false);
+                var payload = await ReadFirstMcpPayloadAsync(deniedTask).ConfigureAwait(false);
+                if (!payload.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+                    payload.Contains("private-task-final-result", StringComparison.Ordinal) ||
+                    payload.Contains("fake-task-job", StringComparison.Ordinal))
+                    throw new InvalidOperationException("A second authenticated client crossed the " + method + " Task boundary: " + payload);
+            }
+
+            using (var missingCapability = await SendTaskAsync(client, endpoint, 117, "tasks/get", null,
+                       otherWriter, taskId, capability: false).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(missingCapability).ConfigureAwait(false);
+                if (!payload.Contains("error", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Task polling without per-call opt-in was accepted.");
+            }
+
+
+            using (var emptyUpdate = await SendTaskAsync(client, endpoint, 1171, "tasks/update", null,
+                       otherWriter, taskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(emptyUpdate).ConfigureAwait(false);
+                if (!emptyUpdate.IsSuccessStatusCode || payload.Contains("\"error\":", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Owner's empty Task update should be acknowledged: " + payload);
+            }
+            using (var unsolicited = await SendTaskAsync(client, endpoint, 1172, "tasks/update", null,
+                       otherWriter, taskId, inputResponsesJson: "{\"unknown\":{\"result\":{}}}").ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(unsolicited).ConfigureAwait(false);
+                if (!payload.Contains("\"error\":", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Worker Job falsely accepted an unsolicited Task input response.");
+            }
+
+            using (var working = await SendTaskAsync(client, endpoint, 118, "tasks/get", null,
+                       otherWriter, taskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(working).ConfigureAwait(false);
+                if (!payload.Contains("\"working\"", StringComparison.Ordinal) ||
+                    payload.Contains("private-task-final-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Task completed before Worker returned its real result: " + payload);
+            }
+            using (var finished = await SendTaskAsync(client, endpoint, 119, "tasks/get", null,
+                       otherWriter, taskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(finished).ConfigureAwait(false);
+                if (!payload.Contains("\"completed\"", StringComparison.Ordinal) ||
+                    !payload.Contains("private-task-final-result", StringComparison.Ordinal) ||
+                    !payload.Contains("result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Task did not expose its actual Worker final result: " + payload);
+            }
+            using (var lateCancel = await SendTaskAsync(client, endpoint, 120, "tasks/cancel", null,
+                       otherWriter, taskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(lateCancel).ConfigureAwait(false);
+                if (!lateCancel.IsSuccessStatusCode || payload.Contains("error", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Terminal Task cancellation must be an idempotent acknowledgement.");
+            }
+            using (var stillCompleted = await SendTaskAsync(client, endpoint, 121, "tasks/get", null,
+                       otherWriter, taskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(stillCompleted).ConfigureAwait(false);
+                if (!payload.Contains("\"completed\"", StringComparison.Ordinal) ||
+                    !payload.Contains("private-task-final-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Late cancellation overwrote a completed Task.");
+            }
+
+            // One more long Job verifies real cancellation rather than merely
+            // acknowledging the Task handle.
+            string cancelTaskId;
+            using (var created = await SendTaskAsync(client, endpoint, 122, "tools/call",
+                       "zemax_run_nsc_ray_trace", otherWriter).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(created).ConfigureAwait(false);
+                using var json = JsonDocument.Parse(payload);
+                cancelTaskId = json.RootElement.GetProperty("result").GetProperty("taskId").GetString()!;
+            }
+            using (var cancelled = await SendTaskAsync(client, endpoint, 123, "tasks/cancel",
+                       null, otherWriter, cancelTaskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(cancelled).ConfigureAwait(false);
+                if (!cancelled.IsSuccessStatusCode || payload.Contains("error", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Task cancellation did not forward to Worker Job: " + payload);
+            }
+            using (var cancelledState = await SendTaskAsync(client, endpoint, 124, "tasks/get",
+                       null, otherWriter, cancelTaskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(cancelledState).ConfigureAwait(false);
+                if (!payload.Contains("\"cancelled\"", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Worker-confirmed cancellation did not reach Task state: " + payload);
+            }
+
+            // A real (fake-process) Worker generation loss must invalidate
+            // the active Task, then allow a different authenticated controller
+            // to take the newly started Worker immediately.
+            string crashedTaskId;
+            using (var started = await SendTaskAsync(client, endpoint, 126, "tools/call",
+                       "zemax_pop", otherWriter).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(started).ConfigureAwait(false);
+                using var json = JsonDocument.Parse(payload);
+                if (!started.IsSuccessStatusCode ||
+                    json.RootElement.GetProperty("result").GetProperty("resultType").GetString() != "task")
+                    throw new InvalidOperationException("Worker-exit fixture did not create a Task: " + payload);
+                crashedTaskId = json.RootElement.GetProperty("result").GetProperty("taskId").GetString()!;
+            }
+            await Task.Delay(2200).ConfigureAwait(false);
+            using (var ended = await SendTaskAsync(client, endpoint, 127, "tasks/get",
+                       null, otherWriter, crashedTaskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(ended).ConfigureAwait(false);
+                if (!ended.IsSuccessStatusCode ||
+                    !payload.Contains("\"failed\"", StringComparison.Ordinal) ||
+                    !payload.Contains("generation", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Worker generation loss left a Task working or leaked a fake result: " + payload);
+            }
+            using (var foreignTask = await SendTaskAsync(client, endpoint, 128, "tasks/get",
+                       null, writer, crashedTaskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(foreignTask).ConfigureAwait(false);
+                if (!payload.Contains("\"error\"", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Worker recovery exposed a foreign failed Task: " + payload);
+            }
+            using (var immediateHandoff = await SendScopedAsync(client, endpoint, 129,
+                       "tools/call", "zemax_status", writer).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(immediateHandoff).ConfigureAwait(false);
+                if (!immediateHandoff.IsSuccessStatusCode ||
+                    !payload.Contains("echo-ok", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Worker failure retained an idle foreign control lease: " + payload);
+            }
+
+            // The Task owner is revoked while its terminal result still exists.
+            ScopedCredentialAssertions.Write(file, ("reader", "read-only", reader), ("writer", "read-write", writer));
+            using (var revokedOwner = await SendTaskAsync(client, endpoint, 125, "tasks/get",
+                       null, otherWriter, taskId).ConfigureAwait(false))
+                if (revokedOwner.StatusCode != HttpStatusCode.Unauthorized)
+                    throw new InvalidOperationException("Revoked Task creator could still retrieve its result.");
+            ScopedCredentialAssertions.Write(file,
+                ("reader", "read-only", reader), ("writer", "read-write", writer),
+                ("writer-two", "read-write", otherWriter));
+
+            if (File.ReadAllLines(workerLog).Count(line => line.StartsWith("nsc:", StringComparison.Ordinal)) != 3)
+                throw new InvalidOperationException("Task protocol caused an unexpected duplicate Worker NSC execution.");
+
+            // Removing the reader revokes its bearer immediately. The Host
+            // must not cache stale auth decisions or silently fall back.
+            ScopedCredentialAssertions.Write(file, ("writer", "read-write", writer), ("writer-two", "read-write", otherWriter));
+            using (var revoked = await SendScopedAsync(client, endpoint, 105, "tools/list", null, reader).ConfigureAwait(false))
+                if (revoked.StatusCode != HttpStatusCode.Unauthorized)
+                    throw new InvalidOperationException("Revoked read-only credential was still accepted.");
+
+            File.WriteAllText(file, "{ malformed");
+            using (var malformed = await SendScopedAsync(client, endpoint, 106, "tools/list", null, writer).ConfigureAwait(false))
+                if (malformed.StatusCode != HttpStatusCode.ServiceUnavailable)
+                    throw new InvalidOperationException("Malformed live credential update did not fail closed.");
+
+            success = true;
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill();
+            process.WaitForExit(3000);
+            if (success) try { Directory.Delete(testRoot, recursive: true); } catch { }
+        }
+    }
+
+
+    private static Task<HttpResponseMessage> SendTaskAsync(
+        HttpClient client, Uri endpoint, int id, string method, string? toolName,
+        string bearer, string? taskId = null, bool capability = true, string? inputResponsesJson = null)
+    {
+        var body = Build2026Body(id, method, toolName, "spoofable-client-name", "same-instance-id");
+        if (capability)
+            body = body.Replace("\"io.modelcontextprotocol/clientCapabilities\":{}",
+                "\"io.modelcontextprotocol/clientCapabilities\":{\"extensions\":{\"io.modelcontextprotocol/tasks\":{}}}",
+                StringComparison.Ordinal);
+        if (taskId != null)
+            body = body.Replace("\"_meta\":{", "\"taskId\":" + JsonSerializer.Serialize(taskId) + ",\"_meta\":{",
+                StringComparison.Ordinal);
+        if (inputResponsesJson != null)
+            body = body.Replace("\"_meta\":{", "\"inputResponses\":" + inputResponsesJson + ",\"_meta\":{",
+                StringComparison.Ordinal);
+        var request = Create2026Request(endpoint, body, method, toolName ?? taskId);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearer);
+        return client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+    }
+
+    private static Task<HttpResponseMessage> SendScopedAsync(
+        HttpClient client, Uri endpoint, int id, string method, string? toolName, string bearer, object? arguments = null)
+    {
+        var body = Build2026Body(id, method, toolName, "spoofable-client-name", "same-instance-id");
+        if (arguments != null)
+            body = body.Replace("\"arguments\":{}", "\"arguments\":" + JsonSerializer.Serialize(arguments), StringComparison.Ordinal);
+        var request = Create2026Request(endpoint, body, method, toolName);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearer);
+        return client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+    }
+
+    private static Task<HttpResponseMessage> SendScopedGetAsync(HttpClient client, Uri endpoint, string bearer)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearer);
+        return client.SendAsync(request);
     }
 
     private static Task<HttpResponseMessage> Send2026ListToolsAsync(HttpClient client, Uri endpoint, int id, string clientName, string instanceId)
@@ -405,6 +1053,8 @@ internal static class Program
 
         var workerLog = Environment.GetEnvironmentVariable("ZEMAX_MCP_FAKE_WORKER_LOG");
         if (!string.IsNullOrWhiteSpace(workerLog)) File.AppendAllText(workerLog, "started" + Environment.NewLine);
+        var nscStarts = 0;
+        var completedTaskPolls = 0;
         while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
         {
             using var message = JsonDocument.Parse(line);
@@ -464,6 +1114,84 @@ internal static class Program
                         message = "Fake progress"
                     }).ConfigureAwait(false);
                     await Task.Delay(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+                }
+                if (string.Equals(command, "zemax_pop", StringComparison.Ordinal))
+                {
+                    await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
+                    {
+                        content = new[] { new { type = "text",
+                            text = "{\"success\":true,\"jobId\":\"fake-crash-task-job\",\"state\":\"Queued\"}" } },
+                        isError = false
+                    }).ConfigureAwait(false);
+                    // A real Worker process exits AFTER the Job handle has
+                    // been returned. This exercises generation cleanup, not
+                    // the separate cancellation-grace clock.
+                    await Task.Delay(1500).ConfigureAwait(false);
+                    return;
+                }
+                if (string.Equals(command, "zemax_run_nsc_ray_trace", StringComparison.Ordinal))
+                {
+                    var jobId = ++nscStarts == 1 ? "fake-owned-job" : "fake-task-job-" + (nscStarts - 1);
+                    if (!string.IsNullOrWhiteSpace(workerLog))
+                        File.AppendAllText(workerLog, "nsc:" + jobId + Environment.NewLine);
+                    await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
+                    {
+                        content = new[] { new { type = "text",
+                            text = JsonSerializer.Serialize(new { success = true, jobId, state = "Queued" }) } },
+                        isError = false
+                    }).ConfigureAwait(false);
+                    continue;
+                }
+                if (string.Equals(command, "zemax_job_status", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_job_cancel", StringComparison.Ordinal))
+                {
+                    var cancelling = string.Equals(command, "zemax_job_cancel", StringComparison.Ordinal);
+                    var id = root.GetProperty("payload").GetProperty("arguments").GetProperty("jobId").GetString()
+                        ?? string.Empty;
+                    string state;
+                    object resultValue;
+                    if (id == "fake-owned-job")
+                    {
+                        state = cancelling ? "Cancelled" : "Running";
+                        resultValue = "private-job-result";
+                    }
+                    else if (id == "fake-task-job-1")
+                    {
+                        state = cancelling ? "Cancelled" : ++completedTaskPolls >= 2 ? "Completed" : "Running";
+                        resultValue = new { privateData = "private-task-final-result", raysTraced = 127 };
+                    }
+                    else
+                    {
+                        state = cancelling ? "Cancelled" : "Running";
+                        resultValue = new { privateData = "private-cancelled-task-result" };
+                    }
+                    await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
+                    {
+                        content = new[] { new { type = "text",
+                            text = JsonSerializer.Serialize(new { jobId = id, state, resultExpired = false, result = resultValue }) } },
+                        isError = false
+                    }).ConfigureAwait(false);
+                    continue;
+                }
+                if (string.Equals(command, "zemax_job_list", StringComparison.Ordinal))
+                {
+                    await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
+                    {
+                        content = new[] { new { type = "text", text =
+                            "[{\"jobId\":\"fake-owned-job\",\"result\":\"private-job-result\"}," +
+                            "{\"jobId\":\"unowned-fake-job\",\"result\":\"private-unknown-result\"}]" } },
+                        isError = false
+                    }).ConfigureAwait(false);
+                    continue;
+                }
+                if (string.Equals(command, "zemax_disconnect", StringComparison.Ordinal))
+                {
+                    await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
+                    {
+                        content = new[] { new { type = "text", text = "{\"success\":true,\"error\":null}" } },
+                        isError = false
+                    }).ConfigureAwait(false);
+                    continue;
                 }
                 if (string.Equals(command, "zemax_status", StringComparison.Ordinal) || string.Equals(command, "zemax_get_system", StringComparison.Ordinal) ||
                     string.Equals(command, "zemax_test_echo", StringComparison.Ordinal) || string.Equals(command, "zemax_test_hold", StringComparison.Ordinal))
