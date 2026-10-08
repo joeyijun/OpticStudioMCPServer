@@ -381,10 +381,19 @@ public partial class MainWindow : Window
         public string JobId { get; set; } = "";
         public string State { get; set; } = "";
         public string DisplayText { get; set; } = "";
+        public string ToolName { get; set; } = "";
+        public string Message { get; set; } = "";
+        public string Owner { get; set; } = "Not individually reported";
+        public string WorkerGeneration { get; set; } = "Not reported";
+        public string Elapsed { get; set; } = "Not reported";
+        public string Queue { get; set; } = "";
+        public string Progress { get; set; } = "";
         public bool IsActive => State == "Queued" || State == "Running" || State == "Cancelling";
     }
 
-    private void RefreshTaskCenter(JArray? jobs)
+    private List<BackgroundJobView> _taskHistory = new List<BackgroundJobView>();
+
+    private void RefreshTaskCenter(JArray? jobs, JObject? health = null)
     {
         var selectedId = (TaskCenterJobs.SelectedItem as BackgroundJobView)?.JobId;
         var items = (jobs ?? new JArray()).OfType<JObject>()
@@ -404,11 +413,22 @@ public partial class MainWindow : Window
                 return new BackgroundJobView
                 {
                     JobId = id,
+                    ToolName = tool,
+                    Message = job["message"]?.ToString() ?? "No Worker message.",
+                    Owner = job["owner"]?.ToString() ??
+                        (health?["clientIsolation"]?.ToString().Contains("scoped") == true ? "Authenticated credential (owner-filtered)" :
+                         health?["controlLease"]?["owner"]?.ToString() ?? "Not individually reported"),
+                    WorkerGeneration = health?["worker"]?["workerGeneration"]?.ToString() ?? "Not reported",
+                    Elapsed = job["elapsedSeconds"]?.ToString() ?? job["elapsed"]?.ToString() ?? "Not reported",
+                    Queue = queue,
+                    Progress = pct,
                     State = state,
                     DisplayText = tool + " · " + state + pct + queue + " · " + id.Substring(0, Math.Min(id.Length, 8))
                 };
             }).ToList();
 
+        _taskHistory = items;
+        RefreshTasksPage();
         TaskCenterJobs.ItemsSource = items;
         TaskCenterJobs.SelectedItem = items.FirstOrDefault(item => item.JobId == selectedId)
             ?? items.FirstOrDefault(item => item.IsActive) ?? items.FirstOrDefault();
@@ -427,6 +447,11 @@ public partial class MainWindow : Window
     private async void TaskCenterCancel_Click(object sender, RoutedEventArgs e)
     {
         if (TaskCenterJobs.SelectedItem is not BackgroundJobView selection || !selection.IsActive) return;
+        await RequestCancellationAsync(selection);
+    }
+
+    private async Task RequestCancellationAsync(BackgroundJobView selection)
+    {
         var decision = System.Windows.MessageBox.Show(
             "Request cooperative cancellation of " + selection.DisplayText +
             "?\nOnly the authenticated Job owner may cancel; other clients will be denied.",
@@ -447,7 +472,74 @@ public partial class MainWindow : Window
         finally { await RefreshStatusAsync(); }
     }
 
+    private void RefreshTasksPage()
+    {
+        if (TasksPageJobs == null) return;
+        var selected = (TasksPageJobs.SelectedItem as BackgroundJobView)?.JobId;
+        var state = (TasksPageFilter?.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() ?? "All";
+        var visible = _taskHistory.Where(item => state == "All" ||
+            (state == "Failed" && item.State == "Failed") ||
+            (state == "Cancelled" && item.State == "Cancelled") ||
+            string.Equals(item.State, state, StringComparison.OrdinalIgnoreCase)).ToList();
+        TasksPageJobs.ItemsSource = visible;
+        TasksPageJobs.SelectedItem = visible.FirstOrDefault(item => item.JobId == selected) ??
+            visible.FirstOrDefault();
+        TasksPageSummary.Text = visible.Count + " shown · " + _taskHistory.Count +
+            " reported (up to 25) · cancellation requires Job ownership.";
+    }
+
+    private void TasksPageFilter_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (TasksPageJobs != null) RefreshTasksPage();
+    }
+
+    private void TasksPageJobs_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        var selected = TasksPageJobs?.SelectedItem as BackgroundJobView;
+        TasksPageCancel.IsEnabled = selected?.IsActive == true;
+        TasksPageViewResult.IsEnabled = selected != null;
+        TasksPageDetail.Text = selected == null ? "Select a Job to inspect its details." :
+            "Job ID: " + selected.JobId + "\nTool: " + selected.ToolName +
+            "\nState: " + selected.State +
+            "\nWorker generation: " + selected.WorkerGeneration +
+            "\nOwner visibility: " + selected.Owner +
+            "\nElapsed: " + selected.Elapsed +
+            "\nProgress: " + (string.IsNullOrWhiteSpace(selected.Progress) ? "Not reported" : selected.Progress) +
+            "\nQueue: " + (string.IsNullOrWhiteSpace(selected.Queue) ? "Not queued" : selected.Queue) +
+            "\nWorker message / failure reason: " + selected.Message +
+            "\n\n'View Job result' checks the existing authenticated Worker Job status. "+
+            "A completed Job may have expired its result; official Tasks require their separate Task ID.";
+    }
+
+    private async void TasksPageCancel_Click(object sender, RoutedEventArgs e)
+    {
+        if (TasksPageJobs.SelectedItem is BackgroundJobView job && job.IsActive)
+            await RequestCancellationAsync(job);
+    }
+
+    private async void TasksPageViewResult_Click(object sender, RoutedEventArgs e)
+    {
+        if (TasksPageJobs.SelectedItem is not BackgroundJobView job) return;
+        var endpoint = McpUrl;
+        var token = McpToken;
+        TasksPageViewResult.IsEnabled = false;
+        try
+        {
+            var text = await Task.Run(() => RequestJobTool(endpoint, token, job.JobId, "zemax_job_status"));
+            TasksPageDetail.Text = text.Length <= 24000 ? text :
+                text.Substring(0, 24000) + "\n[Display truncated to 24000 characters; full result stays on the Worker.]";
+        }
+        catch (Exception ex) { TasksPageDetail.Text = "Result retrieval unavailable: " + ex.Message; }
+        finally { TasksPageViewResult.IsEnabled = true; }
+    }
+
     private static string RequestJobCancellation(string endpoint, string accessToken, string jobId)
+    {
+        _ = RequestJobTool(endpoint, accessToken, jobId, "zemax_job_cancel");
+        return "accepted for " + jobId + "; final state will be confirmed by the next status poll.";
+    }
+
+    private static string RequestJobTool(string endpoint, string accessToken, string jobId, string toolName)
     {
         // Always route through ordinary MCP tools/call so scoped ownership and
         // the Worker's generation check remain authoritative. This is not an
@@ -459,7 +551,7 @@ public partial class MainWindow : Window
             ["method"] = "tools/call",
             ["params"] = new JObject
             {
-                ["name"] = "zemax_job_cancel",
+                ["name"] = toolName,
                 ["arguments"] = new JObject { ["jobId"] = jobId },
                 ["_meta"] = new JObject
                 {
@@ -479,7 +571,7 @@ public partial class MainWindow : Window
         request.Timeout = 15000;
         request.Headers["MCP-Protocol-Version"] = "2026-07-28";
         request.Headers["Mcp-Method"] = "tools/call";
-        request.Headers["Mcp-Name"] = "zemax_job_cancel";
+        request.Headers["Mcp-Name"] = toolName;
         AddAuthorization(request, accessToken);
         var bytes = Encoding.UTF8.GetBytes(body.ToString(Newtonsoft.Json.Formatting.None));
         using (var stream = request.GetRequestStream()) stream.Write(bytes, 0, bytes.Length);
@@ -494,7 +586,8 @@ public partial class MainWindow : Window
         var rpc = JObject.Parse(raw);
         if (rpc["error"] != null || rpc["result"]?["isError"]?.Value<bool>() == true)
             throw new InvalidOperationException("MCP rejected the request (not owner, stale generation, or cancellation error).");
-        return "accepted for " + jobId + "; final state will be confirmed by the next status poll.";
+        return rpc["result"]?["content"]?.FirstOrDefault()?["text"]?.ToString() ??
+            rpc["result"]?.ToString(Newtonsoft.Json.Formatting.Indented) ?? "No Job result payload.";
     }
 
     private async Task RefreshStatusAsync()
@@ -525,7 +618,7 @@ public partial class MainWindow : Window
                 "; current: " + (activeOperation["tool"]?.ToString() ?? activeOperation["method"]?.ToString() ?? "MCP request") +
                 " (" + FormatUptime(activeOperation["elapsedSeconds"]?.Value<long?>()) + ")";
             var jobs = health["jobs"] as JArray;
-            RefreshTaskCenter(jobs);
+            RefreshTaskCenter(jobs, health);
             var leaseOwner = health["controlLease"]?["owner"]?.ToString();
             if (!string.IsNullOrWhiteSpace(leaseOwner))
                 TaskCenterSummary.Text += " · controller: " + FormatClientName(leaseOwner);
@@ -597,6 +690,8 @@ public partial class MainWindow : Window
             TaskCenterCancel.IsEnabled = false;
             TaskCenterSummary.Text = "Service offline; Job information unavailable.";
             TaskCenterJobs.ItemsSource = null;
+            _taskHistory.Clear();
+            RefreshTasksPage();
             ConnectionSummary.Text = "Offline — MCP endpoint is not reachable\n" + endpoint;
             _fullDiagnostics = "MCP endpoint: not reachable\n" +
                 "ZOS-API files: " + (apiFiles ? "found" : root == null ? "remote endpoint" : "missing") +
