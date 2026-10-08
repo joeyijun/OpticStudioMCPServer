@@ -86,7 +86,7 @@ internal sealed class JobOwnerRegistry
         var content = new List<ContentBlock>(result.Content.Count);
         foreach (var block in result.Content)
         {
-            if (block is not TextContentBlock textBlock) { content.Add(block); continue; }
+            if (block is not TextContentBlock textBlock) return Denied();
             try
             {
                 using var document = JsonDocument.Parse(textBlock.Text);
@@ -104,6 +104,7 @@ internal sealed class JobOwnerRegistry
             }
             catch (JsonException) { return Denied(); }
         }
+        if (content.Count == 0) return Denied();
         return new CallToolResult { Content = content, IsError = false };
     }
 
