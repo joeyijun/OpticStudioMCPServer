@@ -248,19 +248,41 @@ internal static class Program
 
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var never = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var job = jobs.Enqueue("hung-background-job", async _ =>
+        var job = jobs.Enqueue("hung-background-job", async context =>
         {
             started.TrySetResult();
             await never.Task;
+            // Simulate an abandoned, non-cooperative COM operation returning
+            // after the hard-recovery decision was already published.
+            context.SetResult("late-result-must-not-leak");
+            context.ReportProgress(1, "late success");
         });
 
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var queuedExecuted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var waiting = jobs.Enqueue("must-not-run-after-hard-recovery", _ =>
+        {
+            queuedExecuted.TrySetResult();
+            return Task.CompletedTask;
+        });
         Assert(jobs.Cancel(job.JobId, out _), "A running background job could not enter cancellation.");
         var hardFailure = await recovery.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert(hardFailure.JobId == job.JobId && hardFailure.State == McpJobState.Failed,
             "A non-draining background job did not transition to failed hard-recovery state.");
         Assert(hardFailure.Message.Contains("hard recovery", StringComparison.OrdinalIgnoreCase),
             "Hard-recovery failure did not explain why the Worker generation must be replaced.");
+        var abandoned = jobs.Get(waiting.JobId);
+        Assert(abandoned is { State: McpJobState.Failed } && !queuedExecuted.Task.IsCompleted,
+            "A queued background job was not failed when its Worker generation required hard recovery.");
+        AssertThrows<InvalidOperationException>(
+            () => jobs.Enqueue("unsafe-post-recovery", _ => Task.CompletedTask),
+            "A Worker with an orphaned COM call must reject all new background jobs.");
+        never.TrySetResult();
+        await Task.Delay(100);
+        var stillFailed = jobs.Get(job.JobId);
+        Assert(stillFailed is { State: McpJobState.Failed, Result: null } &&
+               stillFailed.Message.Contains("hard recovery", StringComparison.OrdinalIgnoreCase),
+            "A late COM result/progress resurrected an already-failed Job after hard recovery.");
     }
 
     private static void Assert(bool condition, string message)
