@@ -9,6 +9,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'McpHttpResponse.ps1')
 $endpointUri = $Endpoint.TrimEnd("/")
 $nextId = 1
 $clientName = "zemax-mcp-release-verifier"
@@ -16,20 +17,6 @@ $clientVersion = "2.0"
 $clientInstanceId = "release-" + [Guid]::NewGuid().ToString("N")
 $modernProtocolVersion = "2026-07-28"
 $legacyProtocolVersion = "2025-11-25"
-
-function ConvertFrom-McpHttpResponse {
-    param($Response)
-
-    $content = [string]$Response.Content
-    if ([string]::IsNullOrWhiteSpace($content)) { return $null }
-    $contentType = [string]$Response.Headers["Content-Type"]
-    if ($contentType -match "text/event-stream" -or $content -match "(?m)^data:") {
-        $dataLine = @($content -split "`r?`n" | Where-Object { $_ -match '^data:' } | Select-Object -First 1)
-        if ($dataLine.Count -eq 0) { throw "MCP SSE response contained no data payload." }
-        $content = ([string]$dataLine[0]).Substring(5).Trim()
-    }
-    return $content | ConvertFrom-Json
-}
 
 function New-ModernMeta {
     return @{
@@ -72,7 +59,7 @@ function Invoke-ModernMcpRequest {
 
     $response = Invoke-WebRequest -UseBasicParsing -Uri $script:endpointUri -Method Post `
         -ContentType "application/json" -Headers $headers -Body ([Text.Encoding]::UTF8.GetBytes($payload)) -TimeoutSec 90
-    $json = ConvertFrom-McpHttpResponse $response
+    $json = ConvertFrom-McpWireResponse -Response $response -RequestId $requestId
     if ($json -and $json.error) { throw "$Method returned JSON-RPC error $($json.error.code): $($json.error.message)" }
     return $json
 }
@@ -98,7 +85,7 @@ function Invoke-LegacyInitialize {
     if (-not [string]::IsNullOrWhiteSpace($script:AccessToken)) { $headers["Authorization"] = "Bearer $script:AccessToken" }
     $response = Invoke-WebRequest -UseBasicParsing -Uri $script:endpointUri -Method Post `
         -ContentType "application/json" -Headers $headers -Body ([Text.Encoding]::UTF8.GetBytes($payload)) -TimeoutSec 30
-    $json = ConvertFrom-McpHttpResponse $response
+    $json = ConvertFrom-McpWireResponse -Response $response -RequestId $requestId
     if ($json.error) { throw "Legacy initialize returned JSON-RPC error $($json.error.code): $($json.error.message)" }
     if ($json.result.protocolVersion -ne $script:legacyProtocolVersion) {
         throw "Legacy initialize negotiated '$($json.result.protocolVersion)' instead of '$($script:legacyProtocolVersion)'."

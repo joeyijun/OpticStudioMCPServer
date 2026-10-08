@@ -1,6 +1,8 @@
 param([string]$Configuration = "Release")
 
 $ErrorActionPreference = "Stop"
+& (Join-Path $PSScriptRoot 'test-mcp-http-response.ps1')
+& (Join-Path $PSScriptRoot 'test-isolated-acceptance.ps1')
 $root = Split-Path $PSScriptRoot -Parent
 $hostProject = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ZemaxMCP.HttpBridge.csproj")
 $hostSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\Program.cs")

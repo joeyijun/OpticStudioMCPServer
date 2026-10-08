@@ -13,12 +13,15 @@ param(
     [switch]$VerifyTaskCancellation,
     [switch]$VerifyWorkerCrashRecovery,
     [switch]$AllowWorkerTermination,
+    [string]$ExpectedWorkerPath = "",
+    [int]$ExpectedHostProcessId = 0,
     [int]$JobWaitSeconds = 90,
     [switch]$AllowReplaceCurrentSystem,
     [switch]$KeepWorkingCopy
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'McpHttpResponse.ps1')
 if (-not $AllowReplaceCurrentSystem) {
     throw "Functional live tests replace the currently open OpticStudio system. Save your work and use a dedicated validation instance; rerun with -AllowReplaceCurrentSystem to acknowledge the replacement."
 }
@@ -39,6 +42,11 @@ if ($VerifyWorkerCrashRecovery -and (-not $VerifyOfficialTasks -or -not $AllowWo
     throw "Worker crash recovery requires -VerifyOfficialTasks, -AllowWorkerTermination and an NSC or global-search job. It forcibly terminates the licensed Worker process."
 }
 if ($VerifyWorkerCrashRecovery) {
+    if ($ExpectedHostProcessId -le 0 -or [string]::IsNullOrWhiteSpace($ExpectedWorkerPath) -or
+        -not (Test-Path -LiteralPath $ExpectedWorkerPath -PathType Leaf)) {
+        throw 'Worker termination requires an independently launched test Host PID and exact ExpectedWorkerPath.'
+    }
+    $ExpectedWorkerPath = [IO.Path]::GetFullPath($ExpectedWorkerPath)
     # PID checks and Stop-Process execute on THIS machine. Never apply a PID
     # returned by a remote LAN Host to an unrelated local process.
     $validationEndpoint = [Uri]$endpointUri
@@ -62,18 +70,6 @@ $script:clientInstanceId = "functional-" + [Guid]::NewGuid().ToString("N")
 $script:protocolVersion = "2026-07-28"
 $results = [System.Collections.Generic.List[object]]::new()
 
-function ConvertFrom-McpResponse {
-    param($Response)
-    $content = [string]$Response.Content
-    if ([string]::IsNullOrWhiteSpace($content)) { return $null }
-    if ([string]$Response.Headers["Content-Type"] -match "text/event-stream" -or $content -match "(?m)^data:") {
-        $line = @($content -split '[\r\n]+' | Where-Object { $_ -match '^data:' } | Select-Object -First 1)
-        if ($line.Count -eq 0) { throw "MCP SSE response contained no data payload." }
-        $content = ([string]$line[0]).Substring(5).Trim()
-    }
-    return $content | ConvertFrom-Json
-}
-
 function New-Meta {
     param([switch]$TaskOptIn)
     $capabilities = @{}
@@ -93,7 +89,8 @@ function Invoke-Mcp {
     $wire = @{}
     foreach ($key in $Params.Keys) { $wire[$key] = $Params[$key] }
     $wire["_meta"] = New-Meta -TaskOptIn:$TaskOptIn
-    $payload = @{ jsonrpc = "2.0"; id = $script:nextId++; method = $Method; params = $wire } | ConvertTo-Json -Depth 60 -Compress
+    $requestId = $script:nextId++
+    $payload = @{ jsonrpc = "2.0"; id = $requestId; method = $Method; params = $wire } | ConvertTo-Json -Depth 60 -Compress
     $headers = @{
         Accept = "application/json, text/event-stream"
         "MCP-Protocol-Version" = $script:protocolVersion
@@ -103,7 +100,7 @@ function Invoke-Mcp {
     if ($ToolName) { $headers["Mcp-Name"] = $ToolName }
     if ($AccessToken) { $headers.Authorization = "Bearer $AccessToken" }
     $response = Invoke-WebRequest -UseBasicParsing -Uri $endpointUri -Method Post -Headers $headers -ContentType "application/json" -Body ([Text.Encoding]::UTF8.GetBytes($payload)) -TimeoutSec 180
-    $json = ConvertFrom-McpResponse $response
+    $json = ConvertFrom-McpWireResponse -Response $response -RequestId $requestId
     if ($json.error) { throw "$Method JSON-RPC error $($json.error.code): $($json.error.message)" }
     return $json
 }
@@ -417,7 +414,7 @@ try {
                 foreach ($required in @("zemax_global_search", "zemax_job_status", "zemax_job_cancel")) {
                     if ($required -notin $tools) { throw "Active profile does not expose $required." }
                 }
-                $started = Get-ToolPayload (Invoke-Tool "zemax_global_search" @{ algorithm = "DLS"; cores = 0; solutionsToSave = 10; timeoutSeconds = 10.0; runInBackground = $true })
+                $started = Get-ToolPayload (Invoke-Tool "zemax_global_search" @{ algorithm = "DLS"; cores = 1; solutionsToSave = 10; timeoutSeconds = 10.0; runInBackground = $true })
                 $jobId = [string]$started.jobId
                 if ([string]::IsNullOrWhiteSpace($jobId)) { throw "Global search did not return a jobId." }
 
@@ -526,7 +523,7 @@ try {
             Invoke-Check "official-task-cancellation-and-grace" {
                 if ($systemMode -match "NonSequential") { throw "Global-search cancellation requires a sequential fixture." }
                 $taskId = Start-OfficialTask "zemax_global_search" @{
-                    algorithm = "DLS"; cores = 0; solutionsToSave = 10;
+                    algorithm = "DLS"; cores = 1; solutionsToSave = 10;
                     timeoutSeconds = 0.0; runInBackground = $true
                 }
                 $initial = Get-OfficialTask $taskId
@@ -571,7 +568,7 @@ try {
                    scatterRays = $false; usePolarization = $false; ignoreErrors = $true;
                    timeoutSeconds = 120.0; runInBackground = $true }
             }
-            else { @{ algorithm = "DLS"; cores = 0; solutionsToSave = 10;
+            else { @{ algorithm = "DLS"; cores = 1; solutionsToSave = 10;
                       timeoutSeconds = 0.0; runInBackground = $true } }
             $taskId = Start-OfficialTask $tool $args
             $pre = Get-Health
@@ -581,9 +578,14 @@ try {
             if ($workerPid -eq $PID) { throw "Refusing to kill the current verifier process." }
             $workerProc = Get-CimInstance Win32_Process -Filter "ProcessId = $workerPid"
             if ($null -eq $workerProc -or
-                [string]$workerProc.Name -notmatch '^ZemaxMCP\.Worker\.exe$') {
+                [string]$workerProc.Name -notmatch '^ZemaxMCP\.Worker\.exe$' -or
+                [int]$workerProc.ParentProcessId -ne $ExpectedHostProcessId -or
+                [string]::IsNullOrWhiteSpace([string]$workerProc.ExecutablePath) -or
+                -not [string]::Equals([IO.Path]::GetFullPath([string]$workerProc.ExecutablePath), $ExpectedWorkerPath, [StringComparison]::OrdinalIgnoreCase)) {
                 throw "PID $workerPid is not the dedicated ZemaxMCP.Worker.exe. Refusing to terminate it."
             }
+            $active = Invoke-Mcp -Method 'tasks/get' -Params @{ taskId=$taskId } -ToolName $taskId -TaskOptIn
+            if ($active.result.status -ne 'working') { throw 'Fixture ended before crash injection; refusing to terminate Worker.' }
             Stop-Process -Id $workerPid -Force -ErrorAction Stop
             Start-Sleep -Seconds 2
             $recovered = Get-Health
@@ -594,7 +596,18 @@ try {
             if ($terminal.status -ne "failed") {
                 throw "A Task from a terminated Worker generation should fail, got $($terminal.status)."
             }
-            $alive = Get-ToolPayload (Invoke-Tool "zemax_status")
+            $readyDeadline = [DateTimeOffset]::UtcNow.AddSeconds(90)
+            do {
+                $ready = Get-Health
+                if ($ready.zosApiConnected -and $ready.licenseValidForApi -eq $true) { break }
+                Start-Sleep -Milliseconds 300
+            } while ([DateTimeOffset]::UtcNow -lt $readyDeadline)
+            if (-not $ready.zosApiConnected -or $ready.licenseValidForApi -ne $true) { throw 'Restarted Worker is not connected with a valid API license.' }
+            Get-ToolPayload (Invoke-Tool 'zemax_open_file' @{filePath=$workingCopy}) | Out-Null
+            $alive = Get-ToolPayload (Invoke-Tool 'zemax_get_system' @{includeSurfaces=$true})
+            if (-not [string]::Equals([string]$alive.filePath, $workingCopy, [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'Actual post-recovery GetSystem did not read the dedicated working fixture.'
+            }
             "oldWorker=$workerPid; generation=$generation->$($recovered.worker.workerGeneration); oldTask=$($terminal.status)"
         } | Out-Null
     }
