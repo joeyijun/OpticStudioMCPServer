@@ -53,6 +53,21 @@ internal static class StaticToolManifestAssertions
             StaticToolManifest.IsAllowed("optimization-tolerance", "zemax_get_nsc_objects", readOnly: false))
             throw new InvalidOperationException("Focused profiles leaked unrelated editor domains back into tools/list.");
 
+        var budget = StaticToolManifest.GetRequired("zemax_nsc_energy_budget");
+        if (budget.DomainId != "non-sequential" || budget.Impact != "ReadOnly" ||
+            !StaticToolManifest.IsAllowed("nonsequential-stray-light", budget.Name, readOnly: true) ||
+            StaticToolManifest.IsAllowed("basic-viewing", budget.Name, readOnly: false))
+            throw new InvalidOperationException("NSC energy budget must be non-mutating and available only in appropriate profiles.");
+        var budgetSchema = budget.InputSchema;
+        if (budgetSchema.GetProperty("properties").GetProperty("detectorObjects").GetProperty("type").GetString() != "array" ||
+            !budgetSchema.GetProperty("required").EnumerateArray().Any(x => x.GetString() == "detectorObjects"))
+            throw new InvalidOperationException("NSC energy budgeting must require an array of detector IDs.");
+
+        var detectorSchema = StaticToolManifest.GetRequired("zemax_get_nsc_detector").InputSchema.GetProperty("properties");
+        foreach (var field in new[] { "includePixels", "dataType", "startRow", "startColumn", "rowCount", "columnCount" })
+            if (!detectorSchema.TryGetProperty(field, out _))
+                throw new InvalidOperationException("Detector ROI tool is missing the published field " + field);
+
         var snapshotList = StaticToolManifest.GetRequired("zemax_snapshot_list").InputSchema.GetProperty("properties");
         if (snapshotList.GetProperty("limit").GetProperty("default").GetInt32() != 25)
             throw new InvalidOperationException("Snapshot listing must preserve its bounded newest-first default.");
