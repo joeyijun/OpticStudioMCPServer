@@ -61,7 +61,7 @@ internal static class Program
             builder.Services.AddSingleton(controlLease);
             var activity = new McpActivityMonitor();
             builder.Services.AddSingleton(activity);
-            builder.Services
+            var mcpBuilder = builder.Services
                 .AddMcpServer(server => server.ServerInfo = new()
                 {
                     Name = "zemax-mcp",
@@ -84,8 +84,27 @@ internal static class Program
                             .ToList()
                     };
                 })
-                .WithCallToolHandler(async (request, cancellationToken) =>
-                {
+
+                ;
+
+            if (options.EnableOfficialTasks)
+            {
+                var taskLedger = new WorkerTaskLedger();
+                workerClient.JobStateChanged += taskLedger.ObserveJob;
+                workerClient.GenerationEnded += taskLedger.ReleaseGeneration;
+                var adapter = new OfficialTasksAdapter(taskLedger, workerClient, jobOwners,
+                    credentialStore != null, ResolveTaskIdentity, HandleToolCallAsync);
+                builder.Services.Configure<ModelContextProtocol.Server.McpServerOptions>(adapter.Configure);
+            }
+            else
+            {
+                mcpBuilder.WithCallToolHandler(HandleToolCallAsync);
+            }
+
+            async Task<CallToolResult> HandleToolCallAsync(
+                ModelContextProtocol.Server.RequestContext<CallToolRequestParams> request,
+                CancellationToken cancellationToken)
+            {
                     if (!StaticToolManifest.TryGet(request.Params.Name, out var requestedTool) ||
                         !IsAuthorizedTool(options, request.User, requestedTool))
                     {
@@ -186,7 +205,7 @@ internal static class Program
                         controlLease.ReleaseOwnership(clientId);
 
                     return result;
-                });
+            }
 
             var app = builder.Build();
             var worker = app.Services.GetRequiredService<WorkerRpcClient>();
@@ -349,7 +368,7 @@ internal static class Program
         finally { await Log.CloseAndFlushAsync().ConfigureAwait(false); }
     }
 
-    private static bool TryGetStartedJobId(string toolName, CallToolResult result, out string jobId)
+    internal static bool TryGetStartedJobId(string toolName, CallToolResult result, out string jobId)
     {
         jobId = string.Empty;
         if (result.IsError == true ||
@@ -428,6 +447,33 @@ internal static class Program
         var presented = Encoding.UTF8.GetBytes(header.Substring("Bearer ".Length));
         var expected = Encoding.UTF8.GetBytes(token);
         return presented.Length == expected.Length && CryptographicOperations.FixedTimeEquals(presented, expected);
+    }
+
+
+    // Raw Tasks protocol handlers receive JsonRpcRequest rather than the typed
+    // tool context. Reconstruct exactly the same ownership identity so a second
+    // credential cannot access another client's Task, even if it copies metadata.
+    private static string ResolveTaskIdentity(JsonRpcRequest request)
+    {
+        var principal = request.Context?.User;
+        var profile = principal?.FindFirst("zemax-mcp-auth-profile")?.Value;
+        if (!string.IsNullOrWhiteSpace(profile) &&
+            profile is not ("shared-token" or "local"))
+            return "token:" + profile;
+
+        var info = request.Context?.ClientInfo;
+        var name = string.IsNullOrWhiteSpace(info?.Name) ? "unknown" : info.Name.Trim();
+        var version = string.IsNullOrWhiteSpace(info?.Version) ? "unknown" : info.Version.Trim();
+        var endpoint = principal?.FindFirst("zemax-mcp-remote-endpoint")?.Value ?? "unknown";
+        var meta = (request.Params as JsonObject)?["_meta"] as JsonObject;
+        var instanceId = GetRequestClientInstanceId(meta)
+            ?? principal?.FindFirst("zemax-mcp-client-instance")?.Value;
+        if (!string.IsNullOrWhiteSpace(instanceId))
+            return $"client:{name}@{version}|instance:{instanceId}|remote:{endpoint}";
+        var sessionId = principal?.FindFirst("zemax-mcp-session-id")?.Value;
+        if (!string.IsNullOrWhiteSpace(sessionId))
+            return $"client:{name}@{version}|session:{sessionId}|remote:{endpoint}";
+        return $"client:{name}@{version}|remote:{endpoint}";
     }
 
     private static string ResolveControlIdentity(ModelContextProtocol.Server.RequestContext<CallToolRequestParams> request)
