@@ -52,3 +52,43 @@ Remaining requirements for official enablement:
 2. Ensure task get/update/cancel handlers use authenticated owner identity on *every* lookup, with credential revocation and result confidentiality verified against real stateless HTTP connections. Never use the SDK's unscoped in-memory Tasks store in scoped mode.
 3. On tasks/get, retrieve and validate the Job's final payload (including `ResultExpired`) and convert it to the **actual** `CallToolResult`. Task cancellation must call the existing owner-authorized Job cancel path; no second ZOS-API job is created.
 4. Add true protocol negotiation, dual-client E2E, Worker-restart/cancel race, bounded results, and live NSC/Tolerancing tests before flipping the default-off capability flag. The ledger can be wired to Worker generation/status events only as part of this protocol bridge.
+
+## Optional official protocol adapter (2026-10-08, experimental)
+
+A separate draft PR now implements the protocol adapter on top of the bounded
+`WorkerTaskLedger`. **The default is still OFF**; opt in explicitly when
+testing the Host by adding `--enable-official-tasks true`. Without the flag,
+the SDK Tasks extension is not advertised or registered, and traditional
+`zemax_job_status/list/cancel` remain unchanged.
+
+With the feature flag enabled, only these reviewed asynchronous tools may
+return an official Task handle on an MCP `2026-07-28` request carrying the
+`io.modelcontextprotocol/tasks` per-request client capability:
+`zemax_run_nsc_ray_trace`, `zemax_run_tolerancing`, `zemax_pop`,
+`zemax_global_search`, and `zemax_multistart_optimize`. In every other
+case the original `CallToolResult` (including the legacy `jobId`) is
+returned. No ZOS-API operation is launched twice.
+
+The Host implements `tasks/get`, `tasks/update` and `tasks/cancel` using
+official SDK protocol models and the custom alternate-result handler rather
+than `WithTasks`. Every method checks the current request's protocol and
+opt-in plus its **transport-authenticated owner**. `tasks/get` polls the
+single underlying Job with `zemax_job_status`, validates its ID and state,
+and serializes its actual completed result as a `CallToolResult`. A pruned,
+oversized, malformed or expired result is reported explicitly as unavailable.
+`tasks/cancel` uses `zemax_job_cancel`; the status remains working until
+the Worker confirms cancellation, and an already-completed Task is immutable.
+`tasks/update` acknowledges empty input only: the current Worker Job tools
+do not expose sampling/elicitation, so unsolicited input is rejected.
+
+The private RPC HTTP fixture now covers per-request negotiation, synchronous
+fallback, two distinct bearer tokens with deliberately identical spoofed
+clientInfo/instance IDs, cross-token `tasks/get/update/cancel` denials,
+real Worker result retrieval, late cancellation, cooperative cancellation,
+revocation and duplicate execution checks. These are **fake-Worker tests**
+and are not equivalent to licensed OpticStudio functional verification.
+
+Production-enable gate: complete the Windows CI suite and run licensed
+NSC/Tolerancing/optimization scenarios (including Worker hard recovery).
+The disabled-by-default switch must remain off in shipped Launcher config
+until both the deterministic tests and the licensed scenarios pass.
