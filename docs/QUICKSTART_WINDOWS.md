@@ -59,13 +59,14 @@ $env:ZEMAX_MCP_TOKEN = "paste-the-token-from-copy-secure-setup"
 
 The safety check reads the current title/author/notes and requests those same values. In read-only mode it verifies that the request is blocked before ZOS-API mutation; in read/write mode it verifies that the Host reports a newly created cross-version `.zmx` snapshot before the no-op assignment. It never saves or intentionally changes the current optical system.
 
-For deeper licensed-machine acceptance, supply a disposable lens fixture. The functional verifier first copies it to a temporary working file, then performs real edit/readback checks and writes a JSON report:
+For deeper licensed-machine acceptance, **save your work and use a dedicated OpticStudio validation instance**. The functional verifier replaces the currently open optical system. You must explicitly acknowledge this with `-AllowReplaceCurrentSystem`. It copies the supplied disposable lens fixture to a temporary working file, fails before mutation if opening/identity checks do not succeed, then performs real edit/readback checks and writes a JSON report:
 
 ```powershell
 ./scripts/verify-live-functional.ps1 `
   -FixturePath "C:\ZemaxValidation\sequential-fixture.zmx" `
+  -AllowReplaceCurrentSystem `
   -VerifyOptimization `
   -VerifyBackgroundJobs
 ```
 
-Use a purpose-built non-sequential fixture with `-VerifyNsc`, or a tolerance fixture with `-VerifyTolerance`.
+Use a purpose-built non-sequential fixture with `-VerifyNsc`, or a tolerance fixture with `-VerifyTolerance`, also supplying `-AllowReplaceCurrentSystem`. The script retains any fixture file that may still be open in OpticStudio; close/switch away from that working file before manually deleting the temporary directory.
