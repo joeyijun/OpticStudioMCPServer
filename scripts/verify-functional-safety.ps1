@@ -86,8 +86,10 @@ if ($snapshotTools -notmatch 'ResolveSnapshot\(' -or
     $snapshotTools -notmatch 'RestoreSnapshotAsync\(snapshotPath' -or
     $zemaxSession -notmatch '"RestoreSnapshot"' -or
     $zemaxSession -notmatch 'File\.Copy\(fullSnapshotPath, workingPath, overwrite: false\)' -or
-    $zemaxSession -notmatch 'CurrentFilePath = workingPath') {
-    throw "Snapshot tools must confine names to the configured snapshot directory, reject reparse points, compare through a copied system, preserve non-finite values textually, and restore through a protected working copy."
+    $zemaxSession -notmatch 'Guid\.NewGuid\(\)' -or
+    $zemaxSession -notmatch 'CurrentFilePath = workingPath' -or
+    $zemaxSession -match 'PruneRestoredWorkingCopies|restoredDirectory[\s\S]{0,500}\.Delete\(\)') {
+    throw "Snapshot tools must confine names to the snapshot directory, reject reparse points, compare through a copied system, preserve non-finite values, restore into a unique working file, and never prune restored user-editable files."
 }
 
 foreach ($rayFile in @("RayTraceTool.cs", "RayTraceExtendedTool.cs")) {
