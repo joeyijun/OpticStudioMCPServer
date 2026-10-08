@@ -8,6 +8,8 @@ param(
     [switch]$VerifyOptimization,
     [switch]$VerifyBackgroundJobs,
     [switch]$VerifyNsc,
+    [int]$NscEnergyDetectorObject = 0,
+    [double]$NscLaunchedFlux = 0,
     [switch]$VerifyTolerance,
     [switch]$VerifyOfficialTasks,
     [switch]$VerifyTaskCancellation,
@@ -31,6 +33,11 @@ if (-not (Test-Path -LiteralPath $fixture -PathType Leaf)) { throw "Fixture file
 $extension = [IO.Path]::GetExtension($fixture)
 if ($extension -notin @(".zmx", ".zos")) { throw "FixturePath must be a .zmx or .zos file." }
 if ($JobWaitSeconds -lt 10 -or $JobWaitSeconds -gt 1800) { throw "JobWaitSeconds must be between 10 and 1800." }
+if ($NscEnergyDetectorObject < 0 -or $NscLaunchedFlux < 0 -or [double]::IsNaN($NscLaunchedFlux) -or [double]::IsInfinity($NscLaunchedFlux) -or
+    ($NscEnergyDetectorObject -gt 0 -and -not $VerifyNsc) -or
+    ($NscLaunchedFlux -gt 0 -and $NscEnergyDetectorObject -eq 0)) {
+    throw "NSC budgeting requires -VerifyNsc -NscEnergyDetectorObject <positive>; optional -NscLaunchedFlux must be positive and finite."
+}
 if ($VerifyTaskCancellation -and (-not $VerifyOfficialTasks -or -not $VerifyBackgroundJobs)) {
     throw "-VerifyTaskCancellation needs -VerifyOfficialTasks and -VerifyBackgroundJobs with a sequential fixture."
 }
@@ -467,6 +474,42 @@ try {
             })
             if ($trace.state -ne "Completed") { throw "NSC ray trace did not complete." }
             "objects=$($summary.numberOfObjects), detectors=$($summary.detectorObjects), returned=$(@($objects.objects).Count), traceSeconds=$($trace.runtimeSeconds)"
+        } | Out-Null
+    }
+
+    if ($VerifyNsc -and $NscEnergyDetectorObject -gt 0) {
+        Invoke-Check "nsc-detector-pixels-energy-budget" {
+            foreach ($name in @("zemax_get_nsc_detector", "zemax_nsc_energy_budget")) {
+                if ($name -notin $tools) { throw "Active tool profile does not expose $name." }
+            }
+            $detector = Get-ToolPayload (Invoke-Tool "zemax_get_nsc_detector" @{
+                objectNumber = $NscEnergyDetectorObject; includePixels = $true;
+                dataType = 0; startRow = 0; startColumn = 0; rowCount = 1; columnCount = 1
+            })
+            if ([int]$detector.pixelRows -lt 1 -or [int]$detector.pixelColumns -lt 1 -or
+                @($detector.roiPixels).Count -ne 1 -or @($detector.roiPixels[0]).Count -ne 1) {
+                throw "Detector readback did not produce the requested 1x1 ROI."
+            }
+            $request = @{ detectorObjects = @($NscEnergyDetectorObject) }
+            if ($NscLaunchedFlux -gt 0) { $request.launchedFlux = $NscLaunchedFlux }
+            $budget = Get-ToolPayload (Invoke-Tool "zemax_nsc_energy_budget" $request)
+            if (@($budget.detectors).Count -ne 1 -or $budget.additiveEnergyBalanceValid -ne $false) {
+                throw "Energy tool returned an invalid detector count or wrongly marked unrelated detector totals as additive."
+            }
+            $flux = [double]$budget.detectors[0].incidentFlux
+            if ([double]::IsNaN($flux) -or [double]::IsInfinity($flux) -or
+                [Math]::Abs($flux - [double]$detector.totalIncidentFlux) -gt
+                    1e-9 * [Math]::Max(1.0, [Math]::Abs($flux))) {
+                throw "Detector incident flux did not agree with the independent energy budget."
+            }
+            if ($NscLaunchedFlux -gt 0) {
+                $reported = [double]$budget.detectors[0].fractionOfLaunchedFlux
+                if ([Math]::Abs($reported - $flux / $NscLaunchedFlux) -gt
+                    1e-9 * [Math]::Max(1.0, [Math]::Abs($reported))) {
+                    throw "NSC launched-flux normalization is inconsistent."
+                }
+            }
+            "detector=$NscEnergyDetectorObject flux=$flux; ROI=1x1; launchedFlux=$NscLaunchedFlux"
         } | Out-Null
     }
 
