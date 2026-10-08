@@ -85,6 +85,28 @@ internal static class Program
         AssertThrows<InvalidDataException>(
             () => double.NaN.SanitizeRadius(),
             "NaN radius must not be misreported as a plane surface.");
+        var cardinal = new CardinalPoints { Success = true, Magnification = 0, Wavelength = 1 };
+        var dimensions = typeof(CardinalPoints).GetProperties()
+            .Where(property => property.PropertyType == typeof(double?)).ToArray();
+        Assert(dimensions.Length == 9, "All nine cardinal optical dimensions must support explicit infinity.");
+        foreach (var value in new[] { 1.25, double.PositiveInfinity, double.NegativeInfinity })
+        {
+            foreach (var dimension in dimensions)
+            {
+                dimension.SetValue(cardinal, value.OpticalDimension());
+                cardinal.DimensionStates[dimension.Name] = value.OpticalDimensionState();
+            }
+            var json = System.Text.Json.JsonSerializer.Serialize(cardinal);
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            foreach (var dimension in dimensions)
+            {
+                var field = document.RootElement.GetProperty(dimension.Name);
+                Assert(double.IsInfinity(value) ? field.ValueKind == System.Text.Json.JsonValueKind.Null : field.GetDouble() == value,
+                    "Cardinal-point infinity or finite readback was lost during strict JSON serialization.");
+                Assert(document.RootElement.GetProperty("DimensionStates").GetProperty(dimension.Name).GetString() == value.OpticalDimensionState(),
+                    "Cardinal-point JSON lost the infinity sign.");
+            }
+        }
     }
 
     private static void VerifyStructuredMtf()

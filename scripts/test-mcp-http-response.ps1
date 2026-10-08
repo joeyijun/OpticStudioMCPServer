@@ -16,4 +16,18 @@ foreach ($invalid in @("data: $result`n`ndata: $result`n`n", "data: $notificatio
     try { ConvertFrom-McpWireResponse (Response $invalid) 7 | Out-Null } catch { $rejected=$true }
     if (-not $rejected) { throw 'Duplicate, missing, type-mismatched or malformed response ID accepted.' }
 }
-Write-Output 'MCP verifier JSON/SSE request-ID matching, notifications, server requests, multiline data and rejection tests passed.'
+foreach ($fixture in @(
+    @{ isError=$true; text='An error occurred invoking zemax_set_surface.'; expected='MCP isError=true: An error occurred' },
+    @{ isError=$true; text='{"success":false,"error":"non-finite radius"}'; expected='MCP isError=true: non-finite radius' },
+    @{ isError=$false; text='{"success":false,"error":"readback mismatch"}'; expected='Tool success=false: readback mismatch' },
+    @{ isError=$false; text='not JSON'; expected='Tool returned a non-JSON success payload' }
+)) {
+    $toolResponse=@{result=@{isError=$fixture.isError;content=@(@{type='text';text=$fixture.text})}}
+    $rejected=$false
+    try { ConvertFrom-McpToolResult $toolResponse | Out-Null }
+    catch { if ($_.Exception.Message -like ($fixture.expected+'*')) {$rejected=$true} else {throw} }
+    if (-not $rejected) { throw 'Tool error payload classification regressed.' }
+}
+$successResponse=@{result=@{isError=$false;content=@(@{type='text';text='{"success":true,"radius":0}'})}}
+if ((ConvertFrom-McpToolResult $successResponse).radius -ne 0) { throw 'Successful tool payload changed.' }
+Write-Output 'MCP verifier JSON/SSE IDs, multiline data, rejection and plain-text/structured tool error tests passed.'

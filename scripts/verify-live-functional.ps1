@@ -112,17 +112,7 @@ function Invoke-Tool {
 
 function Get-ToolPayload {
     param($Response)
-    $text = [string](@($Response.result.content | Where-Object { $_.type -eq "text" } | Select-Object -First 1).text)
-    if ([string]::IsNullOrWhiteSpace($text)) { throw "Tool returned no text payload." }
-    $payload = $text | ConvertFrom-Json
-    if ($Response.result.isError -eq $true) {
-        $reason = if ($payload.error) { [string]$payload.error } else { $text }
-        throw "MCP isError=true: $reason"
-    }
-    if ($payload.PSObject.Properties.Name -contains "success" -and $payload.success -eq $false) {
-        throw "Tool success=false: $($payload.error)"
-    }
-    return $payload
+    return ConvertFrom-McpToolResult -Response $Response
 }
 
 
@@ -289,9 +279,13 @@ try {
 
                 $first = [int]$script:addedSurfaces[0]
                 $second = [int]$script:addedSurfaces[1]
-                Get-ToolPayload (Invoke-Tool "zemax_set_surface" @{
+                $singleSet = Get-ToolPayload (Invoke-Tool "zemax_set_surface" @{
                     surfaceNumber = $first; thickness = 1.1; comment = "ZemaxMCP live single-set"
-                }) | Out-Null
+                })
+                if ($null -eq $singleSet.updatedSurface.radius -or [double]$singleSet.updatedSurface.radius -ne 0 -or
+                    [Math]::Abs([double]$singleSet.updatedSurface.thickness - 1.1) -gt 1e-9) {
+                    throw 'SetSurface plane-radius or thickness readback is inconsistent.'
+                }
 
                 $batch = Get-ToolPayload (Invoke-Tool "zemax_batch_set_surfaces" @{
                     edits = @(
@@ -396,8 +390,19 @@ try {
 
         if ("zemax_cardinal_points" -in $tools) {
             Invoke-Check "sequential-analysis-cardinal-points" {
-                Get-ToolPayload (Invoke-Tool "zemax_cardinal_points") | Out-Null
-                "structured result returned"
+                $cardinal = Get-ToolPayload (Invoke-Tool "zemax_cardinal_points")
+                foreach ($dimension in @('effectiveFocalLength','backFocalLength','frontFocalLength',
+                    'entrancePupilPosition','entrancePupilDiameter','exitPupilPosition','exitPupilDiameter',
+                    'imageDistance','objectDistance')) {
+                    $value = $cardinal.$dimension
+                    $state = $cardinal.dimensionStates.$dimension
+                    if ($state -notin @('Finite','PositiveInfinity','NegativeInfinity') -or
+                        ($state -eq 'Finite' -and ($null -eq $value -or [double]::IsNaN([double]$value) -or [double]::IsInfinity([double]$value))) -or
+                        ($state -ne 'Finite' -and $null -ne $value)) {
+                        throw "Invalid cardinal-point dimension/state: $dimension=$value ($state)."
+                    }
+                }
+                "structured dimensions verified; objectDistance=$($cardinal.objectDistance), state=$($cardinal.dimensionStates.objectDistance)"
             } | Out-Null
         }
 

@@ -69,3 +69,11 @@ This does not prove every registered tool, non-cooperative hard recovery, or act
 RC7 is a presentation-only follow-up: default dashboard size 960×740, slimmer rounded scrollbars with a 12-DIP drag target, and owned card-style confirmations for detected AI client setup and token replacement. Setup lists detected client names and configuration states instead of a comma-separated system MessageBox. No redundant first-run prompt is shown when all eligible clients are already configured. Existing configuration backup and update-preservation fixes remain intact.
 
 The offline layout test strips event handlers and never constructs the live Launcher. It checks compact dimensions, reachable lower content, scrollbar drag target and actual scrolling; renders the dashboard and owned client dialog; and runs through the existing desktop material CI smoke test.
+
+## Isolated 1.5.0 acceptance follow-up
+
+The first isolated run reached the licensed Cooke sample but failed sequential editing and cardinal-point readback. Host logs identify `SetSurface` result serialization of an infinite plane radius; the verifier then obscured the SDK's plain-text tool error by parsing it as JSON. `SetSurface` now uses the same plane-radius normalization as `GetSurface`/`GetSystem`, and verifies conic finiteness. The verifier preserves plain-text MCP tool errors and independently checks the plane-radius/thickness result.
+
+Cardinal-point optical dimensions now serialize infinity as null with a signed `dimensionStates` entry; NaN and non-finite magnification remain explicit failures. Finite values are unchanged. JSON serialization regressions cover all nine dimension fields with finite, positive-infinite and negative-infinite inputs. Live acceptance validates the dimension/state pairs rather than only checking that a payload exists. Cancellation is propagated rather than converted to a failed optical result.
+
+The separate entry fix defers default runtime resolution until the script body and explicitly passes the bundle runtime from CMD. Its regression uses a fresh Windows PowerShell 5.1 `-File` process with an omitted runtime argument and a path containing spaces. These fixes require a new isolated licensed run; they do not establish final release acceptance by themselves.

@@ -61,6 +61,16 @@ $batchSetSurfaces = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Serv
 $snapshotTools = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Server\Tools\System\SnapshotTools.cs") -Raw
 $zemaxSession = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Core\Session\ZemaxSession.cs") -Raw
 $setSurface = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Server\Tools\LensData\SetSurfaceTool.cs") -Raw
+if ($setSurface -notmatch 'Radius = surface\.Radius\.SanitizeRadius\(\)' -or
+    $setSurface -notmatch 'Conic = surface\.Conic\.Sanitize\(\)') {
+    throw 'SetSurface readback must normalize plane radii and reject invalid conic values before strict JSON serialization.'
+}
+$cardinal = Get-Content -LiteralPath (Join-Path $analysisRoot 'CardinalPointsTool.cs') -Raw
+if ([regex]::Matches($cardinal, '\.OpticalDimension\(\)').Count -ne 9 -or
+    [regex]::Matches($cardinal, '\.OpticalDimensionState\(\)').Count -ne 9 -or
+    $cardinal -notmatch 'catch \(OperationCanceledException\)') {
+    throw 'Cardinal-point dimensions must preserve infinity with explicit signed states and propagate cancellation.'
+}
 if ($setSurface -notmatch 'material is not null' -or
     $setSurface -notmatch 'comment is not null' -or
     $setSurface -notmatch 'surface\.IsStop = isStop\.Value' -or

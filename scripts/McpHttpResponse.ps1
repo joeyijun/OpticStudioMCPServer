@@ -1,5 +1,23 @@
 # Consumer-side acceptance helper, not an MCP transport implementation.
 # A completed HTTP response can contain notifications/requests before its result.
+function ConvertFrom-McpToolResult {
+    param($Response)
+    $text = [string](@($Response.result.content | Where-Object { $_.type -eq 'text' } | Select-Object -First 1).text)
+    if ([string]::IsNullOrWhiteSpace($text)) { throw 'Tool returned no text payload.' }
+    $payload = $null
+    $parseError = $null
+    try { $payload = $text | ConvertFrom-Json -ErrorAction Stop } catch { $parseError = $_ }
+    if ($Response.result.isError -eq $true) {
+        $reason = if ($payload -and $payload.error) { [string]$payload.error } else { $text }
+        throw "MCP isError=true: $reason"
+    }
+    if ($parseError) { throw "Tool returned a non-JSON success payload: $text" }
+    if ($payload -and $payload.PSObject.Properties.Name -contains 'success' -and $payload.success -eq $false) {
+        throw "Tool success=false: $($payload.error)"
+    }
+    return $payload
+}
+
 function ConvertFrom-McpWireResponse {
     param([Parameter(Mandatory=$true)]$Response, [Parameter(Mandatory=$true)]$RequestId)
     $content = [string]$Response.Content

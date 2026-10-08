@@ -34,15 +34,15 @@ public class CardinalPointsTool
 
                     var mfe = system.MFE;
                     var effl = mfe.GetOperandValue(ZOSAPI.Editors.MFE.MeritOperandType.EFFL,
-                        0, wavelength, 0, 0, 0, 0, 0, 0).Sanitize();
+                        0, wavelength, 0, 0, 0, 0, 0, 0);
                     var enpp = mfe.GetOperandValue(ZOSAPI.Editors.MFE.MeritOperandType.ENPP,
-                        0, 0, 0, 0, 0, 0, 0, 0).Sanitize();
+                        0, 0, 0, 0, 0, 0, 0, 0);
                     var epdi = mfe.GetOperandValue(ZOSAPI.Editors.MFE.MeritOperandType.EPDI,
-                        0, 0, 0, 0, 0, 0, 0, 0).Sanitize();
+                        0, 0, 0, 0, 0, 0, 0, 0);
                     var expp = mfe.GetOperandValue(ZOSAPI.Editors.MFE.MeritOperandType.EXPP,
-                        0, 0, 0, 0, 0, 0, 0, 0).Sanitize();
+                        0, 0, 0, 0, 0, 0, 0, 0);
                     var expd = mfe.GetOperandValue(ZOSAPI.Editors.MFE.MeritOperandType.EXPD,
-                        0, 0, 0, 0, 0, 0, 0, 0).Sanitize();
+                        0, 0, 0, 0, 0, 0, 0, 0);
                     var pmag = mfe.GetOperandValue(ZOSAPI.Editors.MFE.MeritOperandType.PMAG,
                         0, wavelength, 0, 0, 0, 0, 0, 0).Sanitize();
 
@@ -50,26 +50,42 @@ public class CardinalPointsTool
                     if (lde.NumberOfSurfaces < 2)
                         throw new InvalidOperationException("Cardinal-point readback requires a sequential system with an image surface.");
                     var lastLensSurface = Math.Max(0, lde.NumberOfSurfaces - 2);
-                    var bfl = lde.GetSurfaceAt(lastLensSurface).Thickness.Sanitize();
-                    var ffl = (enpp - effl).Sanitize();
-                    var objectDistance = lde.GetSurfaceAt(0).Thickness.Sanitize();
+                    var bfl = lde.GetSurfaceAt(lastLensSurface).Thickness;
+                    var ffl = enpp - effl;
+                    var objectDistance = lde.GetSurfaceAt(0).Thickness;
 
                     return new CardinalPoints
                     {
                         Success = true,
-                        EffectiveFocalLength = effl,
-                        BackFocalLength = bfl,
-                        FrontFocalLength = ffl,
-                        EntrancePupilPosition = enpp,
-                        EntrancePupilDiameter = epdi,
-                        ExitPupilPosition = expp,
-                        ExitPupilDiameter = expd,
-                        ImageDistance = bfl,
-                        ObjectDistance = objectDistance,
+                        EffectiveFocalLength = effl.OpticalDimension(),
+                        BackFocalLength = bfl.OpticalDimension(),
+                        FrontFocalLength = ffl.OpticalDimension(),
+                        EntrancePupilPosition = enpp.OpticalDimension(),
+                        EntrancePupilDiameter = epdi.OpticalDimension(),
+                        ExitPupilPosition = expp.OpticalDimension(),
+                        ExitPupilDiameter = expd.OpticalDimension(),
+                        ImageDistance = bfl.OpticalDimension(),
+                        ObjectDistance = objectDistance.OpticalDimension(),
+                        DimensionStates = new Dictionary<string, string>
+                        {
+                            ["effectiveFocalLength"] = effl.OpticalDimensionState(),
+                            ["backFocalLength"] = bfl.OpticalDimensionState(),
+                            ["frontFocalLength"] = ffl.OpticalDimensionState(),
+                            ["entrancePupilPosition"] = enpp.OpticalDimensionState(),
+                            ["entrancePupilDiameter"] = epdi.OpticalDimensionState(),
+                            ["exitPupilPosition"] = expp.OpticalDimensionState(),
+                            ["exitPupilDiameter"] = expd.OpticalDimensionState(),
+                            ["imageDistance"] = bfl.OpticalDimensionState(),
+                            ["objectDistance"] = objectDistance.OpticalDimensionState()
+                        },
                         Magnification = pmag,
                         Wavelength = wavelength
                     };
                 }, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
