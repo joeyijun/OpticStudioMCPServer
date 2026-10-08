@@ -37,3 +37,18 @@ Sources:
 5. Licensed OpticStudio functional fixtures verify long-running NSC/Tolerancing/optimization tasks on supported ZOS-API versions.
 
 **Recommendation:** Keep Tasks behind a disabled-by-default feature flag in a separate PR until these gates pass. The immediate PR hardens the existing Job path and prevents scoped clients from using the legacy process-global multistart status/stop bypass.
+
+## Task-to-Job ledger foundation (2026-10-08)
+
+A separate, non-runtime-changing foundation branch adds `WorkerTaskLedger` and host-level regression assertions. **Official Tasks remain disabled**; this ledger is deliberately not registered with the MCP transport or presented as a supported capability. It contains no extra Worker execution path.
+
+The ledger enforces immutable (`owner`, `workerGeneration`, `jobId`) association; a task is still `working` when only a Job ID or terminal progress event exists, until its **actual** `CallToolResult` has been retrieved. Domain errors retain `completed` plus `isError:true`. Cancellation is advisory until Worker confirmation; generation loss marks unfinished tasks `failed`; terminal transitions are idempotent. Active tasks are never evicted just to admit new ones. Both Task entries and retained result references are bounded; an evicted result is explicitly marked expired.
+
+The new `WorkerTaskLedgerAssertions` cover cross-owner isolation, wrong-generation attempts, duplicate Job linkage, missing-result failures, premature completion, cancellation races, recovery, result expiry and saturated admission. They are run by the existing Private RPC test executable; **they are not an end-to-end Tasks protocol or licensed ZOS-API test**.
+
+Remaining requirements for official enablement:
+
+1. Build a dedicated `ModelContextProtocol.Extensions.Tasks` integration using a **custom alternate-result tool handler**, not SDK auto-wrapping. Only explicitly allowed long-running tools may advertise/return a Task on a negotiated 2026-07-28 connection with per-call opt-in; other clients receive the original Job ID.
+2. Ensure task get/update/cancel handlers use authenticated owner identity on *every* lookup, with credential revocation and result confidentiality verified against real stateless HTTP connections. Never use the SDK's unscoped in-memory Tasks store in scoped mode.
+3. On tasks/get, retrieve and validate the Job's final payload (including `ResultExpired`) and convert it to the **actual** `CallToolResult`. Task cancellation must call the existing owner-authorized Job cancel path; no second ZOS-API job is created.
+4. Add true protocol negotiation, dual-client E2E, Worker-restart/cancel race, bounded results, and live NSC/Tolerancing tests before flipping the default-off capability flag. The ledger can be wired to Worker generation/status events only as part of this protocol bridge.
