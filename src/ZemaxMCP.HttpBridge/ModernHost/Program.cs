@@ -296,14 +296,23 @@ internal static class Program
 
             // Activity must remain observable even when a ZOS-API call delays
             // the Worker's GetStatus RPC.
-            app.MapGet(options.McpPath + "/activity", () => Results.Json(activity.GetHealth()));
+            app.MapGet(options.McpPath + "/activity", (HttpContext http) =>
+            {
+                var profile = http.User.FindFirst("zemax-mcp-auth-profile")?.Value;
+                return Results.Json(credentialStore == null ? activity.GetHealth()
+                    : activity.GetForClient(profile != null && profile.StartsWith("scoped:", StringComparison.Ordinal)
+                        ? "token:" + profile : ""));
+            });
 
             app.MapGet(options.McpPath + "/health", async (HttpContext httpContext, CancellationToken cancellationToken) =>
             {
                 WorkerStatus? status = null;
                 try { status = await worker.GetStatusAsync(cancellationToken).ConfigureAwait(false); }
                 catch (Exception ex) { Log.Warning(ex, "Worker health RPC failed"); }
-                var activityHealth = activity.GetHealth();
+                var profile = httpContext.User.FindFirst("zemax-mcp-auth-profile")?.Value;
+                var activityHealth = credentialStore == null ? activity.GetHealth()
+                    : activity.GetForClient(profile != null && profile.StartsWith("scoped:", StringComparison.Ordinal)
+                        ? "token:" + profile : "");
                 return Results.Json(new
                 {
                     bridgeRunning = true,
@@ -354,7 +363,11 @@ internal static class Program
                         elapsedSeconds = Math.Max(0, (long)(DateTimeOffset.UtcNow - operation.StartedAt).TotalSeconds)
                     }),
                     clients = activityHealth.LastRequestAt == null ? Array.Empty<object>() : new[] { new { name = activityHealth.LastClient, lastRequestAt = activityHealth.LastRequestAt, lastMethod = activityHealth.LastTool } },
-                    worker = worker.GetHealth(),
+                    worker = credentialStore == null ? (object)worker.GetHealth() : new
+                    {
+                        workerGeneration = worker.CurrentGeneration,
+                        detailsRestricted = true
+                    },
                     controlLease = credentialStore == null ? (object)controlLease.GetHealth() : new { ownershipRestricted = true },
                     activity = activityHealth
                 });
