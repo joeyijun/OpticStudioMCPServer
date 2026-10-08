@@ -376,6 +376,127 @@ public partial class MainWindow : Window
         catch (Exception) { /* The next full health check owns offline state. */ }
         finally { _refreshingActivity = false; }
     }
+    private sealed class BackgroundJobView
+    {
+        public string JobId { get; set; } = "";
+        public string State { get; set; } = "";
+        public string DisplayText { get; set; } = "";
+        public bool IsActive => State == "Queued" || State == "Running" || State == "Cancelling";
+    }
+
+    private void RefreshTaskCenter(JArray? jobs)
+    {
+        var selectedId = (TaskCenterJobs.SelectedItem as BackgroundJobView)?.JobId;
+        var items = (jobs ?? new JArray()).OfType<JObject>()
+            .Where(job => !string.IsNullOrWhiteSpace(job["jobId"]?.ToString()))
+            .Take(25)
+            .Select(job =>
+            {
+                var id = job["jobId"]!.ToString();
+                var state = job["state"]?.ToString() ?? "Unknown";
+                var tool = job["toolName"]?.ToString() ?? job["tool"]?.ToString() ?? "ZOS-API Job";
+                var progress = job["fraction"]?.Value<double?>() ?? job["progress"]?.Value<double?>();
+                var pct = progress.HasValue && !double.IsNaN(progress.Value) &&
+                    !double.IsInfinity(progress.Value) && progress.Value >= 0 && progress.Value <= 1
+                    ? " · " + Math.Round(progress.Value * 100) + "%" : "";
+                var queue = job["queuePosition"]?.Value<int?>() is { } position && position > 0
+                    ? " · queue " + position : "";
+                return new BackgroundJobView
+                {
+                    JobId = id,
+                    State = state,
+                    DisplayText = tool + " · " + state + pct + queue + " · " + id.Substring(0, Math.Min(id.Length, 8))
+                };
+            }).ToList();
+
+        TaskCenterJobs.ItemsSource = items;
+        TaskCenterJobs.SelectedItem = items.FirstOrDefault(item => item.JobId == selectedId)
+            ?? items.FirstOrDefault(item => item.IsActive) ?? items.FirstOrDefault();
+        var active = items.Count(item => item.IsActive);
+        TaskCenterSummary.Text = items.Count == 0
+            ? "No background Jobs reported for this client."
+            : active + " active · " + (items.Count - active) + " recent · most recent 25";
+        TaskCenterCancel.IsEnabled = (TaskCenterJobs.SelectedItem as BackgroundJobView)?.IsActive == true;
+    }
+
+    private void TaskCenterJobs_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        TaskCenterCancel.IsEnabled = (TaskCenterJobs.SelectedItem as BackgroundJobView)?.IsActive == true;
+    }
+
+    private async void TaskCenterCancel_Click(object sender, RoutedEventArgs e)
+    {
+        if (TaskCenterJobs.SelectedItem is not BackgroundJobView selection || !selection.IsActive) return;
+        var decision = System.Windows.MessageBox.Show(
+            "Request cooperative cancellation of " + selection.DisplayText +
+            "?\nOnly the authenticated Job owner may cancel; other clients will be denied.",
+            "Cancel optical Job", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (decision != MessageBoxResult.Yes) return;
+        var endpoint = McpUrl;
+        var token = McpToken;
+        TaskCenterCancel.IsEnabled = false;
+        try
+        {
+            var result = await Task.Run(() => RequestJobCancellation(endpoint, token, selection.JobId));
+            Report("Background Job cancel request: " + result);
+        }
+        catch (Exception ex)
+        {
+            Report("Background Job cancel denied or failed: " + ex.Message);
+        }
+        finally { await RefreshStatusAsync(); }
+    }
+
+    private static string RequestJobCancellation(string endpoint, string accessToken, string jobId)
+    {
+        // Always route through ordinary MCP tools/call so scoped ownership and
+        // the Worker's generation check remain authoritative. This is not an
+        // elevated Launcher-specific administrative cancellation API.
+        var body = new JObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = 1,
+            ["method"] = "tools/call",
+            ["params"] = new JObject
+            {
+                ["name"] = "zemax_job_cancel",
+                ["arguments"] = new JObject { ["jobId"] = jobId },
+                ["_meta"] = new JObject
+                {
+                    ["io.modelcontextprotocol/protocolVersion"] = "2026-07-28",
+                    ["io.modelcontextprotocol/clientInfo"] = new JObject
+                    {
+                        ["name"] = "zemax-launcher",
+                        ["version"] = "1.5.0"
+                    }
+                }
+            }
+        };
+        var request = (HttpWebRequest)WebRequest.Create(endpoint);
+        request.Method = "POST";
+        request.ContentType = "application/json";
+        request.Accept = "application/json, text/event-stream";
+        request.Timeout = 15000;
+        request.Headers["MCP-Protocol-Version"] = "2026-07-28";
+        request.Headers["Mcp-Method"] = "tools/call";
+        request.Headers["Mcp-Name"] = "zemax_job_cancel";
+        AddAuthorization(request, accessToken);
+        var bytes = Encoding.UTF8.GetBytes(body.ToString(Newtonsoft.Json.Formatting.None));
+        using (var stream = request.GetRequestStream()) stream.Write(bytes, 0, bytes.Length);
+        using var response = (HttpWebResponse)request.GetResponse();
+        using var reader = new StreamReader(response.GetResponseStream());
+        var raw = reader.ReadToEnd();
+        if (response.ContentType?.StartsWith("text/event-stream", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            raw = raw.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault(line => line.StartsWith("data:", StringComparison.Ordinal))?.Substring(5) ?? "";
+        }
+        var rpc = JObject.Parse(raw);
+        if (rpc["error"] != null || rpc["result"]?["isError"]?.Value<bool>() == true)
+            throw new InvalidOperationException("MCP rejected the request (not owner, stale generation, or cancellation error).");
+        return "accepted for " + jobId + "; final state will be confirmed by the next status poll.";
+    }
+
     private async Task RefreshStatusAsync()
     {
         if (_refreshingStatus) return;
@@ -404,6 +525,7 @@ public partial class MainWindow : Window
                 "; current: " + (activeOperation["tool"]?.ToString() ?? activeOperation["method"]?.ToString() ?? "MCP request") +
                 " (" + FormatUptime(activeOperation["elapsedSeconds"]?.Value<long?>()) + ")";
             var jobs = health["jobs"] as JArray;
+            RefreshTaskCenter(jobs);
             var activeJob = jobs?.FirstOrDefault(x =>
             {
                 var state = x["state"]?.ToString();
@@ -469,6 +591,9 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             _healthReachable = false;
+            TaskCenterCancel.IsEnabled = false;
+            TaskCenterSummary.Text = "Service offline; Job information unavailable.";
+            TaskCenterJobs.ItemsSource = null;
             ConnectionSummary.Text = "Offline — MCP endpoint is not reachable\n" + endpoint;
             _fullDiagnostics = "MCP endpoint: not reachable\n" +
                 "ZOS-API files: " + (apiFiles ? "found" : root == null ? "remote endpoint" : "missing") +
