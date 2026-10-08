@@ -16,6 +16,13 @@ jobs:
       - name: Verify published tool coverage inventory
         shell: pwsh
         run: ./scripts/export-tool-coverage.ps1
+      - name: Publish tool coverage matrix
+        uses: actions/upload-artifact@v4
+        with:
+          name: tool-coverage
+          path: artifacts/tool-coverage.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Verify README Markdown tables
         shell: pwsh
         run: ./scripts/verify-readme-tables.ps1
