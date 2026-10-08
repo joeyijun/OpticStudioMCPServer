@@ -554,7 +554,7 @@ internal static class Program
             ("writer-two", "read-write", otherWriter));
         var startInfo = new ProcessStartInfo(host,
             $"--worker \"{worker}\" --host 127.0.0.1 --port {port} --log-dir \"{testRoot}\" " +
-            $"--client-credentials-file \"{file}\" --allowed-host 127.0.0.1 --allowed-origin http://127.0.0.1:*")
+            $"--client-credentials-file \"{file}\" --allowed-host 127.0.0.1 --allowed-origin http://127.0.0.1:* --enable-official-tasks true")
         {
             UseShellExecute = false,
             RedirectStandardError = true,
@@ -716,6 +716,112 @@ internal static class Program
                     throw new InvalidOperationException("Job creator could not cancel its own Job: " + body);
             }
 
+
+            // Real 2026-07-28 Tasks protocol E2E. Identical spoofable client
+            // metadata must never override the independently authenticated owner.
+            string taskId;
+            using (var created = await SendTaskAsync(client, endpoint, 115, "tools/call",
+                       "zemax_run_nsc_ray_trace", otherWriter).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(created).ConfigureAwait(false);
+                using var json = JsonDocument.Parse(payload);
+                if (!created.IsSuccessStatusCode ||
+                    json.RootElement.GetProperty("result").GetProperty("resultType").GetString() != "task")
+                    throw new InvalidOperationException("Opted-in NSC tool did not return official CreateTaskResult: " + payload);
+                taskId = json.RootElement.GetProperty("result").GetProperty("taskId").GetString()!;
+                if (string.IsNullOrWhiteSpace(taskId))
+                    throw new InvalidOperationException("Official CreateTaskResult did not have a taskId.");
+            }
+
+            foreach (var method in new[] { "tasks/get", "tasks/update", "tasks/cancel" })
+            {
+                using var deniedTask = await SendTaskAsync(client, endpoint, 116, method, null, writer, taskId).ConfigureAwait(false);
+                var payload = await ReadFirstMcpPayloadAsync(deniedTask).ConfigureAwait(false);
+                if (!payload.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+                    payload.Contains("private-task-final-result", StringComparison.Ordinal) ||
+                    payload.Contains("fake-task-job", StringComparison.Ordinal))
+                    throw new InvalidOperationException("A second authenticated client crossed the " + method + " Task boundary: " + payload);
+            }
+
+            using (var missingCapability = await SendTaskAsync(client, endpoint, 117, "tasks/get", null,
+                       otherWriter, taskId, capability: false).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(missingCapability).ConfigureAwait(false);
+                if (!payload.Contains("error", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Task polling without per-call opt-in was accepted.");
+            }
+
+            using (var working = await SendTaskAsync(client, endpoint, 118, "tasks/get", null,
+                       otherWriter, taskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(working).ConfigureAwait(false);
+                if (!payload.Contains("\"working\"", StringComparison.Ordinal) ||
+                    payload.Contains("private-task-final-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Task completed before Worker returned its real result: " + payload);
+            }
+            using (var finished = await SendTaskAsync(client, endpoint, 119, "tasks/get", null,
+                       otherWriter, taskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(finished).ConfigureAwait(false);
+                if (!payload.Contains("\"completed\"", StringComparison.Ordinal) ||
+                    !payload.Contains("private-task-final-result", StringComparison.Ordinal) ||
+                    !payload.Contains("result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Task did not expose its actual Worker final result: " + payload);
+            }
+            using (var lateCancel = await SendTaskAsync(client, endpoint, 120, "tasks/cancel", null,
+                       otherWriter, taskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(lateCancel).ConfigureAwait(false);
+                if (!lateCancel.IsSuccessStatusCode || payload.Contains("error", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Terminal Task cancellation must be an idempotent acknowledgement.");
+            }
+            using (var stillCompleted = await SendTaskAsync(client, endpoint, 121, "tasks/get", null,
+                       otherWriter, taskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(stillCompleted).ConfigureAwait(false);
+                if (!payload.Contains("\"completed\"", StringComparison.Ordinal) ||
+                    !payload.Contains("private-task-final-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Late cancellation overwrote a completed Task.");
+            }
+
+            // One more long Job verifies real cancellation rather than merely
+            // acknowledging the Task handle.
+            string cancelTaskId;
+            using (var created = await SendTaskAsync(client, endpoint, 122, "tools/call",
+                       "zemax_run_nsc_ray_trace", otherWriter).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(created).ConfigureAwait(false);
+                using var json = JsonDocument.Parse(payload);
+                cancelTaskId = json.RootElement.GetProperty("result").GetProperty("taskId").GetString()!;
+            }
+            using (var cancelled = await SendTaskAsync(client, endpoint, 123, "tasks/cancel",
+                       null, otherWriter, cancelTaskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(cancelled).ConfigureAwait(false);
+                if (!cancelled.IsSuccessStatusCode || payload.Contains("error", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Task cancellation did not forward to Worker Job: " + payload);
+            }
+            using (var cancelledState = await SendTaskAsync(client, endpoint, 124, "tasks/get",
+                       null, otherWriter, cancelTaskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(cancelledState).ConfigureAwait(false);
+                if (!payload.Contains("\"cancelled\"", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Worker-confirmed cancellation did not reach Task state: " + payload);
+            }
+
+            // The Task owner is revoked while its terminal result still exists.
+            ScopedCredentialAssertions.Write(file, ("reader", "read-only", reader), ("writer", "read-write", writer));
+            using (var revokedOwner = await SendTaskAsync(client, endpoint, 125, "tasks/get",
+                       null, otherWriter, taskId).ConfigureAwait(false))
+                if (revokedOwner.StatusCode != HttpStatusCode.Unauthorized)
+                    throw new InvalidOperationException("Revoked Task creator could still retrieve its result.");
+            ScopedCredentialAssertions.Write(file,
+                ("reader", "read-only", reader), ("writer", "read-write", writer),
+                ("writer-two", "read-write", otherWriter));
+
+            if (File.ReadAllLines(workerLog).Count(line => line.StartsWith("nsc:", StringComparison.Ordinal)) != 3)
+                throw new InvalidOperationException("Task protocol caused an unexpected duplicate Worker NSC execution.");
+
             // Removing the reader revokes its bearer immediately. The Host
             // must not cache stale auth decisions or silently fall back.
             ScopedCredentialAssertions.Write(file, ("writer", "read-write", writer), ("writer-two", "read-write", otherWriter));
@@ -736,6 +842,24 @@ internal static class Program
             process.WaitForExit(3000);
             if (success) try { Directory.Delete(testRoot, recursive: true); } catch { }
         }
+    }
+
+
+    private static Task<HttpResponseMessage> SendTaskAsync(
+        HttpClient client, Uri endpoint, int id, string method, string? toolName,
+        string bearer, string? taskId = null, bool capability = true)
+    {
+        var body = Build2026Body(id, method, toolName, "spoofable-client-name", "same-instance-id");
+        if (capability)
+            body = body.Replace("\"io.modelcontextprotocol/clientCapabilities\":{}",
+                "\"io.modelcontextprotocol/clientCapabilities\":{\"extensions\":{\"io.modelcontextprotocol/tasks\":{}}}",
+                StringComparison.Ordinal);
+        if (taskId != null)
+            body = body.Replace("\"_meta\":{", "\"taskId\":" + JsonSerializer.Serialize(taskId) + ",\"_meta\":{",
+                StringComparison.Ordinal);
+        using var request = Create2026Request(endpoint, body, method, toolName ?? taskId);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearer);
+        return client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
     }
 
     private static Task<HttpResponseMessage> SendScopedAsync(
@@ -848,6 +972,8 @@ internal static class Program
 
         var workerLog = Environment.GetEnvironmentVariable("ZEMAX_MCP_FAKE_WORKER_LOG");
         if (!string.IsNullOrWhiteSpace(workerLog)) File.AppendAllText(workerLog, "started" + Environment.NewLine);
+        var nscStarts = 0;
+        var completedTaskPolls = 0;
         while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
         {
             using var message = JsonDocument.Parse(line);
@@ -910,9 +1036,13 @@ internal static class Program
                 }
                 if (string.Equals(command, "zemax_run_nsc_ray_trace", StringComparison.Ordinal))
                 {
+                    var jobId = ++nscStarts == 1 ? "fake-owned-job" : "fake-task-job-" + (nscStarts - 1);
+                    if (!string.IsNullOrWhiteSpace(workerLog))
+                        File.AppendAllText(workerLog, "nsc:" + jobId + Environment.NewLine);
                     await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
                     {
-                        content = new[] { new { type = "text", text = "{\"success\":true,\"jobId\":\"fake-owned-job\",\"state\":\"Queued\"}" } },
+                        content = new[] { new { type = "text",
+                            text = JsonSerializer.Serialize(new { success = true, jobId, state = "Queued" }) } },
                         isError = false
                     }).ConfigureAwait(false);
                     continue;
@@ -921,11 +1051,29 @@ internal static class Program
                     string.Equals(command, "zemax_job_cancel", StringComparison.Ordinal))
                 {
                     var cancelling = string.Equals(command, "zemax_job_cancel", StringComparison.Ordinal);
+                    var id = root.GetProperty("payload").GetProperty("arguments").GetProperty("jobId").GetString()
+                        ?? string.Empty;
+                    string state;
+                    object resultValue;
+                    if (id == "fake-owned-job")
+                    {
+                        state = cancelling ? "Cancelled" : "Running";
+                        resultValue = "private-job-result";
+                    }
+                    else if (id == "fake-task-job-1")
+                    {
+                        state = cancelling ? "Cancelled" : ++completedTaskPolls >= 2 ? "Completed" : "Running";
+                        resultValue = new { privateData = "private-task-final-result", raysTraced = 127 };
+                    }
+                    else
+                    {
+                        state = cancelling ? "Cancelled" : "Running";
+                        resultValue = new { privateData = "private-cancelled-task-result" };
+                    }
                     await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
                     {
-                        content = new[] { new { type = "text", text =
-                            "{\"jobId\":\"fake-owned-job\",\"state\":\"" + (cancelling ? "Cancelled" : "Running") +
-                            "\",\"result\":\"private-job-result\"}" } },
+                        content = new[] { new { type = "text",
+                            text = JsonSerializer.Serialize(new { jobId = id, state, resultExpired = false, result = resultValue }) } },
                         isError = false
                     }).ConfigureAwait(false);
                     continue;
