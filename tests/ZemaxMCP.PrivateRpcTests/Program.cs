@@ -883,6 +883,39 @@ internal static class Program
                     }).ConfigureAwait(false);
                     await Task.Delay(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
                 }
+                if (string.Equals(command, "zemax_run_nsc_ray_trace", StringComparison.Ordinal))
+                {
+                    await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
+                    {
+                        content = new[] { new { type = "text", text = "{\"success\":true,\"jobId\":\"fake-owned-job\",\"state\":\"Queued\"}" } },
+                        isError = false
+                    }).ConfigureAwait(false);
+                    continue;
+                }
+                if (string.Equals(command, "zemax_job_status", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_job_cancel", StringComparison.Ordinal))
+                {
+                    var cancelling = string.Equals(command, "zemax_job_cancel", StringComparison.Ordinal);
+                    await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
+                    {
+                        content = new[] { new { type = "text", text =
+                            "{\"jobId\":\"fake-owned-job\",\"state\":\"" + (cancelling ? "Cancelled" : "Running") +
+                            "\",\"result\":\"private-job-result\"}" } },
+                        isError = false
+                    }).ConfigureAwait(false);
+                    continue;
+                }
+                if (string.Equals(command, "zemax_job_list", StringComparison.Ordinal))
+                {
+                    await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
+                    {
+                        content = new[] { new { type = "text", text =
+                            "[{\"jobId\":\"fake-owned-job\",\"result\":\"private-job-result\"}," +
+                            "{\"jobId\":\"unowned-fake-job\",\"result\":\"private-unknown-result\"}]" } },
+                        isError = false
+                    }).ConfigureAwait(false);
+                    continue;
+                }
                 if (string.Equals(command, "zemax_disconnect", StringComparison.Ordinal))
                 {
                     await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
