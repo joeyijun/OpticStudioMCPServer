@@ -105,6 +105,7 @@ public static class ToolsetCatalog
         ["zemax_get_nsc_object_parameters"] = "non-sequential",
         ["zemax_get_nsc_objects"] = "non-sequential",
         ["zemax_nsc_scene_summary"] = "non-sequential",
+        ["zemax_nsc_energy_budget"] = "non-sequential",
         ["zemax_get_polarization"] = "polarization",
         ["zemax_get_ray_aiming"] = "system",
         ["zemax_get_ray_aiming_settings"] = "system",
@@ -205,7 +206,7 @@ public static class ToolsetCatalog
         "zemax_get_apodization", "zemax_get_aspheric_surface", "zemax_get_clear_semi_diameter_margin", "zemax_get_configuration",
         "zemax_get_configuration_operands", "zemax_get_environment", "zemax_get_extra_data", "zemax_get_field_settings", "zemax_get_first_order_data",
         "zemax_get_glass_catalogs", "zemax_get_glasses", "zemax_get_global_matrix", "zemax_get_material_catalog_settings", "zemax_get_merit_function",
-        "zemax_get_mtf_units", "zemax_get_nonsequential_system_settings", "zemax_get_nsc_detector", "zemax_get_nsc_object_parameters", "zemax_get_nsc_objects", "zemax_nsc_scene_summary",
+        "zemax_get_mtf_units", "zemax_get_nonsequential_system_settings", "zemax_get_nsc_detector", "zemax_get_nsc_object_parameters", "zemax_get_nsc_objects", "zemax_nsc_scene_summary", "zemax_nsc_energy_budget",
         "zemax_get_polarization", "zemax_get_ray_aiming", "zemax_get_ray_aiming_settings", "zemax_get_stop_surface", "zemax_get_surface",
         "zemax_get_surface_aperture", "zemax_get_surface_solves", "zemax_get_system", "zemax_get_system_files", "zemax_get_system_metadata",
         "zemax_get_tolerances", "zemax_tolerance_summary", "zemax_get_units", "zemax_get_variables", "zemax_get_vignetting", "zemax_get_wavelength_settings", "zemax_huygens_psf",
@@ -283,7 +284,7 @@ public static class ToolsetCatalog
                 "zemax_get_system_metadata", "zemax_get_environment", "zemax_get_material_catalog_settings",
                 "zemax_get_polarization", "zemax_get_nonsequential_system_settings",
                 "zemax_get_nsc_objects", "zemax_get_nsc_object_parameters", "zemax_get_nsc_detector",
-                "zemax_nsc_scene_summary", "zemax_run_nsc_ray_trace",
+                "zemax_nsc_scene_summary", "zemax_nsc_energy_budget", "zemax_run_nsc_ray_trace",
                 "zemax_job_status", "zemax_job_list", "zemax_job_cancel", "zemax_export_analysis"),
 
             [OptimizationTolerance] = NewToolSet(
