@@ -41,6 +41,7 @@ internal static class Program
             await VerifyContractMismatchRejectedAsync().ConfigureAwait(false);
             await VerifyPipeFaultRecoveryAsync().ConfigureAwait(false);
             await VerifyHardTimeoutRecoveryAsync().ConfigureAwait(false);
+            await VerifyNonCooperativeToolHardRecoveryAsync().ConfigureAwait(false);
             await VerifyClientCancellationRecoveryBarrierAsync().ConfigureAwait(false);
             await VerifyProgressEventDispatchAsync().ConfigureAwait(false);
             await VerifyMcpHttpToWorkerEndToEndAsync().ConfigureAwait(false);
@@ -346,6 +347,33 @@ internal static class Program
         Environment.SetEnvironmentVariable("ZEMAX_MCP_FAKE_WORKER_MODE", null);
         var recovered = await client.GetStatusAsync(CancellationToken.None).ConfigureAwait(false);
         if (!recovered.Connected) throw new InvalidOperationException("Host did not start a clean Worker after hard recovery.");
+    }
+
+    private static async Task VerifyNonCooperativeToolHardRecoveryAsync()
+    {
+        // This is a deterministic RPC/Worker-process fault injection. The fake
+        // Worker never responds to cancellation; it is not an actual ZOS COM
+        // invocation. It proves the Host's hard timer kills that generation.
+        Environment.SetEnvironmentVariable("ZEMAX_MCP_FAKE_WORKER_MODE", null);
+        await using var client = new WorkerRpcClient(CreateOptions(10, 20));
+        var ready = await client.GetStatusAsync(CancellationToken.None).ConfigureAwait(false);
+        if (!ready.Connected) throw new InvalidOperationException("Initial fake Worker connection failed.");
+        var before = client.CurrentGeneration;
+        var timer = Stopwatch.StartNew();
+        try
+        {
+            await client.CallToolAsync(TestTool("zemax_test_hang"), CancellationToken.None).ConfigureAwait(false);
+            throw new InvalidOperationException("A non-cooperative Worker tool unexpectedly completed.");
+        }
+        catch (TimeoutException) { }
+
+        timer.Stop();
+        if (timer.Elapsed < TimeSpan.FromSeconds(10) || timer.Elapsed > TimeSpan.FromSeconds(26))
+            throw new InvalidOperationException("Hard recovery did not respect its configured soft/hard timeout window.");
+
+        var result = await client.CallToolAsync(TestTool("zemax_test_echo"), CancellationToken.None).ConfigureAwait(false);
+        if (result.IsError == true || client.CurrentGeneration <= before)
+            throw new InvalidOperationException("A non-cooperative fake Worker was not replaced by a newer, responsive generation.");
     }
 
     private static async Task VerifyClientCancellationRecoveryBarrierAsync()
