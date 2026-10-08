@@ -9,6 +9,10 @@ param(
     [switch]$VerifyBackgroundJobs,
     [switch]$VerifyNsc,
     [switch]$VerifyTolerance,
+    [switch]$VerifyOfficialTasks,
+    [switch]$VerifyTaskCancellation,
+    [switch]$VerifyWorkerCrashRecovery,
+    [switch]$AllowWorkerTermination,
     [int]$JobWaitSeconds = 90,
     [switch]$AllowReplaceCurrentSystem,
     [switch]$KeepWorkingCopy
@@ -24,6 +28,16 @@ if (-not (Test-Path -LiteralPath $fixture -PathType Leaf)) { throw "Fixture file
 $extension = [IO.Path]::GetExtension($fixture)
 if ($extension -notin @(".zmx", ".zos")) { throw "FixturePath must be a .zmx or .zos file." }
 if ($JobWaitSeconds -lt 10 -or $JobWaitSeconds -gt 1800) { throw "JobWaitSeconds must be between 10 and 1800." }
+if ($VerifyTaskCancellation -and (-not $VerifyOfficialTasks -or -not $VerifyBackgroundJobs)) {
+    throw "-VerifyTaskCancellation needs -VerifyOfficialTasks and -VerifyBackgroundJobs with a sequential fixture."
+}
+if ($VerifyOfficialTasks -and -not ($VerifyNsc -or $VerifyTolerance -or $VerifyBackgroundJobs)) {
+    throw "-VerifyOfficialTasks needs a representative -VerifyNsc, -VerifyTolerance or -VerifyBackgroundJobs fixture."
+}
+if ($VerifyWorkerCrashRecovery -and (-not $VerifyOfficialTasks -or -not $AllowWorkerTermination -or
+    -not ($VerifyNsc -or $VerifyBackgroundJobs))) {
+    throw "Worker crash recovery requires -VerifyOfficialTasks, -AllowWorkerTermination and an NSC or global-search job. It forcibly terminates the licensed Worker process."
+}
 
 $runRoot = Join-Path ([IO.Path]::GetTempPath()) ("ZemaxMCP-live-functional-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
@@ -53,19 +67,24 @@ function ConvertFrom-McpResponse {
 }
 
 function New-Meta {
+    param([switch]$TaskOptIn)
+    $capabilities = @{}
+    if ($TaskOptIn) {
+        $capabilities["extensions"] = @{ "io.modelcontextprotocol/tasks" = @{} }
+    }
     return @{
         "io.modelcontextprotocol/protocolVersion" = $script:protocolVersion
         "io.modelcontextprotocol/clientInfo" = @{ name = "zemax-mcp-functional-verifier"; version = "1.0" }
-        "io.modelcontextprotocol/clientCapabilities" = @{}
+        "io.modelcontextprotocol/clientCapabilities" = $capabilities
         "io.zemaxmcp/clientInstanceId" = $script:clientInstanceId
     }
 }
 
 function Invoke-Mcp {
-    param([string]$Method, [hashtable]$Params = @{}, [string]$ToolName)
+    param([string]$Method, [hashtable]$Params = @{}, [string]$ToolName, [switch]$TaskOptIn)
     $wire = @{}
     foreach ($key in $Params.Keys) { $wire[$key] = $Params[$key] }
-    $wire["_meta"] = New-Meta
+    $wire["_meta"] = New-Meta -TaskOptIn:$TaskOptIn
     $payload = @{ jsonrpc = "2.0"; id = $script:nextId++; method = $Method; params = $wire } | ConvertTo-Json -Depth 60 -Compress
     $headers = @{
         Accept = "application/json, text/event-stream"
@@ -82,8 +101,8 @@ function Invoke-Mcp {
 }
 
 function Invoke-Tool {
-    param([string]$Name, [hashtable]$Arguments = @{})
-    return Invoke-Mcp -Method "tools/call" -ToolName $Name -Params @{ name = $Name; arguments = $Arguments }
+    param([string]$Name, [hashtable]$Arguments = @{}, [switch]$TaskOptIn)
+    return Invoke-Mcp -Method "tools/call" -ToolName $Name -Params @{ name = $Name; arguments = $Arguments } -TaskOptIn:$TaskOptIn
 }
 
 function Get-ToolPayload {
@@ -99,6 +118,60 @@ function Get-ToolPayload {
         throw "Tool success=false: $($payload.error)"
     }
     return $payload
+}
+
+
+function Start-OfficialTask {
+    param([string]$Name, [hashtable]$Arguments)
+    $result = Invoke-Tool -Name $Name -Arguments $Arguments -TaskOptIn
+    if ($result.result.resultType -ne "task" -or [string]::IsNullOrWhiteSpace([string]$result.result.taskId)) {
+        throw "$Name did not return a Task. Start the Host with --enable-official-tasks true and use MCP 2026-07-28."
+    }
+    if ($result.result.status -ne "working") {
+        throw "Task creation unexpectedly reported an immediate terminal state."
+    }
+    return [string]$result.result.taskId
+}
+
+function Get-OfficialTask {
+    param([string]$TaskId)
+    return (Invoke-Mcp -Method "tasks/get" -ToolName $TaskId -Params @{ taskId = $TaskId } -TaskOptIn).result
+}
+
+function Wait-OfficialTask {
+    param([string]$TaskId, [int]$TimeoutSeconds = $JobWaitSeconds)
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        $current = Get-OfficialTask $TaskId
+        if ($current.status -in @("completed", "failed", "cancelled")) { return $current }
+        if ($current.status -notin @("working", "input_required")) {
+            throw "Unknown Task status: $($current.status)"
+        }
+        if ($current.status -eq "input_required") { throw "ZOS-API Jobs must not require interactive Task input." }
+        Start-Sleep -Milliseconds 500
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Task $TaskId remained non-terminal after $TimeoutSeconds seconds."
+}
+
+function Assert-RealTaskCompletion {
+    param([string]$TaskId, [string]$ToolName)
+    $terminal = Wait-OfficialTask $TaskId
+    if ($terminal.status -ne "completed") {
+        throw "$ToolName Task ended as '$($terminal.status)': $($terminal.statusMessage)"
+    }
+    # This must contain the actual Worker result, not a synthetic Job ID.
+    $tool = $terminal.result
+    if ($null -eq $tool -or $tool.isError -eq $true -or @($tool.content).Count -ne 1) {
+        throw "$ToolName Task contained no successful CallToolResult."
+    }
+    $content = [string]$tool.content[0].text
+    if ([string]::IsNullOrWhiteSpace($content)) { throw "$ToolName Task result was empty." }
+    try { $parsed = $content | ConvertFrom-Json }
+    catch { throw "$ToolName Task result could not be decoded as a real structured Worker payload." }
+    if ($parsed.PSObject.Properties.Name -contains "jobId") {
+        throw "$ToolName Task returned only a Job ID instead of the final operation result."
+    }
+    return $parsed
 }
 
 function Add-Result {
@@ -409,12 +482,153 @@ try {
         } | Out-Null
     }
 
+
+    if ($VerifyOfficialTasks) {
+        if ($VerifyNsc) {
+            Invoke-Check "official-task-nsc-real-completion" {
+                if ($systemMode -notmatch "NonSequential") { throw "NSC Task completion requires an NSC fixture." }
+                $taskId = Start-OfficialTask "zemax_run_nsc_ray_trace" @{
+                    clearDetectors = $true; detectorObject = 0; splitRays = $false;
+                    scatterRays = $false; usePolarization = $false; ignoreErrors = $true;
+                    timeoutSeconds = 60.0; runInBackground = $true
+                }
+                $actual = Assert-RealTaskCompletion $taskId "zemax_run_nsc_ray_trace"
+                "task=$taskId; finalState=$($actual.state); traceSeconds=$($actual.runtimeSeconds)"
+            } | Out-Null
+        }
+        if ($VerifyTolerance) {
+            Invoke-Check "official-task-tolerancing-real-completion" {
+                if ($systemMode -match "NonSequential") { throw "Tolerancing Task completion requires a sequential fixture." }
+                $taskId = Start-OfficialTask "zemax_run_tolerancing" @{
+                    includeSensitivity = $true; criterion = "RMSSpotRadius";
+                    criterionSampling = 3; criterionComp = "None"; criterionCycle = 1;
+                    criterionField = "UserDefined"; monteCarloRuns = 3;
+                    monteCarloStatistic = "Normal"; maxSensitivityOperands = 10;
+                    timeoutSeconds = 120.0; runInBackground = $true
+                }
+                $actual = Assert-RealTaskCompletion $taskId "zemax_run_tolerancing"
+                if ([int]$actual.monteCarloRows -lt 1) { throw "Task did not return real Monte Carlo output." }
+                "task=$taskId; monteCarloRows=$($actual.monteCarloRows)"
+            } | Out-Null
+        }
+        if ($VerifyTaskCancellation) {
+            Invoke-Check "official-task-cancellation-and-grace" {
+                if ($systemMode -match "NonSequential") { throw "Global-search cancellation requires a sequential fixture." }
+                $taskId = Start-OfficialTask "zemax_global_search" @{
+                    algorithm = "DLS"; cores = 0; solutionsToSave = 10;
+                    timeoutSeconds = 0.0; runInBackground = $true
+                }
+                $initial = Get-OfficialTask $taskId
+                if ($initial.status -ne "working") {
+                    throw "The selected fixture is too short-lived for a meaningful live cancellation test."
+                }
+                $before = Get-Health
+                $null = Invoke-Mcp -Method "tasks/cancel" -ToolName $taskId -Params @{ taskId = $taskId } -TaskOptIn
+                $terminal = Wait-OfficialTask $taskId
+                $after = Get-Health
+                if ($terminal.status -eq "completed") {
+                    throw "The Job completed before cancellation; use a harder optimization fixture."
+                }
+                if ($terminal.status -eq "failed" -and
+                    [long]$before.worker.workerGeneration -eq [long]$after.worker.workerGeneration) {
+                    throw "A failed cancelled Job did not demonstrate Worker hard recovery."
+                }
+                if ($terminal.status -notin @("cancelled", "failed")) {
+                    throw "Cancellation did not reach an expected terminal state."
+                }
+                # A successful cancellation must release the Worker control slot.
+                $alive = Get-ToolPayload (Invoke-Tool "zemax_status")
+                "task=$taskId; terminal=$($terminal.status); generation=$($before.worker.workerGeneration)->$($after.worker.workerGeneration)"
+            } | Out-Null
+        }
+    }
+
     Invoke-Check "save-temp-fixture" {
         if ("zemax_save_file" -notin $tools) { throw "Active profile does not expose zemax_save_file." }
         $saved = Get-ToolPayload (Invoke-Tool "zemax_save_file")
         if (-not (Test-Path -LiteralPath ([string]$saved.filePath))) { throw "SaveFile did not produce a file." }
         [string]$saved.filePath
     } | Out-Null
+
+    if ($VerifyWorkerCrashRecovery) {
+        Invoke-Check "worker-real-process-crash-recovery" {
+            # Explicit destructive test on a disposable fixture ONLY. A process
+            # kill verifies generation invalidation/restart, NOT the grace timer.
+            $tool = if ($VerifyNsc) { "zemax_run_nsc_ray_trace" } else { "zemax_global_search" }
+            $args = if ($VerifyNsc) {
+                @{ clearDetectors = $true; detectorObject = 0; splitRays = $false;
+                   scatterRays = $false; usePolarization = $false; ignoreErrors = $true;
+                   timeoutSeconds = 120.0; runInBackground = $true }
+            }
+            else { @{ algorithm = "DLS"; cores = 0; solutionsToSave = 10;
+                      timeoutSeconds = 0.0; runInBackground = $true } }
+            $taskId = Start-OfficialTask $tool $args
+            $pre = Get-Health
+            $generation = [long]$pre.worker.workerGeneration
+            $pid = [int]$pre.worker.workerPid
+            if ($pid -le 0 -or $generation -le 0) { throw "Worker health did not expose a valid PID/generation." }
+            if ($pid -eq $PID) { throw "Refusing to kill the current verifier process." }
+            $workerProc = Get-CimInstance Win32_Process -Filter "ProcessId = $pid"
+            if ($null -eq $workerProc -or
+                [string]$workerProc.Name -notmatch '^ZemaxMCP\.Worker\.exe = $null
+    try { $healthAfter = Get-Health } catch { }
+    $report = [ordered]@{
+        generatedAt = [DateTimeOffset]::UtcNow
+        endpoint = $endpointUri
+        fixture = $fixture
+        workingCopy = $workingCopy
+        workingCopyRetained = ($KeepWorkingCopy -or $script:openAttempted)
+        protocolVersion = $script:protocolVersion
+        toolCount = $tools.Count
+        toolset = if ($healthBefore) { $healthBefore.toolset } else { $null }
+        hostVersion = if ($healthBefore) { $healthBefore.hostVersion } else { $null }
+        workerVersion = if ($healthBefore) { $healthBefore.workerVersion } else { $null }
+        zosApiAssemblyVersion = if ($healthBefore) { $healthBefore.zosApiAssemblyVersion } else { $null }
+        zosApiFileVersion = if ($healthBefore) { $healthBefore.zosApiFileVersion } else { $null }
+        rpcVersion = if ($healthBefore) { $healthBefore.rpcVersion } else { $null }
+        manifestFingerprint = if ($healthBefore) { $healthBefore.manifestFingerprint } else { $null }
+        licenseStatus = if ($healthBefore) { $healthBefore.licenseStatus } else { $null }
+        workerGenerationBefore = if ($healthBefore) { $healthBefore.worker.workerGeneration } else { $null }
+        workerGenerationAfter = if ($healthAfter) { $healthAfter.worker.workerGeneration } else { $null }
+        tests = $results
+    }
+    $reportDirectory = Split-Path -Parent $ReportPath
+    if ($reportDirectory) { New-Item -ItemType Directory -Force -Path $reportDirectory | Out-Null }
+    $report | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $ReportPath -Encoding UTF8
+    Write-Host "Functional live report: $ReportPath"
+
+    # The active OpticStudio system may still point to this working copy.
+    # Never delete an open/tested lens underneath an active session.
+    if (-not $KeepWorkingCopy -and -not $script:openAttempted) {
+        try { Remove-Item -LiteralPath $runRoot -Recurse -Force } catch { }
+    }
+    else {
+        Write-Host "Working fixture retained for safety: $workingCopy"
+        Write-Host "Close or switch the OpticStudio system before manually deleting this temporary directory."
+    }
+}
+
+$failures = @($results | Where-Object { $_.status -eq "FAIL" })
+if ($failures.Count -gt 0) { throw "Functional live verification failed in $($failures.Count) check(s). See $ReportPath." }
+Write-Host "Functional live verification completed successfully."
+) {
+                throw "PID $pid is not the dedicated ZemaxMCP.Worker.exe. Refusing to terminate it."
+            }
+            Stop-Process -Id $pid -Force -ErrorAction Stop
+            Start-Sleep -Seconds 2
+            $recovered = Get-Health
+            if ([long]$recovered.worker.workerGeneration -le $generation) {
+                throw "Worker generation was not replaced after terminating the dedicated Worker process."
+            }
+            $terminal = Wait-OfficialTask $taskId
+            if ($terminal.status -ne "failed") {
+                throw "A Task from a terminated Worker generation should fail, got $($terminal.status)."
+            }
+            # This is a new process; old lens session is intentionally gone.
+            $alive = Get-ToolPayload (Invoke-Tool "zemax_status")
+            "oldWorker=$pid; generation=$generation->$($recovered.worker.workerGeneration); oldTask=$($terminal.status)"
+        } | Out-Null
+    }
 }
 finally {
     $healthAfter = $null
