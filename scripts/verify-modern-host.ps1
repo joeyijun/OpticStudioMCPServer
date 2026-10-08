@@ -7,6 +7,7 @@ $hostSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernH
 $hostOptions = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\HostOptions.cs")
 $scopedCredentials = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\ClientCredentialStore.cs")
 $scopedTests = Get-Content -Raw (Join-Path $root "tests\ZemaxMCP.PrivateRpcTests\ScopedCredentialAssertions.cs")
+$jobOwners = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\JobOwnerRegistry.cs")
 $controlLeaseSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\OpticStudioControlLease.cs")
 $originPolicy = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\OriginPolicy.cs")
 $rpcClient = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\WorkerRpcClient.cs")
@@ -194,6 +195,22 @@ if ($hostOptions -notmatch 'ClientCredentialsFile' -or
     $privateRpcTest -notmatch 'VerifyScopedCredentialHttpAsync' -or
     $scopedTests -notmatch 'ClientCredentialStore') {
   throw "Scoped credential mode must authenticate SHA-256 bearer digests, reload revocations per request, strictly filter read-only discovery and execution, and fail closed on invalid configuration."
+}
+if ($jobOwners -notmatch 'MaximumRecords = 256' -or
+    $jobOwners -notmatch 'IsOwned\(' -or
+    $jobOwners -notmatch 'ReleaseGeneration\(' -or
+    $jobOwners -notmatch 'FilterList\(' -or
+    $jobOwners -notmatch 'return Denied\(\)' -or
+    $hostSource -notmatch 'jobOwners.Register\(clientId, jobId, generation\)' -or
+    $hostSource -notmatch 'jobOwners.IsOwned\(clientId, requestedJobId' -or
+    $hostSource -notmatch 'JobOwnerRegistry.FilterList' -or
+    $hostSource -notmatch 'jobOwners.ReleaseGeneration' -or
+    $hostSource -notmatch 'zemax_multistart_status' -or
+    $hostSource -notmatch 'jobDiagnostics = "per-client job tools only"' -or
+    $privateRpcTest -notmatch 'VerifyJobOwnershipRegistry' -or
+    $privateRpcTest -notmatch 'Foreign writer could cancel another client' -or
+    $privateRpcTest -notmatch 'Scoped /health leaked') {
+  throw "Scoped Jobs must bind owner+generation, deny unowned status/cancel, filter list results, redact health, block legacy global multistart state and be covered by E2E tests."
 }
 # Release-validation contract: modern stateless MCP is the primary live path;
 # legacy initialize is an explicit compatibility probe rather than the default.
