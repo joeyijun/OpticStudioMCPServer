@@ -93,6 +93,18 @@ internal static class Program
         }
     }
 
+    private static void Assert(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+    }
+
+    private static void AssertThrows<T>(Action action, string message) where T : Exception
+    {
+        try { action(); }
+        catch (T) { return; }
+        throw new InvalidOperationException(message);
+    }
+
     private static void VerifyOfficialTasksDefaults()
     {
         if (!HostOptions.Parse(Array.Empty<string>()).EnableOfficialTasks ||
