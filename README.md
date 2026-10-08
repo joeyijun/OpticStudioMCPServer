@@ -140,6 +140,8 @@ The launcher can expose a smaller task-focused tool surface without renaming MCP
 | **Optimization & tolerancing** | 66 explicitly selected optimization, job, tolerance, core sequential, file, snapshot, and verification tools |
 | **Full expert** | All 135 tools and all impacts |
 
+For authenticated multi-client Hosts, [Job ownership and scoped diagnostics](docs/MULTI_CLIENT_AUTH.md#job-ownership-and-diagnostics) prevent cross-token status, result, list, and cancel access; legacy process-global multistart status/stop are not exposed. [Official Tasks adoption](docs/TASKS_ADOPTION.md) is evaluated but deliberately not enabled until owner-aware polling and Worker Job lifecycle bridging are verified.
+
 Global **Read-only mode** and the task profile are separate controls. Global read-only blocks `HighImpact` operations while preserving `Caution` session/connection operations; **View & analyze** limits the profile itself to explicit `ReadOnly` impact. For multi-client deployments, [scoped bearer credentials](docs/MULTI_CLIENT_AUTH.md) provide distinct authenticated identities, hot-revocable SHA-256 token hashes, and strict per-client `read-only` (ReadOnly-impact tools only) or `read-write` permissions without changing the default local/shared-token modes.
 
 `zemax_tool_catalog` groups tools as follows:
