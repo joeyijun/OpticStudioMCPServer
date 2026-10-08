@@ -29,6 +29,7 @@ internal static class Program
         try
         {
             VerifyActivityOwnership();
+            VerifyOfficialTasksDefaults();
             VerifyOriginBoundary();
             await VerifyBackgroundJobLeaseRetentionAsync().ConfigureAwait(false);
             await VerifyCancelledLeaseWaitAsync().ConfigureAwait(false);
@@ -52,6 +53,14 @@ internal static class Program
             Console.Error.WriteLine(ex);
             return 1;
         }
+    }
+
+    private static void VerifyOfficialTasksDefaults()
+    {
+        if (!HostOptions.Parse(Array.Empty<string>()).EnableOfficialTasks ||
+            HostOptions.Parse(new[] { "--enable-official-tasks", "false" }).EnableOfficialTasks ||
+            !HostOptions.Parse(new[] { "--enable-official-tasks", "true" }).EnableOfficialTasks)
+            throw new InvalidOperationException("Official Tasks must default on and respect explicit overrides.");
     }
 
     private static void VerifyJobOwnershipRegistry()

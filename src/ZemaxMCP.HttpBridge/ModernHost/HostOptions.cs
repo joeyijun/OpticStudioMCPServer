@@ -19,7 +19,7 @@ internal sealed class HostOptions
     public int JobRecoveryTimeoutSeconds { get; private set; } = 60;
     public int CancellationWriteTimeoutSeconds { get; private set; } = 5;
     public bool ReadOnly { get; private set; }
-    public bool EnableOfficialTasks { get; private set; }
+    public bool EnableOfficialTasks { get; private set; } = true;
     public string Toolset { get; private set; } = "full-expert";
     public string SnapshotDirectory { get; private set; } = Environment.GetEnvironmentVariable("ZEMAX_MCP_SNAPSHOT_DIR") ??
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZemaxMCP", "snapshots");

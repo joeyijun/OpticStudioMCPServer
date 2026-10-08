@@ -186,33 +186,42 @@ public sealed class RunTolerancingTool
                 var tempRoot = Path.Combine(Path.GetTempPath(), "ZemaxMCP-tolerancing");
                 Directory.CreateDirectory(tempRoot);
                 var ztdPath = Path.Combine(tempRoot, "tol-" + Guid.NewGuid().ToString("N") + ".ztd");
+                if (string.IsNullOrWhiteSpace(system.SystemFile) || !File.Exists(system.SystemFile))
+                    throw new InvalidOperationException("Save the current lens before tolerancing: OpticStudio writes ZTD/TXT output beside the saved lens.");
+                var outputDirectory = Path.GetDirectoryName(Path.GetFullPath(system.SystemFile))!;
+                var reportPath = Path.Combine(outputDirectory, Path.GetFileName(ztdPath) + ".txt");
+                var generatedZtd = Path.Combine(outputDirectory, Path.GetFileName(ztdPath));
 
                 var stopwatch = Stopwatch.StartNew();
                 try
                 {
-                    RunToleranceTool(
+                    var outputDiagnostic = RunToleranceTool(
                         system, ztdPath, includeSensitivity, criterion, criterionSampling,
                         criterionComp, criterionCycle, criterionField, monteCarloRuns,
                         monteCarloStatistic, timeoutSeconds, cancellationToken);
                     stopwatch.Stop();
 
-                    if (!File.Exists(ztdPath) || new FileInfo(ztdPath).Length == 0)
-                        throw new IOException("OpticStudio tolerancing completed without producing the requested ZTD result file.");
+                    // Keep the uniquely named output beside the lens until the viewer closes.
+                    // Do not relocate a file that the installed API may resolve relative to it.
+                    if (!File.Exists(generatedZtd) || new FileInfo(generatedZtd).Length == 0)
+                        throw new IOException("OpticStudio tolerancing completed without producing the requested ZTD result file. " + outputDiagnostic);
 
                     return ReadStructuredResults(
-                        system, ztdPath, includeSensitivity, criterion, criterionComp, criterionField,
+                        system, generatedZtd, includeSensitivity, criterion, criterionComp, criterionField,
                         monteCarloStatistic, monteCarloRuns, passThreshold, thresholdDirection,
                         maxSensitivityOperands, stopwatch.Elapsed.TotalSeconds, cancellationToken);
                 }
                 finally
                 {
                     try { if (File.Exists(ztdPath)) File.Delete(ztdPath); } catch { }
+                    try { if (File.Exists(generatedZtd)) File.Delete(generatedZtd); } catch { }
+                    try { if (File.Exists(reportPath)) File.Delete(reportPath); } catch { }
                 }
             },
             cancellationToken).ConfigureAwait(false);
     }
 
-    private static void RunToleranceTool(
+    private static string RunToleranceTool(
         IOpticalSystem system,
         string ztdPath,
         bool includeSensitivity,
@@ -243,7 +252,11 @@ public sealed class RunTolerancingTool
             tolerancing.MonteCarloStatistic = monteCarloStatistic;
             tolerancing.OpenDataViewer = false;
             tolerancing.SaveTolDataFile = true;
-            tolerancing.TolDataFile = ztdPath;
+            // Official API accepts only a filename: outputs are always beside the lens.
+            tolerancing.TolDataFile = Path.GetFileName(ztdPath);
+            tolerancing.OutputFile = Path.GetFileName(ztdPath) + ".txt";
+            if (!tolerancing.SaveTolDataFile || !string.Equals(Path.GetFileName(tolerancing.TolDataFile), Path.GetFileName(ztdPath), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("OpticStudio did not retain the requested tolerance data output settings.");
 
             if (tolerancing.CriterionSampling != criterionSampling ||
                 tolerancing.CriterionCycle != criterionCycle ||
@@ -259,12 +272,33 @@ public sealed class RunTolerancingTool
                     string.IsNullOrWhiteSpace(tolerancing.ErrorMessage)
                         ? "OpticStudio Tolerancing completed without success."
                         : tolerancing.ErrorMessage);
+            return $"Requested={ztdPath}; accepted={tolerancing.TolDataFile}; saveData={tolerancing.SaveTolDataFile}; " +
+                $"resultFile={tolerancing.ResultFilename}; status={tolerancing.Status}; succeeded={tolerancing.Succeeded}. " +
+                ReadOutputDiagnostic(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(system.SystemFile))!, tolerancing.OutputFile));
         }
         finally
         {
             StopIfStillRunning(tolerancing);
             tolerancing.Close();
         }
+    }
+
+    private static string ReadOutputDiagnostic(string? reportPath)
+    {
+        // ResultFilename can refer to a temporary report removed by Close().
+        // Read while the tool is still alive, with a strict memory/output bound.
+        if (string.IsNullOrWhiteSpace(reportPath) || !File.Exists(reportPath))
+            return "Report unavailable before tool close.";
+        try
+        {
+            using var reader = new StreamReader(reportPath, detectEncodingFromByteOrderMarks: true);
+            var buffer = new char[4000];
+            var count = reader.ReadBlock(buffer, 0, buffer.Length);
+            return "Report excerpt: " + new string(buffer, 0, count) +
+                (reader.Peek() >= 0 ? " [truncated]" : "");
+        }
+        catch (IOException ex) { return "Report could not be read: " + ex.Message; }
+        catch (UnauthorizedAccessException ex) { return "Report access denied: " + ex.Message; }
     }
 
     private static Result ReadStructuredResults(
@@ -289,12 +323,23 @@ public sealed class RunTolerancingTool
             viewer.FileName = ztdPath;
             if (!viewer.IsValid)
                 throw new InvalidOperationException("Tolerance Data Viewer rejected the generated ZTD file.");
-            RunBounded(viewer, 60, cancellationToken, "Tolerance Data Viewer");
+            if (viewer.IsAsynchronous)
+                RunBounded(viewer, 60, cancellationToken, "Tolerance Data Viewer");
+            else
+            {
+                // The official viewer example uses the synchronous completion entry point.
+                // A blocking COM call remains protected by the Host's hard recovery deadline.
+                cancellationToken.ThrowIfCancellationRequested();
+                var completed = viewer.RunAndWaitForCompletion();
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!completed)
+                    throw new InvalidOperationException("Tolerance Data Viewer failed to complete. " + ViewerDiagnostic(viewer, ztdPath));
+            }
             if (!viewer.Succeeded)
                 throw new InvalidOperationException(
                     string.IsNullOrWhiteSpace(viewer.ErrorMessage)
-                        ? "Tolerance Data Viewer completed without success."
-                        : viewer.ErrorMessage);
+                        ? "Tolerance Data Viewer completed without success. " + ViewerDiagnostic(viewer, ztdPath)
+                        : viewer.ErrorMessage + " " + ViewerDiagnostic(viewer, ztdPath));
 
             var mc = viewer.MonteCarloData;
             var values = mc?.Values;
@@ -466,6 +511,11 @@ public sealed class RunTolerancingTool
         _ => throw new ArgumentOutOfRangeException(nameof(criterion), "Unsupported sequential tolerancing criterion.")
     };
 
+    private static string ViewerDiagnostic(IToleranceDataViewer viewer, string ztdPath) =>
+        $"requested={ztdPath}; accepted={viewer.FileName}; bytes={new FileInfo(ztdPath).Length}; " +
+        $"valid={viewer.IsValid}; asynchronous={viewer.IsAsynchronous}; running={viewer.IsRunning}; " +
+        $"status={viewer.Status}; succeeded={viewer.Succeeded}; error={viewer.ErrorMessage}.";
+
     private static string CanonicalCompName(CriterionComps comp) => ((int)comp) switch
     {
         0 => "OptimizeAll_DLS",
@@ -511,7 +561,8 @@ public sealed class RunTolerancingTool
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!tool.Run())
-            throw new InvalidOperationException($"OpticStudio failed to start {label}.");
+            throw new InvalidOperationException($"OpticStudio failed to start {label}. " +
+                $"status={tool.Status}; succeeded={tool.Succeeded}; error={tool.ErrorMessage}; asynchronous={tool.IsAsynchronous}.");
 
         var stopwatch = Stopwatch.StartNew();
         while (true)

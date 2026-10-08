@@ -121,13 +121,13 @@ public sealed class RunNscRayTraceTool
                 {
                     var detector = nce.GetObjectAt(detectorObject)
                         ?? throw new InvalidOperationException($"OpticStudio returned no NCE row for object {detectorObject}.");
-                    if (!detector.TypeData.ObjectIsADetector)
+                    if (!NscObjectClassification.IsDetector(detector))
                         throw new ArgumentException($"NSC object {detectorObject} ({detector.TypeName}) is not a detector.", nameof(detectorObject));
                 }
 
                 var detectorCount = 0;
                 for (var number = 1; number <= nce.NumberOfObjects; number++)
-                    if (nce.GetObjectAt(number)?.TypeData.ObjectIsADetector == true) detectorCount++;
+                    if (nce.GetObjectAt(number) is { } row && NscObjectClassification.IsDetector(row)) detectorCount++;
 
                 var trace = system.Tools?.OpenNSCRayTrace()
                     ?? throw new InvalidOperationException("OpticStudio did not open the NSC Ray Trace tool.");

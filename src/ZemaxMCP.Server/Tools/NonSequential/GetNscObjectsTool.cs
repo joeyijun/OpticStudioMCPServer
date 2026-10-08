@@ -86,7 +86,7 @@ public sealed class GetNscObjectsTool
                         row.Comment,
                         row.Material,
                         row.IsActive,
-                        row.TypeData.ObjectIsADetector,
+                        NscObjectClassification.IsDetector(row),
                         row.RefObject,
                         row.InsideOf,
                         row.XPosition,

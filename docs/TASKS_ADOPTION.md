@@ -1,6 +1,6 @@
 # Official MCP Tasks adoption assessment
 
-Status: **experimental, default OFF**. The official SDK adapter is implemented behind `--enable-official-tasks true`. Without that flag the server continues to use ordinary `tools/call` plus existing `zemax_job_status`, `zemax_job_list`, and `zemax_job_cancel`. Licensed OpticStudio acceptance is still outstanding.
+Status (1.5.0 / RC7): **experimental, default ON**, as requested. The Launcher exposes **Run configuration → Enable official Tasks (experimental)** and persists the preference. Existing installations without the setting adopt ON; explicitly saved OFF remains OFF. Change it on the OpticStudio computer, then Stop / Start when idle; editing this preference never automatically terminates an optical operation. Command-line Hosts can disable it using `--enable-official-tasks false`. Clients must still opt in per request; other clients retain ordinary `tools/call` plus `zemax_job_status/list/cancel`. Licensed NSC and tolerancing Task completion and cooperative Global Search cancellation passed on OpticStudio 2024 R1.03. Non-cooperative COM hard recovery and a broader licensed version matrix remain outstanding; these are not inferred from cooperative cancellation or fake-Worker tests.
 
 ## Protocol / SDK facts
 
@@ -36,17 +36,17 @@ Sources:
 4. Token revocation, Host restart, Worker generation replacement, queue full, expiry, cancellation races, stale results and malformed payloads are all covered by tests.
 5. Licensed OpticStudio functional fixtures verify long-running NSC/Tolerancing/optimization tasks on supported ZOS-API versions.
 
-**Recommendation:** Keep Tasks behind a disabled-by-default feature flag in a separate PR until these gates pass. The immediate PR hardens the existing Job path and prevents scoped clients from using the legacy process-global multistart status/stop bypass.
+**Original assessment recommendation (superseded by the RC5 user-requested default):** Keep Tasks behind a disabled-by-default feature flag until these gates pass. The release acceptance gates above still apply; enabling the candidate does not prove them complete.
 
 ## Task-to-Job ledger foundation (2026-10-08)
 
-A separate, non-runtime-changing foundation branch adds `WorkerTaskLedger` and host-level regression assertions. **Official Tasks remain disabled**; this ledger is deliberately not registered with the MCP transport or presented as a supported capability. It contains no extra Worker execution path.
+The original non-runtime-changing foundation branch added `WorkerTaskLedger` and host-level regression assertions. At that historical stage **Official Tasks remained disabled** and the ledger was not registered with the MCP transport. The integrated adapter described below supersedes that stage and adds no duplicate Worker execution path.
 
 The ledger enforces immutable (`owner`, `workerGeneration`, `jobId`) association; a task is still `working` when only a Job ID or terminal progress event exists, until its **actual** `CallToolResult` has been retrieved. Domain errors retain `completed` plus `isError:true`. Cancellation is advisory until Worker confirmation; generation loss marks unfinished tasks `failed`; terminal transitions are idempotent. Active tasks are never evicted just to admit new ones. Both Task entries and retained result references are bounded; an evicted result is explicitly marked expired.
 
 The new `WorkerTaskLedgerAssertions` cover cross-owner isolation, wrong-generation attempts, duplicate Job linkage, missing-result failures, premature completion, cancellation races, recovery, result expiry and saturated admission. They are run by the existing Private RPC test executable; **they are not an end-to-end Tasks protocol or licensed ZOS-API test**.
 
-Remaining requirements for official enablement:
+Original foundation integration checklist (implemented by the adapter below; licensed validation limits remain separate):
 
 1. Build a dedicated `ModelContextProtocol.Extensions.Tasks` integration using a **custom alternate-result tool handler**, not SDK auto-wrapping. Only explicitly allowed long-running tools may advertise/return a Task on a negotiated 2026-07-28 connection with per-call opt-in; other clients receive the original Job ID.
 2. Ensure task get/update/cancel handlers use authenticated owner identity on *every* lookup, with credential revocation and result confidentiality verified against real stateless HTTP connections. Never use the SDK's unscoped in-memory Tasks store in scoped mode.
@@ -55,9 +55,9 @@ Remaining requirements for official enablement:
 
 ## Optional official protocol adapter (2026-10-08, experimental)
 
-A separate draft PR now implements the protocol adapter on top of the bounded
-`WorkerTaskLedger`. **The default is still OFF**; opt in explicitly when
-testing the Host by adding `--enable-official-tasks true`. Without the flag,
+The integrated protocol adapter runs on top of the bounded
+`WorkerTaskLedger`. **RC5 defaults to ON**; turn it off explicitly with
+`--enable-official-tasks false` or the Launcher checkbox. When disabled,
 the SDK Tasks extension is not advertised or registered, and traditional
 `zemax_job_status/list/cancel` remain unchanged.
 
@@ -88,10 +88,11 @@ real Worker result retrieval, late cancellation, cooperative cancellation,
 revocation and duplicate execution checks. These are **fake-Worker tests**
 and are not equivalent to licensed OpticStudio functional verification.
 
-Production-enable gate: complete the Windows CI suite and run licensed
-NSC/Tolerancing/optimization scenarios (including Worker hard recovery).
-The disabled-by-default switch must remain off in shipped Launcher config
-until both the deterministic tests and the licensed scenarios pass.
+Licensed NSC/Tolerancing completion and cooperative Global Search cancellation
+passed on deployed RC5 and RC6; RC7 was subsequently deployed by the user.
+Windows CI at the final release commit, non-cooperative Worker hard recovery,
+and other licensed version families remain separate gates. The user-requested
+default does not make untested scenarios production-verified.
 
 ## Live acceptance and hard-recovery evidence (2026-10-08)
 
@@ -102,7 +103,7 @@ The existing `scripts/verify-live-functional.ps1` now supports these explicit ad
 - `-VerifyOfficialTasks -VerifyBackgroundJobs -VerifyTaskCancellation`: a long Global Search (`timeoutSeconds=0`) is cancelled through `tasks/cancel` and reaches a bounded terminal state. A cancellation that races with completion **does not pass** this strict gate; use an adequately complex fixture. An observed Worker generation change is required if cancellation instead produces a hard-recovery failure.
 - `-VerifyWorkerCrashRecovery -AllowWorkerTermination` together with `-VerifyOfficialTasks` and a long NSC or Global Search fixture: **destructively terminates the dedicated Worker process** after Task creation; validates generation change, old Task failure, and fresh Worker response. Run on a dedicated licensed validation machine only. This tests forced process-loss recovery, **not** the cancellation grace timer.
 
-All these tests require `-AllowReplaceCurrentSystem` and operate on a temporary fixture copy. For live recovery, use local/shared-token Host mode with full diagnostic health; scoped mode intentionally redacts Worker PID/generation. The shipped Launcher keeps Tasks default-off.
+All these tests require `-AllowReplaceCurrentSystem` and operate on a temporary fixture copy. For live recovery, use local/shared-token Host mode with full diagnostic health; scoped mode intentionally redacts Worker PID/generation. RC5 defaults Tasks on; real official Tasks acceptance remains pending.
 
 The existing CI `VerifyJobHardRecoveryAsync` separately injects a deliberately non-cooperative background Job with a short cancellation grace and asserts a failed terminal state and hard-recovery callback. The private RPC tests cover Worker-generation fault, immediate control-lease handoff and cross-token Task confidentiality.
 

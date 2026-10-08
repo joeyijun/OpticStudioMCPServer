@@ -7,6 +7,18 @@ namespace ZemaxMCP.Server.Tools.Base;
 /// </summary>
 public static class DoubleExtensions
 {
+    public static double? OpticalDimension(this double value)
+    {
+        if (double.IsNaN(value))
+            throw new InvalidDataException("ZOS-API returned NaN for an optical dimension.");
+        return double.IsInfinity(value) ? null : value;
+    }
+
+    public static string OpticalDimensionState(this double value) =>
+        double.IsPositiveInfinity(value) ? "PositiveInfinity" :
+        double.IsNegativeInfinity(value) ? "NegativeInfinity" :
+        double.IsNaN(value) ? throw new InvalidDataException("ZOS-API returned NaN for an optical dimension.") : "Finite";
+
     /// <summary>
     /// Returns a finite value unchanged. Non-finite ZOS-API results are data
     /// integrity failures and must be surfaced to the caller rather than

@@ -80,9 +80,12 @@ if ($tolerances -notmatch 'ReadUsedFinite' -or
 }
 if ($runTolerancing -notmatch 'OpenTolerancing\(\)' -or
     $runTolerancing -notmatch 'SaveTolDataFile = true' -or
-    $runTolerancing -notmatch 'TolDataFile = ztdPath' -or
+    $runTolerancing -notmatch 'TolDataFile = Path.GetFileName\(ztdPath\)' -or
     $runTolerancing -notmatch 'NumberToSave = 0' -or
     $runTolerancing -notmatch 'OpenToleranceDataViewer\(\)' -or
+    $runTolerancing -notmatch 'viewer.IsAsynchronous' -or
+    $runTolerancing -notmatch 'viewer.RunAndWaitForCompletion\(\)' -or
+    $runTolerancing -notmatch 'ViewerDiagnostic' -or
     $runTolerancing -notmatch 'MonteCarloData' -or
     $runTolerancing -notmatch 'SensitivityData' -or
     $runTolerancing -notmatch 'thresholdDirection must be LessOrEqual or GreaterOrEqual' -or

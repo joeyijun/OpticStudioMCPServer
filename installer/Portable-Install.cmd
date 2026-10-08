@@ -11,7 +11,7 @@ if exist "%TARGET%\Start-Zemax-MCP.exe" (
   if exist "%SOURCE%ZemaxMCP.Updater.exe" (
     echo Updating the installed copy with rollback protection...
     "%SOURCE%ZemaxMCP.Updater.exe" --staging "%SOURCE_DIR%" --install "%TARGET%" --parent-pid 0 --restart false
-    if %ERRORLEVEL% EQU 0 goto launch_installed
+    if not errorlevel 1 goto launch_installed
     echo.
     echo Installed update failed. See %%LOCALAPPDATA%%\ZemaxMCP\update.log.
     echo Launching the extracted package explicitly in portable mode instead.
@@ -20,7 +20,7 @@ if exist "%TARGET%\Start-Zemax-MCP.exe" (
 )
 
 if not exist "%TARGET%" mkdir "%TARGET%"
-robocopy "%SOURCE%" "%TARGET%" /E /XD logs snapshots /XF Install.exe Portable-Install.cmd release.zip release-manifest.json >nul
+robocopy "%SOURCE%" "%TARGET%" /E /XD logs snapshots shortcut-icons /XF Install.exe Portable-Install.cmd release.zip release-manifest.json launcher-settings.json launcher-settings.json.bak clients.json update.log .update.lock >nul
 set "COPY_RESULT=%ERRORLEVEL%"
 if %COPY_RESULT% LSS 8 goto launch_installed
 

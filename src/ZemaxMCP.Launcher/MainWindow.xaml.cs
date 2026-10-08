@@ -31,6 +31,7 @@ public partial class MainWindow : Window
     private DateTimeOffset _activityEndpointRetryAfter;
     private string _observedActivityEndpoint = "";
     private bool _windowLoaded;
+    private bool _settingsLoadFailed;
     private string _localAccessToken = "";
     private string _remoteEndpoint = "";
     private string _remoteAccessToken = "";
@@ -102,7 +103,9 @@ public partial class MainWindow : Window
         ZemaxVersions.SelectedItem = installs.FirstOrDefault(x => x.Root.Equals(savedRoot, StringComparison.OrdinalIgnoreCase));
         if (ZemaxVersions.SelectedItem == null) ZemaxVersions.SelectedIndex = installs.Count > 0 ? 0 : -1;
         var hasRemoteEndpoint = IsRemoteEndpointConfigured;
-        Report(hasRemoteEndpoint
+        Report(_settingsLoadFailed
+            ? "Saved preferences could not be read. The file is preserved; restore launcher-settings.json from a valid backup. Automatic service startup is skipped."
+            : hasRemoteEndpoint
             ? "Using the saved remote MCP endpoint. Local service startup is skipped."
             : installs.Count == 0
             ? "No local OpticStudio found. Paste secure setup from the OpticStudio computer, then select Test MCP and Configure clients."
@@ -110,7 +113,7 @@ public partial class MainWindow : Window
         RefreshEndpoint();
         _windowLoaded = true;
         ApplyMaterial();
-        if (installs.Count > 0 && !hasRemoteEndpoint) StartBridge();
+        if (installs.Count > 0 && !hasRemoteEndpoint && !_settingsLoadFailed) StartBridge();
         SetIndicatorsChecking();
         _statusTimer.Start();
         _activityTimer.Start();
@@ -213,6 +216,7 @@ public partial class MainWindow : Window
 
     private void ShareOnLan_Changed(object sender, RoutedEventArgs e)
     {
+        if (!_windowLoaded) return;
         RefreshEndpoint();
         SaveSettings();
         if (IsRemoteEndpointConfigured) return;
@@ -236,8 +240,18 @@ public partial class MainWindow : Window
         if (Installation != null) StartBridge();
         Report("Run configuration changed to " + (ToolsetProfile.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content + ".");
     }
+    private void OfficialTasks_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_windowLoaded) return;
+        SaveSettings();
+        // Never terminate a running optical operation merely to change a preference.
+        Report(IsRemoteEndpointConfigured
+            ? "Change official Tasks on the OpticStudio computer; this setting does not change the remote service."
+            : "Official Tasks preference saved. Apply it with Stop / Start when no optical operation is running.");
+    }
     private void StartOnLogin_Changed(object sender, RoutedEventArgs e)
     {
+        if (!_windowLoaded) return;
         try
         {
             using var run = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");
@@ -292,7 +306,7 @@ public partial class MainWindow : Window
                 ? $" --allowed-host {GetLanAddress()} --allowed-origin http://{GetLanAddress()}:*"
                 : string.Empty;
             var startInfo = new ProcessStartInfo(bridge,
-                $"--server \"{server}\" --zemax-root \"{Installation.Root}\" --host {HostName} --port {port} --read-only {(ReadOnlyMode.IsChecked == true ? "true" : "false")} --toolset {SelectedToolsetProfile} --snapshot-dir \"{snapshots}\"" + networkAllowlist)
+                $"--server \"{server}\" --zemax-root \"{Installation.Root}\" --host {HostName} --port {port} --read-only {(ReadOnlyMode.IsChecked == true ? "true" : "false")} --toolset {SelectedToolsetProfile} --snapshot-dir \"{snapshots}\" " + OfficialTasksSettings.HostArgument(OfficialTasks.IsChecked == true) + networkAllowlist)
             { UseShellExecute = false, CreateNoWindow = true };
             startInfo.EnvironmentVariables["ZEMAX_MCP_TOKEN"] = _localAccessToken;
             process = Process.Start(startInfo);
@@ -674,8 +688,8 @@ public partial class MainWindow : Window
     }
     private void RegenerateToken_Click(object sender, RoutedEventArgs e)
     {
-        if (System.Windows.MessageBox.Show("Create a new access token? Existing AI clients will stop connecting until they are configured again.",
-            "Regenerate Zemax MCP token", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (!LauncherDialog.Confirm(this, "Replace access token?",
+            "Existing AI clients will stop connecting until they are configured with the new token.", "Replace token")) return;
         _localAccessToken = GenerateAccessToken();
         SaveSettings();
         if (!IsRemoteEndpointConfigured)
@@ -804,8 +818,12 @@ public partial class MainWindow : Window
         if (_clientSetupPrompted || DetectedClientNames().Count == 0) return;
         _clientSetupPrompted = true;
         SaveSettings();
-        var clients = string.Join(", ", DetectedClientNames());
-        if (System.Windows.MessageBox.Show("Detected " + clients + ". Configure it to use Zemax MCP now? Existing MCP entries will be kept.", "Zemax MCP first-time setup", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+        var clients = Configurator.GetClientStatuses(McpUrl, McpToken)
+            .Where(x => x.Detected && x.Configure != null).ToList();
+        if (clients.All(x => x.Configured)) return;
+        if (LauncherDialog.Confirm(this, "Connect your AI clients",
+            "Configure the detected clients for this MCP endpoint. Other MCP entries will be kept. Restart each client after setup.",
+            "Configure clients", clients.Select(x => (x.Name, x.Configured ? "Configured" : "Setup needed"))))
         {
             var configured = ConfigureDetectedClients();
             Report("Configured: " + string.Join(", ", configured) + ". Restart the client to connect.");
@@ -901,14 +919,14 @@ public partial class MainWindow : Window
     private static string SettingsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZemaxMCP", "launcher-settings.json");
     private string? ReadSetting(string key)
     {
-        try { return File.Exists(SettingsPath) ? JObject.Parse(File.ReadAllText(SettingsPath))[key]?.ToString() : null; }
+        try { return LauncherSettingsStore.Load(SettingsPath)[key]?.ToString(); }
         catch { return null; }
     }
     private void LoadSettings()
     {
         try
         {
-            var settings = File.Exists(SettingsPath) ? JObject.Parse(File.ReadAllText(SettingsPath)) : new JObject();
+            var settings = LauncherSettingsStore.Load(SettingsPath);
             Port.Text = settings["port"]?.ToString() ?? Port.Text;
             _remoteEndpoint = settings["remoteEndpoint"]?.ToString() ?? "";
             _remoteAccessToken = UnprotectSecret(settings["remoteTokenProtected"]?.ToString());
@@ -916,6 +934,7 @@ public partial class MainWindow : Window
             if (string.IsNullOrWhiteSpace(_localAccessToken)) _localAccessToken = GenerateAccessToken();
             ShareOnLan.IsChecked = settings["shareOnLan"]?.Value<bool>() ?? false;
             ReadOnlyMode.IsChecked = settings["readOnly"]?.Value<bool>() ?? false;
+            OfficialTasks.IsChecked = OfficialTasksSettings.IsEnabled(settings["enableOfficialTasks"]);
             SelectToolsetProfile(settings["toolsetProfile"]?.ToString());
             StartOnLogin.IsChecked = settings["startOnLogin"]?.Value<bool>() ?? false;
             var material = settings["windowMaterial"]?.ToString() ?? "mica";
@@ -926,6 +945,7 @@ public partial class MainWindow : Window
         }
         catch
         {
+            _settingsLoadFailed = true; // Preserve an unreadable preference file rather than overwrite it with defaults.
             _localAccessToken = GenerateAccessToken();
             _remoteEndpoint = "";
             _remoteAccessToken = "";
@@ -934,10 +954,10 @@ public partial class MainWindow : Window
     }
     private void SaveSettings()
     {
+        if (!_windowLoaded || _settingsLoadFailed) return;
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
-            File.WriteAllText(SettingsPath, new JObject
+            LauncherSettingsStore.Save(SettingsPath, new JObject
             {
                 ["zemaxRoot"] = Installation?.Root ?? "",
                 ["port"] = Port.Text,
@@ -946,11 +966,12 @@ public partial class MainWindow : Window
                 ["remoteTokenProtected"] = ProtectSecret(_remoteAccessToken),
                 ["shareOnLan"] = ShareOnLan.IsChecked == true,
                 ["readOnly"] = ReadOnlyMode.IsChecked == true,
+                ["enableOfficialTasks"] = OfficialTasks.IsChecked == true,
                 ["toolsetProfile"] = SelectedToolsetProfile,
                 ["startOnLogin"] = StartOnLogin.IsChecked == true,
                 ["windowMaterial"] = SelectedMaterial,
                 ["clientSetupPrompted"] = _clientSetupPrompted
-            }.ToString());
+            });
         }
         catch { /* Preferences are non-essential. */ }
     }

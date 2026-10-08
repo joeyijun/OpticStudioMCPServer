@@ -285,4 +285,4 @@ A build is release-ready only when all of the following are true:
 - the release ZIP/update signature and rollback checks pass;
 - the tested OpticStudio version(s) are recorded in the release notes.
 
-The current branch has completed static Stage A-F review and now contains the functional live harness described above, but **licensed OpticStudio acceptance and real 2021/2023/2024 API compile-matrix validation have intentionally not yet been performed**.
+The branch has completed static Stage A-F review and real-baseline builds. RC6 recorded 52 successful licensed calls on OpticStudio 2024 R1.03: ordinary sequential/MTF/tolerance/NSC workflows and official Tasks completion/cooperative cancellation. Original lenses were restored and official samples were not overwritten. See `LIVE_ACCEPTANCE_FIXES_20261008.md` for the candidate sequence and limitations. This is not comprehensive acceptance of every tool, non-cooperative COM hard recovery, or a real 2021/2023/2026 compile/runtime matrix. Final release-commit CI, signature and rollback verification remain required.

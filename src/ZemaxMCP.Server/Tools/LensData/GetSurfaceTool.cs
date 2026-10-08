@@ -43,9 +43,11 @@ public class GetSurfaceTool
                 Number = surfNum,
                 Comment = row.Comment,
                 Radius = row.Radius.SanitizeRadius(),
-                Thickness = row.Thickness.Sanitize(),
+                Thickness = row.Thickness.OpticalDimension(),
+                ThicknessState = row.Thickness.OpticalDimensionState(),
                 Material = row.Material,
-                SemiDiameter = row.SemiDiameter.Sanitize(),
+                SemiDiameter = row.SemiDiameter.OpticalDimension(),
+                SemiDiameterState = row.SemiDiameter.OpticalDimensionState(),
                 Conic = row.Conic.Sanitize(),
                 SurfaceType = row.Type.ToString(),
                 IsStop = row.IsStop

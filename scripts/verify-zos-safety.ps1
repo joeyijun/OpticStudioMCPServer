@@ -26,7 +26,7 @@ try {
   $env:ZEMAX_MCP_READ_ONLY = "1"
   $safetyType = $core.GetType("ZemaxMCP.Core.Session.ZemaxOperationSafety", $true)
   $safety = [Activator]::CreateInstance($safetyType, $true)
-  $isMutating = $safetyType.GetMethod("IsMutating", [Reflection.BindingFlags]"NonPublic,Static")
+  $isMutating = $safetyType.GetMethod("RequiresSnapshot", [Reflection.BindingFlags]"NonPublic,Static")
   if (-not $isMutating.Invoke($null, @("SetSurface")) -or $isMutating.Invoke($null, @("GetSurface"))) {
     throw "Zemax operation safety classification failed."
   }

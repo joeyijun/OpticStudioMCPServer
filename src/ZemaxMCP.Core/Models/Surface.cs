@@ -5,9 +5,11 @@ public record Surface
     public int Number { get; init; }
     public string Comment { get; init; } = "";
     public double Radius { get; init; }
-    public double Thickness { get; init; }
+    public double? Thickness { get; init; }
+    public string ThicknessState { get; init; } = "Finite";
     public string? Material { get; init; }
-    public double SemiDiameter { get; init; }
+    public double? SemiDiameter { get; init; }
+    public string SemiDiameterState { get; init; } = "Finite";
     public double Conic { get; init; }
     public string SurfaceType { get; init; } = "Standard";
     public Dictionary<string, double> Parameters { get; init; } = new();

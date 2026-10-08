@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using ZemaxMCP.DesktopShared;
 
 namespace ZemaxMCP.Updater;
 
@@ -27,10 +28,13 @@ internal static class Program
                 throw new FileNotFoundException("The staged update does not contain Start-Zemax-MCP.exe.");
             if (!File.Exists(Path.Combine(options.Install, "Start-Zemax-MCP.exe")))
                 throw new FileNotFoundException("The target is not an existing Zemax MCP installation.");
+            using var updateLock = new FileStream(Path.Combine(options.Install, ".update.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             WaitForParent(options.ParentPid);
+            StopInstalledProcesses(options.Install);
             backup = Path.Combine(Path.GetTempPath(), "ZemaxMCP-backup-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(backup);
             CopyDirectory(options.Install, backup, skipRuntimeData: true);
+            Log("Recovery backup prepared at '" + backup + "'. Runtime preferences and credentials are preserved in place.");
             try
             {
                 ClearDirectory(options.Install, preserveRuntimeData: true);
@@ -113,8 +117,26 @@ internal static class Program
     private static void WaitForParent(int pid)
     {
         if (pid <= 0) { Thread.Sleep(1500); return; }
-        try { Process.GetProcessById(pid).WaitForExit(30000); }
+        try { using var parent = Process.GetProcessById(pid); if (!parent.WaitForExit(30000)) throw new TimeoutException("The old launcher did not exit within 30 seconds."); }
         catch (ArgumentException) { }
+    }
+
+    private static void StopInstalledProcesses(string install)
+    {
+        var prefix = Path.GetFullPath(install).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        foreach (var name in new[] { "Start-Zemax-MCP", "ZemaxMCP.ClientProxy", "ZemaxMCP.Host", "ZemaxMCP.Worker", "ZemaxMCP.HttpBridge", "ZemaxMCP.Server" })
+        foreach (var process in Process.GetProcessesByName(name))
+        using (process)
+        {
+            string executable;
+            try { executable = process.MainModule?.FileName ?? string.Empty; }
+            catch { continue; } // Never stop processes whose exact path cannot be verified.
+            if (string.IsNullOrWhiteSpace(executable) || !Path.GetFullPath(executable).StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+            if (process.HasExited) continue;
+            if (process.MainWindowHandle != IntPtr.Zero) process.CloseMainWindow();
+            if (!process.WaitForExit(1500)) process.Kill();
+            if (!process.WaitForExit(10000)) throw new TimeoutException("An installed process did not exit: " + name);
+        }
     }
 
     private static void CopyDirectory(string source, string target, bool skipRuntimeData, IEnumerable<string>? excludedNames = null)
@@ -123,25 +145,29 @@ internal static class Program
         Directory.CreateDirectory(target);
         foreach (var file in Directory.GetFiles(source))
         {
-            if (excluded.Contains(Path.GetFileName(file))) continue;
-            File.Copy(file, Path.Combine(target, Path.GetFileName(file)), true);
+            if (excluded.Contains(Path.GetFileName(file)) || (skipRuntimeData && InstallRuntimeData.IsFile(Path.GetFileName(file)))) continue;
+            InstallRuntimeData.WithRetry(() => File.Copy(file, Path.Combine(target, Path.GetFileName(file)), true));
         }
         foreach (var directory in Directory.GetDirectories(source))
         {
             var name = Path.GetFileName(directory);
-            if (skipRuntimeData && (name.Equals("logs", StringComparison.OrdinalIgnoreCase) || name.Equals("snapshots", StringComparison.OrdinalIgnoreCase))) continue;
+            if (skipRuntimeData && InstallRuntimeData.IsDirectory(name)) continue;
             CopyDirectory(directory, Path.Combine(target, name), skipRuntimeData, excluded);
         }
     }
 
     private static void ClearDirectory(string directory, bool preserveRuntimeData)
     {
-        foreach (var file in Directory.GetFiles(directory)) File.Delete(file);
+        foreach (var file in Directory.GetFiles(directory))
+        {
+            if (preserveRuntimeData && InstallRuntimeData.IsFile(Path.GetFileName(file))) continue;
+            InstallRuntimeData.WithRetry(() => File.Delete(file));
+        }
         foreach (var child in Directory.GetDirectories(directory))
         {
             var name = Path.GetFileName(child);
-            if (preserveRuntimeData && (name.Equals("logs", StringComparison.OrdinalIgnoreCase) || name.Equals("snapshots", StringComparison.OrdinalIgnoreCase))) continue;
-            Directory.Delete(child, true);
+            if (preserveRuntimeData && InstallRuntimeData.IsDirectory(name)) continue;
+            InstallRuntimeData.WithRetry(() => Directory.Delete(child, true));
         }
     }
 

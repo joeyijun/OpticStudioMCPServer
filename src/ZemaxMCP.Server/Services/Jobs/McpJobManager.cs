@@ -339,7 +339,7 @@ public sealed class McpJobManager : IDisposable
 
     private McpJobSnapshot Snapshot(JobEntry entry) => new(
         entry.Id, entry.ToolName, entry.ParentOperationId, entry.State, entry.QueuedAt, entry.StartedAt, entry.CompletedAt,
-        entry.Progress, entry.Message, QueuePosition(entry), entry.StartedAt == null ? null : DateTimeOffset.UtcNow - entry.StartedAt.Value,
+        entry.Progress, entry.Message, QueuePosition(entry), entry.StartedAt == null ? null : (entry.CompletedAt ?? DateTimeOffset.UtcNow) - entry.StartedAt.Value,
         entry.ResultExpired, entry.Result);
 
     private int QueuePosition(JobEntry entry)

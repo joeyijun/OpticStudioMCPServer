@@ -60,3 +60,9 @@ if ($releaseWorkflow -notmatch 'test-launcher-materials\.ps1' -or
   throw "Release workflows must smoke-test the current launcher UI and refuse signing without successful CI at the exact tagged commit."
 }
 Write-Host "Desktop component, release-gate, client identity, project organization, and self-contained Host packaging verification passed."
+if ($launcherXaml -notmatch 'x:Name="OfficialTasks".*IsChecked="True"' -or
+    $launcherCode -notmatch 'OfficialTasksSettings.HostArgument\(OfficialTasks.IsChecked == true\)' -or
+    $launcherCode -notmatch 'OfficialTasksSettings.IsEnabled\(settings\["enableOfficialTasks"\]\)' -or
+    $launcherCode -notmatch '\["enableOfficialTasks"\] = OfficialTasks.IsChecked == true') {
+  throw "Launcher must expose default-on official Tasks, preserve explicit settings, and pass the selected value to Host startup."
+}

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using ZemaxMCP.Server.Tools.Base;
 using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Session;
@@ -129,9 +130,11 @@ public class SetSurfaceTool
                         Number = surfaceNumber,
                         Comment = surface.Comment ?? "",
                         Radius = surface.Radius,
-                        Thickness = surface.Thickness,
+                        Thickness = surface.Thickness.OpticalDimension(),
+                        ThicknessState = surface.Thickness.OpticalDimensionState(),
                         Material = surface.Material,
-                        SemiDiameter = surface.SemiDiameter,
+                        SemiDiameter = surface.SemiDiameter.OpticalDimension(),
+                        SemiDiameterState = surface.SemiDiameter.OpticalDimensionState(),
                         Conic = surface.Conic,
                         SurfaceType = surface.Type.ToString(),
                         IsStop = surface.IsStop

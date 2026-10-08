@@ -57,7 +57,7 @@ public sealed class NscSceneSummaryTool
                         ?? throw new InvalidOperationException($"OpticStudio returned no NCE row for object {number}.");
 
                     if (row.IsActive) active++;
-                    if (row.TypeData.ObjectIsADetector) detectors++;
+                    if (NscObjectClassification.IsDetector(row)) detectors++;
                     if (row.RefObject != 0) referenced++;
                     if (row.InsideOf != 0) nested++;
 

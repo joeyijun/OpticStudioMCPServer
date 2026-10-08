@@ -57,23 +57,45 @@ public class MtfAnalysisTool
                     settings.Wavelength.SetWavelengthNumber(wavelength);
                     settings.SampleSize = MapSampling(sampling);
                     settings.MaximumFrequency = frequency;
-                    settings.ShowDiffractionLimit = true;
+                    settings.ShowDiffractionLimit = false;
                     analysis.ApplyAndWaitForCompletion();
 
                     var results = analysis.GetResults()
                         ?? throw new InvalidOperationException("FFT MTF returned no results object.");
-                    var tempFile = Path.Combine(Path.GetTempPath(), $"zemax_fft_mtf_{Guid.NewGuid():N}.txt");
-                    try
+                    var fieldCount = system.SystemData.Fields.NumberOfFields;
+                    if (results.NumberOfDataSeries != fieldCount)
+                        throw new InvalidDataException($"FFT MTF returned {results.NumberOfDataSeries} field series; expected {fieldCount}.");
+                    var fields = new MtfFieldData[fieldCount];
+                    for (var i = 0; i < fieldCount; i++)
                     {
-                        results.GetTextFile(tempFile);
-                        if (!File.Exists(tempFile) || new FileInfo(tempFile).Length == 0)
-                            throw new IOException("FFT MTF analysis produced no text results.");
-                        return ParseMtfTextFile(tempFile, frequency, wavelength);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        fields[i] = ReadSeries(results.GetDataSeries(i), i + 1);
                     }
-                    finally
+                    // Identify the added diffraction series by comparing descriptions,
+                    // never by matching English/localized report headings or guessing its index.
+                    settings.ShowDiffractionLimit = true;
+                    cancellationToken.ThrowIfCancellationRequested();
+                    analysis.ApplyAndWaitForCompletion();
+                    var withLimit = analysis.GetResults() ?? throw new InvalidDataException("FFT MTF returned no diffraction results.");
+                    var candidates = new List<MtfFieldData>();
+                    if (withLimit.NumberOfDataSeries == fieldCount + 1)
+                        for (var i = 0; i < withLimit.NumberOfDataSeries; i++)
+                        {
+                            var series = withLimit.GetDataSeries(i);
+                            if (!fields.Any(f => string.Equals(f.FieldLabel, series.Description, StringComparison.Ordinal)))
+                                candidates.Add(ReadSeries(series, 0));
+                        }
+                    if (candidates.Count != 1)
+                        throw new InvalidDataException("FFT MTF diffraction series could not be identified unambiguously from structured data.");
+                    var limit = candidates[0];
+                    return new MtfData
                     {
-                        try { File.Delete(tempFile); } catch { }
-                    }
+                        Success = true, Fields = fields, MaxFrequency = frequency, Wavelength = wavelength,
+                        TotalFields = fields.Length, DataPoints = fields[0].DataPoints,
+                        DiffractionLimitFrequencies = limit.Frequencies,
+                        DiffractionLimitTangential = limit.TangentialMtf,
+                        DiffractionLimitSagittal = limit.SagittalMtf
+                    };
                 }
                 finally
                 {
@@ -81,6 +103,7 @@ public class MtfAnalysisTool
                 }
             }, cancellationToken);
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             return new MtfData
@@ -91,6 +114,13 @@ public class MtfAnalysisTool
                 Wavelength = wavelength
             };
         }
+    }
+
+    private static MtfFieldData ReadSeries(ZOSAPI.Analysis.Data.IAR_DataSeries series, int fieldNumber)
+    {
+        if (series?.XData == null || series.YData == null)
+            throw new InvalidDataException("FFT MTF returned an empty DataSeries.");
+        return MtfSeriesReader.Read(series.Description, fieldNumber, series.XData.Data, series.YData.Data);
     }
 
     private static SampleSizes MapSampling(int sampling) => sampling switch
