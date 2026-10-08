@@ -473,7 +473,10 @@ internal static class Program
         var workerLog = Path.Combine(testRoot, "fake-worker-started.txt");
         const string reader = "reader-credential-e2e-test-01234567890123456789";
         const string writer = "writer-credential-e2e-test-01234567890123456789";
-        ScopedCredentialAssertions.Write(file, ("reader", "read-only", reader), ("writer", "read-write", writer));
+        const string otherWriter = "other-writer-e2e-98765432109876543210987654321";
+        ScopedCredentialAssertions.Write(file,
+            ("reader", "read-only", reader), ("writer", "read-write", writer),
+            ("writer-two", "read-write", otherWriter));
         var startInfo = new ProcessStartInfo(host,
             $"--worker \"{worker}\" --host 127.0.0.1 --port {port} --log-dir \"{testRoot}\" " +
             $"--client-credentials-file \"{file}\" --allowed-host 127.0.0.1 --allowed-origin http://127.0.0.1:*")
@@ -541,9 +544,33 @@ internal static class Program
                     throw new InvalidOperationException("Scoped writer did not reach the Worker.");
             }
 
+            // Both clients deliberately advertise the same clientInfo and
+            // instance ID. The authenticated token ID must own the lease.
+            using (var competing = await SendScopedAsync(client, endpoint, 105, "tools/call", "zemax_status", otherWriter).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(competing).ConfigureAwait(false);
+                if (body.Contains("echo-ok", StringComparison.Ordinal) ||
+                    (!body.Contains("currently leased", StringComparison.OrdinalIgnoreCase) &&
+                     !body.Contains("isError", StringComparison.OrdinalIgnoreCase)))
+                    throw new InvalidOperationException("Two distinct authenticated tokens shared one control lease: " + body);
+            }
+
+            using (var release = await SendScopedAsync(client, endpoint, 106, "tools/call", "zemax_disconnect", writer).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(release).ConfigureAwait(false);
+                if (!release.IsSuccessStatusCode || !body.Contains("success", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Scoped owner could not release its lease.");
+            }
+            using (var handoff = await SendScopedAsync(client, endpoint, 107, "tools/call", "zemax_status", otherWriter).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(handoff).ConfigureAwait(false);
+                if (!handoff.IsSuccessStatusCode || !body.Contains("echo-ok", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Authenticated second client could not acquire the lease after disconnect.");
+            }
+
             // Removing the reader revokes its bearer immediately. The Host
             // must not cache stale auth decisions or silently fall back.
-            ScopedCredentialAssertions.Write(file, ("writer", "read-write", writer));
+            ScopedCredentialAssertions.Write(file, ("writer", "read-write", writer), ("writer-two", "read-write", otherWriter));
             using (var revoked = await SendScopedAsync(client, endpoint, 105, "tools/list", null, reader).ConfigureAwait(false))
                 if (revoked.StatusCode != HttpStatusCode.Unauthorized)
                     throw new InvalidOperationException("Revoked read-only credential was still accepted.");
