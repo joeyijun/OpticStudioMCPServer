@@ -77,6 +77,48 @@ Use purpose-built fixtures for subsystem-specific acceptance:
 
 The NSC path checks the structured scene summary/object inspection and executes a bounded real NSC ray trace. The tolerance path checks the TDE summary/operands and executes a small real Sensitivity + Monte Carlo run through `zemax_run_tolerancing`, requiring structured Monte Carlo and sensitivity results. The harness emits a JSON record containing protocol/toolset/fingerprint/license context, Host/Worker/ZOS-API assembly and file versions, Worker generation before/after, and PASS/FAIL/SKIPPED results so acceptance can be archived with release evidence.
 
+### Experimental official Tasks and Worker recovery (licensed Windows only)
+
+With the Host started explicitly using `--enable-official-tasks true` and a **dedicated OpticStudio validation instance**, run these checks against disposable fixtures:
+
+```powershell
+# Real ZOS-API NSC long Task -> tasks/get -> actual final ray-trace result
+./scripts/verify-live-functional.ps1 `
+  -FixturePath "C:\ZemaxValidation\nsc-fixture.zos" `
+  -AllowReplaceCurrentSystem -VerifyNsc -VerifyOfficialTasks `
+  -ReportPath ".\artifacts\live-tasks-nsc.json"
+
+# Real ZOS-API Sensitivity/Monte Carlo Task -> final structured result
+./scripts/verify-live-functional.ps1 `
+  -FixturePath "C:\ZemaxValidation\tolerance-fixture.zmx" `
+  -AllowReplaceCurrentSystem -VerifyTolerance -VerifyOfficialTasks `
+  -ReportPath ".\artifacts\live-tasks-tolerance.json"
+
+# Nontrivial Global Search fixture; strict cancellation and post-cancel liveness
+./scripts/verify-live-functional.ps1 `
+  -FixturePath "C:\ZemaxValidation\optimization-fixture.zmx" `
+  -AllowReplaceCurrentSystem -VerifyBackgroundJobs `
+  -VerifyOfficialTasks -VerifyTaskCancellation `
+  -JobWaitSeconds 180 -ReportPath ".\artifacts\live-tasks-cancel.json"
+
+# DESTRUCTIVE: force-terminate only the checked Worker PID after creating
+# a Task, verify stale generation fails and a fresh Worker restarts.
+# Run on a dedicated licensed test machine, never a shared active session.
+./scripts/verify-live-functional.ps1 `
+  -FixturePath "C:\ZemaxValidation\optimization-fixture.zmx" `
+  -AllowReplaceCurrentSystem -VerifyBackgroundJobs `
+  -VerifyOfficialTasks -VerifyWorkerCrashRecovery -AllowWorkerTermination `
+  -ReportPath ".\artifacts\live-worker-generation-recovery.json"
+```
+
+The crash-recovery gate is **not** a cancellation grace-timeout test. The
+non-cooperative cancellation watchdog is deterministically tested by CI in
+`VerifyJobHardRecoveryAsync`; a licensed hard-timeout acceptance still
+requires controlled fault injection rather than silently claiming equivalence.
+The crash gate requires full local/shared-token health (scoped health redacts
+Worker PID by design). Preserve JSON artifacts and check that recovery does
+not let a foreign credential view or control an old Task.
+
 ## 4. Safety acceptance
 
 Run the live verifier with safety checks in the intended release mode(s) when licensed-machine acceptance is performed.
