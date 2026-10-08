@@ -565,56 +565,15 @@ try {
             $taskId = Start-OfficialTask $tool $args
             $pre = Get-Health
             $generation = [long]$pre.worker.workerGeneration
-            $pid = [int]$pre.worker.workerPid
-            if ($pid -le 0 -or $generation -le 0) { throw "Worker health did not expose a valid PID/generation." }
-            if ($pid -eq $PID) { throw "Refusing to kill the current verifier process." }
-            $workerProc = Get-CimInstance Win32_Process -Filter "ProcessId = $pid"
+            $workerPid = [int]$pre.worker.workerPid
+            if ($workerPid -le 0 -or $generation -le 0) { throw "Worker health did not expose a valid PID/generation." }
+            if ($workerPid -eq $PID) { throw "Refusing to kill the current verifier process." }
+            $workerProc = Get-CimInstance Win32_Process -Filter "ProcessId = $workerPid"
             if ($null -eq $workerProc -or
-                [string]$workerProc.Name -notmatch '^ZemaxMCP\.Worker\.exe = $null
-    try { $healthAfter = Get-Health } catch { }
-    $report = [ordered]@{
-        generatedAt = [DateTimeOffset]::UtcNow
-        endpoint = $endpointUri
-        fixture = $fixture
-        workingCopy = $workingCopy
-        workingCopyRetained = ($KeepWorkingCopy -or $script:openAttempted)
-        protocolVersion = $script:protocolVersion
-        toolCount = $tools.Count
-        toolset = if ($healthBefore) { $healthBefore.toolset } else { $null }
-        hostVersion = if ($healthBefore) { $healthBefore.hostVersion } else { $null }
-        workerVersion = if ($healthBefore) { $healthBefore.workerVersion } else { $null }
-        zosApiAssemblyVersion = if ($healthBefore) { $healthBefore.zosApiAssemblyVersion } else { $null }
-        zosApiFileVersion = if ($healthBefore) { $healthBefore.zosApiFileVersion } else { $null }
-        rpcVersion = if ($healthBefore) { $healthBefore.rpcVersion } else { $null }
-        manifestFingerprint = if ($healthBefore) { $healthBefore.manifestFingerprint } else { $null }
-        licenseStatus = if ($healthBefore) { $healthBefore.licenseStatus } else { $null }
-        workerGenerationBefore = if ($healthBefore) { $healthBefore.worker.workerGeneration } else { $null }
-        workerGenerationAfter = if ($healthAfter) { $healthAfter.worker.workerGeneration } else { $null }
-        tests = $results
-    }
-    $reportDirectory = Split-Path -Parent $ReportPath
-    if ($reportDirectory) { New-Item -ItemType Directory -Force -Path $reportDirectory | Out-Null }
-    $report | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $ReportPath -Encoding UTF8
-    Write-Host "Functional live report: $ReportPath"
-
-    # The active OpticStudio system may still point to this working copy.
-    # Never delete an open/tested lens underneath an active session.
-    if (-not $KeepWorkingCopy -and -not $script:openAttempted) {
-        try { Remove-Item -LiteralPath $runRoot -Recurse -Force } catch { }
-    }
-    else {
-        Write-Host "Working fixture retained for safety: $workingCopy"
-        Write-Host "Close or switch the OpticStudio system before manually deleting this temporary directory."
-    }
-}
-
-$failures = @($results | Where-Object { $_.status -eq "FAIL" })
-if ($failures.Count -gt 0) { throw "Functional live verification failed in $($failures.Count) check(s). See $ReportPath." }
-Write-Host "Functional live verification completed successfully."
-) {
-                throw "PID $pid is not the dedicated ZemaxMCP.Worker.exe. Refusing to terminate it."
+                [string]$workerProc.Name -notmatch '^ZemaxMCP\\.Worker\\.exe$') {
+                throw "PID $workerPid is not the dedicated ZemaxMCP.Worker.exe. Refusing to terminate it."
             }
-            Stop-Process -Id $pid -Force -ErrorAction Stop
+            Stop-Process -Id $workerPid -Force -ErrorAction Stop
             Start-Sleep -Seconds 2
             $recovered = Get-Health
             if ([long]$recovered.worker.workerGeneration -le $generation) {
@@ -624,12 +583,12 @@ Write-Host "Functional live verification completed successfully."
             if ($terminal.status -ne "failed") {
                 throw "A Task from a terminated Worker generation should fail, got $($terminal.status)."
             }
-            # This is a new process; old lens session is intentionally gone.
             $alive = Get-ToolPayload (Invoke-Tool "zemax_status")
-            "oldWorker=$pid; generation=$generation->$($recovered.worker.workerGeneration); oldTask=$($terminal.status)"
+            "oldWorker=$workerPid; generation=$generation->$($recovered.worker.workerGeneration); oldTask=$($terminal.status)"
         } | Out-Null
     }
 }
+
 finally {
     $healthAfter = $null
     try { $healthAfter = Get-Health } catch { }
