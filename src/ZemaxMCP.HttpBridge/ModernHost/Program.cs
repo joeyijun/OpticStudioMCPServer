@@ -144,6 +144,8 @@ internal static class Program
                         result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
                         if (request.Params.Name == "zemax_job_list")
                             result = JobOwnerRegistry.FilterList(result, clientId, workerClient.CurrentGeneration, jobOwners);
+                        else if (JobOwnerRegistry.TryGetJobId(request.Params, out var authorizedJobId))
+                            result = JobOwnerRegistry.ValidateSingleResult(result, authorizedJobId);
                     }
                     else
                     {
