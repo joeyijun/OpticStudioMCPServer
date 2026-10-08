@@ -136,7 +136,7 @@ The launcher can expose a smaller task-focused tool surface without renaming MCP
 |---|---|
 | **View & analyze** | 34 explicitly selected read-only inspection/analysis tools |
 | **Sequential design** | 79 explicitly selected sequential edit, system, file, snapshot, polarization, and analysis tools |
-| **Non-sequential & stray light** | 21 explicitly selected NSC inspection, tracing, system/file, snapshot, polarization, and diagnostic tools |
+| **Non-sequential & stray light** | 24 explicitly selected NSC inspection, tracing, Job monitoring/cancellation, system/file, snapshot, polarization, and diagnostic tools |
 | **Optimization & tolerancing** | 66 explicitly selected optimization, job, tolerance, core sequential, file, snapshot, and verification tools |
 | **Full expert** | All 135 tools and all impacts |
 
