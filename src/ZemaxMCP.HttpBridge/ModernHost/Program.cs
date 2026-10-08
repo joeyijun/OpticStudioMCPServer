@@ -216,8 +216,8 @@ internal static class Program
                 }
 
                 if (credentialStore != null &&
-                    (context.Request.Path.Equals(options.McpPath + "/health", StringComparison.OrdinalIgnoreCase) ||
-                     context.Request.Path.Equals(options.McpPath + "/activity", StringComparison.OrdinalIgnoreCase)))
+                    (string.Equals(context.Request.Path.Value, options.McpPath + "/health", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(context.Request.Path.Value, options.McpPath + "/activity", StringComparison.OrdinalIgnoreCase)))
                 {
                     // These legacy diagnostic endpoints carry all clients' Jobs,
                     // progress and lease identities. Never expose their full
