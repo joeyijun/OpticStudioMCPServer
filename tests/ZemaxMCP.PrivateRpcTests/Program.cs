@@ -582,8 +582,11 @@ internal static class Program
             {
                 var body = await ReadFirstMcpPayloadAsync(list).ConfigureAwait(false);
                 if (!list.IsSuccessStatusCode || !body.Contains("zemax_set_surface", StringComparison.Ordinal) ||
-                    !body.Contains("zemax_open_file", StringComparison.Ordinal))
-                    throw new InvalidOperationException("Write credential could not discover its authorized tools.");
+                    !body.Contains("zemax_open_file", StringComparison.Ordinal) ||
+                    !body.Contains("zemax_job_cancel", StringComparison.Ordinal) ||
+                    body.Contains("zemax_multistart_status", StringComparison.Ordinal) ||
+                    body.Contains("zemax_multistart_stop", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Write credential did not enforce modern Job-only access and authorized tools.");
             }
 
             using (var run = await SendScopedAsync(client, endpoint, 104, "tools/call", "zemax_status", writer).ConfigureAwait(false))
@@ -618,6 +621,76 @@ internal static class Program
                     throw new InvalidOperationException("Authenticated second client could not acquire the lease after disconnect.");
             }
 
+            // Only the job creator may view its status/results, list it,
+            // or cancel it; a different authenticated writer is denied.
+            using (var started = await SendScopedAsync(client, endpoint, 108, "tools/call", "zemax_run_nsc_ray_trace", otherWriter).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(started).ConfigureAwait(false);
+                if (!started.IsSuccessStatusCode || !body.Contains("fake-owned-job", StringComparison.Ordinal))
+                    throw new InvalidOperationException("The scoped test Job did not register its creator: " + body);
+            }
+            using (var foreignStatus = await SendScopedAsync(client, endpoint, 109, "tools/call", "zemax_job_status", writer,
+                       new { jobId = "fake-owned-job" }).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(foreignStatus).ConfigureAwait(false);
+                if (!body.Contains("isError", StringComparison.OrdinalIgnoreCase) ||
+                    body.Contains("private-job-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Foreign writer was able to read a scoped Job: " + body);
+            }
+            using (var ownerStatus = await SendScopedAsync(client, endpoint, 110, "tools/call", "zemax_job_status", otherWriter,
+                       new { jobId = "fake-owned-job" }).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(ownerStatus).ConfigureAwait(false);
+                if (!ownerStatus.IsSuccessStatusCode || !body.Contains("private-job-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Job creator could not read its own status/result: " + body);
+            }
+            using (var foreignList = await SendScopedAsync(client, endpoint, 111, "tools/call", "zemax_job_list", writer).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(foreignList).ConfigureAwait(false);
+                if (!foreignList.IsSuccessStatusCode ||
+                    body.Contains("fake-owned-job", StringComparison.Ordinal) ||
+                    body.Contains("private-job-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Foreign writer saw another client's Job history: " + body);
+            }
+            using (var ownerList = await SendScopedAsync(client, endpoint, 112, "tools/call", "zemax_job_list", otherWriter).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(ownerList).ConfigureAwait(false);
+                if (!ownerList.IsSuccessStatusCode ||
+                    !body.Contains("fake-owned-job", StringComparison.Ordinal) ||
+                    !body.Contains("private-job-result", StringComparison.Ordinal) ||
+                    body.Contains("private-unknown-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Scoped Job listing did not filter unowned results: " + body);
+            }
+            using (var foreignCancel = await SendScopedAsync(client, endpoint, 113, "tools/call", "zemax_job_cancel", writer,
+                       new { jobId = "fake-owned-job" }).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(foreignCancel).ConfigureAwait(false);
+                if (!body.Contains("isError", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Foreign writer could cancel another client's Job: " + body);
+            }
+            using (var scopedHealth = await SendScopedGetAsync(client, endpoint + "/health", otherWriter).ConfigureAwait(false))
+            {
+                var body = await scopedHealth.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (!scopedHealth.IsSuccessStatusCode || !body.Contains("scoped", StringComparison.Ordinal) ||
+                    body.Contains("fake-owned-job", StringComparison.Ordinal) ||
+                    body.Contains("eventJobs", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Scoped /health leaked cross-client Jobs or Worker event state.");
+            }
+            using (var scopedActivity = await SendScopedGetAsync(client, endpoint + "/activity", writer).ConfigureAwait(false))
+            {
+                var body = await scopedActivity.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (!scopedActivity.IsSuccessStatusCode || body.Contains("fake-owned-job", StringComparison.Ordinal) ||
+                    body.Contains("activeOperations", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Scoped /activity leaked cross-client operations.");
+            }
+            using (var ownerCancel = await SendScopedAsync(client, endpoint, 114, "tools/call", "zemax_job_cancel", otherWriter,
+                       new { jobId = "fake-owned-job" }).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(ownerCancel).ConfigureAwait(false);
+                if (!ownerCancel.IsSuccessStatusCode || !body.Contains("Cancelled", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Job creator could not cancel its own Job: " + body);
+            }
+
             // Removing the reader revokes its bearer immediately. The Host
             // must not cache stale auth decisions or silently fall back.
             ScopedCredentialAssertions.Write(file, ("writer", "read-write", writer), ("writer-two", "read-write", otherWriter));
@@ -641,12 +714,21 @@ internal static class Program
     }
 
     private static Task<HttpResponseMessage> SendScopedAsync(
-        HttpClient client, Uri endpoint, int id, string method, string? toolName, string bearer)
+        HttpClient client, Uri endpoint, int id, string method, string? toolName, string bearer, object? arguments = null)
     {
         var body = Build2026Body(id, method, toolName, "spoofable-client-name", "same-instance-id");
+        if (arguments != null)
+            body = body.Replace("\"arguments\":{}", "\"arguments\":" + JsonSerializer.Serialize(arguments), StringComparison.Ordinal);
         var request = Create2026Request(endpoint, body, method, toolName);
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearer);
         return client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+    }
+
+    private static Task<HttpResponseMessage> SendScopedGetAsync(HttpClient client, Uri endpoint, string bearer)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearer);
+        return client.SendAsync(request);
     }
 
     private static Task<HttpResponseMessage> Send2026ListToolsAsync(HttpClient client, Uri endpoint, int id, string clientName, string instanceId)
