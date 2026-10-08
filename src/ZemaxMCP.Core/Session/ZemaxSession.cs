@@ -367,7 +367,7 @@ public class ZemaxSession : IZemaxSession
                 var workingPath = Path.Combine(
                     restoredDirectory,
                     DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff", System.Globalization.CultureInfo.InvariantCulture) +
-                    "_" + baseName + "_restored" + extension);
+                    "_" + Guid.NewGuid().ToString("N") + "_" + baseName + "_restored" + extension);
 
                 File.Copy(fullSnapshotPath, workingPath, overwrite: false);
                 try
@@ -376,7 +376,8 @@ public class ZemaxSession : IZemaxSession
                         throw new IOException("OpticStudio did not load the restored working copy.");
 
                     CurrentFilePath = workingPath;
-                    PruneRestoredWorkingCopies(restoredDirectory, workingPath);
+                    // Restored working copies are user-editable documents, not
+                    // disposable cache entries. Never prune them automatically.
                     _logger.LogInformation("Restored safety snapshot into working copy: {WorkingPath}", workingPath);
                     return workingPath;
                 }
@@ -387,24 +388,6 @@ public class ZemaxSession : IZemaxSession
                 }
             },
             cancellationToken);
-    }
-
-    private static void PruneRestoredWorkingCopies(string directory, string currentWorkingPath)
-    {
-        try
-        {
-            foreach (var file in new DirectoryInfo(directory).GetFiles()
-                         .Where(file => !string.Equals(file.FullName, currentWorkingPath, StringComparison.OrdinalIgnoreCase))
-                         .OrderByDescending(file => file.LastWriteTimeUtc)
-                         .Skip(24))
-            {
-                file.Delete();
-            }
-        }
-        catch
-        {
-            // Retention cleanup must not invalidate a successful restore.
-        }
     }
 
     public async Task<bool> NewSystemAsync(CancellationToken cancellationToken = default)
