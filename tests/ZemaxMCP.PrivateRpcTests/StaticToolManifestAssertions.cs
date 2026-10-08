@@ -39,7 +39,7 @@ internal static class StaticToolManifestAssertions
         {
             ["basic-viewing"] = 34,
             ["sequential-design"] = 79,
-            ["nonsequential-stray-light"] = 21,
+            ["nonsequential-stray-light"] = 24,
             ["optimization-tolerance"] = 66,
             ["full-expert"] = 135
         };
