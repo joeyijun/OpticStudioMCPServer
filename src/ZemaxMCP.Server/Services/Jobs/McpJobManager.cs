@@ -25,6 +25,7 @@ public sealed class McpJobManager : IDisposable
     private readonly TimeSpan _cancellationGrace;
     private readonly Action<McpJobSnapshot>? _hardRecoveryAction;
     private bool _processorRunning;
+    private bool _recoveryRequired;
     private bool _disposed;
 
     public McpJobManager(
@@ -65,6 +66,8 @@ public sealed class McpJobManager : IDisposable
         lock (_gate)
         {
             ThrowIfDisposed();
+            if (_recoveryRequired)
+                throw new InvalidOperationException("The prior background ZOS-API job did not drain; Worker hard recovery is required before another job may be queued.");
             if (_pending.Count >= _maxPending)
                 throw new InvalidOperationException($"The background job queue is full ({_maxPending} pending jobs). Wait for a job to finish or cancel one before starting another.");
             entry = new JobEntry(Guid.NewGuid().ToString("N"), toolName, ParentOperation.Value, operation, timeout);
@@ -249,15 +252,32 @@ public sealed class McpJobManager : IDisposable
         }
 
         McpJobSnapshot snapshot;
+        McpJobSnapshot[] abandoned;
         lock (_gate)
         {
+            // Quarantine this Worker generation BEFORE notifying the Host.
+            // If hard-recovery action fails or returns in a test, neither a
+            // new admission nor an already-queued job may run alongside the
+            // COM call that ignored cancellation.
+            _recoveryRequired = true;
             entry.CompletedAt = DateTimeOffset.UtcNow;
             entry.State = McpJobState.Failed;
             entry.Message = $"Cancellation did not stop the background ZOS-API job within {_cancellationGrace.TotalSeconds:0} seconds; Worker hard recovery is required.";
             snapshot = Snapshot(entry);
+            var stopped = new List<McpJobSnapshot>();
+            while (_pending.Count > 0)
+            {
+                var waiting = _pending.Dequeue();
+                waiting.State = McpJobState.Failed;
+                waiting.CompletedAt = DateTimeOffset.UtcNow;
+                waiting.Message = "Worker generation requires hard recovery; queued job was not executed.";
+                stopped.Add(Snapshot(waiting));
+            }
+            abandoned = stopped.ToArray();
             TrimHistoryLocked();
         }
         Publish(snapshot);
+        foreach (var waiting in abandoned) Publish(waiting);
         try { _hardRecoveryAction?.Invoke(snapshot); }
         catch { /* The job state is already terminal; recovery observers must not corrupt it. */ }
         return false;
@@ -290,23 +310,31 @@ public sealed class McpJobManager : IDisposable
 
     private void PublishProgress(JobEntry entry, double? progress, string? message)
     {
+        McpJobSnapshot snapshot;
         lock (_gate)
         {
+            if (entry.State is McpJobState.Completed or McpJobState.Cancelled or McpJobState.Failed)
+                return; // a late, non-cooperative COM completion cannot resurrect a terminal job
             entry.Progress = progress;
             if (!string.IsNullOrWhiteSpace(message)) entry.Message = message!;
+            snapshot = Snapshot(entry);
         }
-        Publish(Snapshot(entry));
+        Publish(snapshot);
     }
 
     private void PublishResult(JobEntry entry, object? result)
     {
+        McpJobSnapshot snapshot;
         lock (_gate)
         {
+            if (entry.State is McpJobState.Completed or McpJobState.Cancelled or McpJobState.Failed)
+                return;
             entry.Result = result;
             entry.ResultWasSet = true;
             entry.ResultExpired = false;
+            snapshot = Snapshot(entry);
         }
-        Publish(Snapshot(entry));
+        Publish(snapshot);
     }
 
     private McpJobSnapshot Snapshot(JobEntry entry) => new(
