@@ -47,6 +47,9 @@ internal static class Program
             builder.WebHost.UseSetting("AllowedHosts", string.Join(";", options.AllowedHosts));
             builder.Host.UseSerilog();
             builder.Services.AddSingleton(options);
+            var credentialStore = string.IsNullOrWhiteSpace(options.ClientCredentialsFile)
+                ? null
+                : new ClientCredentialStore(options.ClientCredentialsFile);
             var workerClient = new WorkerRpcClient(options);
             builder.Services.AddSingleton(workerClient);
             var controlLease = new OpticStudioControlLease();
@@ -62,13 +65,15 @@ internal static class Program
                     Version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "unknown"
                 })
                 .WithHttpTransport(transport => transport.Stateless = true)
-                .WithListToolsHandler(async (_, _) =>
+                .WithListToolsHandler(async (request, _) =>
                 {
                     await Task.CompletedTask.ConfigureAwait(false);
                     return new ListToolsResult
                     {
                         Tools = StaticToolManifest.All
-                            .Where(entry => StaticToolManifest.IsAllowed(options.Toolset, entry.Name, options.ReadOnly))
+                            .Where(entry => StaticToolManifest.IsAllowed(
+                                options.Toolset, entry.Name,
+                                options.ReadOnly || ClientCredentialStore.IsReadOnly(request.User)))
                             .Select(entry => new Tool
                             {
                                 Name = entry.Name,
@@ -80,7 +85,9 @@ internal static class Program
                 })
                 .WithCallToolHandler(async (request, cancellationToken) =>
                 {
-                    if (!StaticToolManifest.IsAllowed(options.Toolset, request.Params.Name, options.ReadOnly))
+                    if (!StaticToolManifest.IsAllowed(
+                            options.Toolset, request.Params.Name,
+                            options.ReadOnly || ClientCredentialStore.IsReadOnly(request.User)))
                     {
                         return new CallToolResult
                         {
@@ -154,11 +161,37 @@ internal static class Program
                     context.Response.StatusCode = StatusCodes.Status204NoContent;
                     return;
                 }
-                if (context.Request.Path.StartsWithSegments(options.McpPath) && !HasValidToken(context, options.AccessToken))
+                ClientCredentialStore.Credential? scopedCredential = null;
+                if (context.Request.Path.StartsWithSegments(options.McpPath))
                 {
-                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                    context.Response.Headers.WWWAuthenticate = "Bearer";
-                    return;
+                    if (credentialStore != null)
+                    {
+                        try
+                        {
+                            scopedCredential = credentialStore.Authenticate(context.Request.Headers.Authorization.ToString());
+                        }
+                        catch (Exception ex)
+                        {
+                            // Missing or malformed credential files revoke all
+                            // access until repaired. Never fall back to legacy
+                            // shared-token or unauthenticated local access.
+                            Log.Error(ex, "Client credential file cannot be read; failing closed");
+                            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                            return;
+                        }
+                        if (scopedCredential == null)
+                        {
+                            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                            context.Response.Headers.WWWAuthenticate = "Bearer";
+                            return;
+                        }
+                    }
+                    else if (!HasValidToken(context, options.AccessToken))
+                    {
+                        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                        context.Response.Headers.WWWAuthenticate = "Bearer";
+                        return;
+                    }
                 }
 
                 var instanceHeader = context.Request.Headers[ClientInstanceHeader].FirstOrDefault();
@@ -171,7 +204,10 @@ internal static class Program
 
                 var claims = new List<Claim>
                 {
-                    new("zemax-mcp-auth-profile", string.IsNullOrWhiteSpace(options.AccessToken) ? "local" : "shared-token"),
+                    new("zemax-mcp-auth-profile", scopedCredential != null
+                        ? "scoped:" + scopedCredential.Id
+                        : string.IsNullOrWhiteSpace(options.AccessToken) ? "local" : "shared-token"),
+                    new("zemax-mcp-permission", scopedCredential?.Permission ?? "read-write"),
                     new("zemax-mcp-remote-endpoint", context.Connection.RemoteIpAddress?.ToString() ?? "local")
                 };
                 if (!string.IsNullOrWhiteSpace(instanceHeader)) claims.Add(new Claim("zemax-mcp-client-instance", instanceHeader));
