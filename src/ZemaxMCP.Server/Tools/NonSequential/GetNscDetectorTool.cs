@@ -21,16 +21,31 @@ public sealed class GetNscDetectorTool
         uint PixelColumns,
         uint PixelRows,
         uint TotalPixels,
-        string? DisplayMode);
+        string? DisplayMode,
+        double? TotalIncidentFlux = null,
+        double? RayHits = null,
+        string? PixelDataKind = null,
+        int RoiStartRow = 0,
+        int RoiStartColumn = 0,
+        double[][]? RoiPixels = null,
+        string? FluxUnit = null);
 
     [ZemaxTool(Name = "zemax_get_nsc_detector")]
-    [Description("Inspect an NSC detector's pixel dimensions and display mode without reading or changing detector data. Requires a non-sequential system.")]
+    [Description("Read NSC detector dimensions, total incident flux, ray hits and optionally a bounded ROI flux/irradiance pixel matrix. Pixel values are native OpticStudio data (not automatically power-normalized). Use after tracing and verify source-power units.")]
     public async Task<Result> ExecuteAsync(
         [Description("NSC detector object number (1-indexed)")] int objectNumber,
+        [Description("Read a pixel ROI as a 2D matrix (up to 4096 pixels). False returns detector summary only.")] bool includePixels = false,
+        [Description("Pixel data: 0 = incident flux per pixel, 1 = flux per area (irradiance).")] int dataType = 0,
+        [Description("ROI start row, 0-based in detector's native row ordering.")] int startRow = 0,
+        [Description("ROI start column, 0-based in detector's native column ordering.")] int startColumn = 0,
+        [Description("ROI height; 0 = remaining detector rows.")] int rowCount = 0,
+        [Description("ROI width; 0 = remaining detector columns.")] int columnCount = 0,
         CancellationToken cancellationToken = default)
     {
         if (objectNumber < 1)
             return new Result(false, "objectNumber must be at least 1.", objectNumber, null, null, 0, 0, 0, null);
+        if (dataType is not (0 or 1) || startRow < 0 || startColumn < 0 || rowCount < 0 || columnCount < 0)
+            return new Result(false, "dataType must be 0/1 and ROI coordinates/sizes cannot be negative.", objectNumber, null, null, 0, 0, 0, null);
 
         try
         {
@@ -69,16 +84,49 @@ public sealed class GetNscDetectorTool
                         objectNumber, row.TypeName, row.Comment, columns, rows, totalPixels, row.TypeData.DetectorShowAs.ToString());
                 }
 
+                // The official GetDetectorData pixel index starts at one.
+                // Index zero is a summary statistic, never pixel (0,0).
+                if (!nce.GetDetectorData(objectNumber, 0, 0, out var totalFlux) ||
+                    !nce.GetDetectorData(objectNumber, -3, 0, out var rayHits) ||
+                    double.IsNaN(totalFlux) || double.IsInfinity(totalFlux) ||
+                    double.IsNaN(rayHits) || double.IsInfinity(rayHits))
+                    return new Result(false, "Detector flux/hit summary is unavailable or non-finite.", objectNumber,
+                        row.TypeName, row.Comment, columns, rows, totalPixels, row.TypeData.DetectorShowAs.ToString());
+
+                double[][]? pixelGrid = null;
+                if (includePixels)
+                {
+                    var height = rowCount == 0 ? (long)rows - startRow : rowCount;
+                    var width = columnCount == 0 ? (long)columns - startColumn : columnCount;
+                    if (startRow >= rows || startColumn >= columns ||
+                        height < 1 || width < 1 ||
+                        startRow + height > rows || startColumn + width > columns ||
+                        height * width > 4096)
+                        return new Result(false, "ROI must lie inside the detector and contain 1..4096 pixels. Request smaller tiles for a large detector.",
+                            objectNumber, row.TypeName, row.Comment, columns, rows, totalPixels,
+                            row.TypeData.DetectorShowAs.ToString(), totalFlux, rayHits);
+                    pixelGrid = new double[(int)height][];
+                    for (var y = 0; y < (int)height; y++)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        pixelGrid[y] = new double[(int)width];
+                        for (var x = 0; x < (int)width; x++)
+                        {
+                            var pixel = checked((int)(((long)startRow + y) * columns + startColumn + x + 1));
+                            if (!nce.GetDetectorData(objectNumber, pixel, dataType, out var value) ||
+                                double.IsNaN(value) || double.IsInfinity(value))
+                                throw new InvalidOperationException($"Detector pixel {pixel} is unavailable or non-finite.");
+                            pixelGrid[y][x] = value;
+                        }
+                    }
+                }
+
                 return new Result(
-                    true,
-                    null,
-                    objectNumber,
-                    row.TypeName,
-                    row.Comment,
-                    columns,
-                    rows,
-                    totalPixels,
-                    row.TypeData.DetectorShowAs.ToString());
+                    true, null, objectNumber, row.TypeName, row.Comment,
+                    columns, rows, totalPixels, row.TypeData.DetectorShowAs.ToString(),
+                    totalFlux, rayHits,
+                    includePixels ? (dataType == 0 ? "incident-flux" : "flux-per-area") : null,
+                    startRow, startColumn, pixelGrid, "OpticStudio native NSC source-flux units");
             }, cancellationToken);
         }
         catch (OperationCanceledException)
