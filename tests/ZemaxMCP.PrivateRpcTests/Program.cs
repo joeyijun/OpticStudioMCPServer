@@ -857,7 +857,7 @@ internal static class Program
         if (taskId != null)
             body = body.Replace("\"_meta\":{", "\"taskId\":" + JsonSerializer.Serialize(taskId) + ",\"_meta\":{",
                 StringComparison.Ordinal);
-        using var request = Create2026Request(endpoint, body, method, toolName ?? taskId);
+        var request = Create2026Request(endpoint, body, method, toolName ?? taskId);
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearer);
         return client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
     }
