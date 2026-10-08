@@ -579,6 +579,20 @@
           <TextBlock x:Name="ConnectionSummary" Text="Checking status automatically…" TextWrapping="Wrap"
                      TextTrimming="CharacterEllipsis" Height="36" ToolTip="{Binding Text, ElementName=ConnectionSummary}"
                      Foreground="{StaticResource BodyBrush}" FontSize="13" LineHeight="18"/>
+          <Grid Margin="0,11,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel>
+              <TextBlock Text="Background task center" Style="{StaticResource StatusHeading}"/>
+              <TextBlock x:Name="TaskCenterSummary" Text="No background Jobs reported." Style="{StaticResource HelperText}" Margin="0,3,0,5"/>
+              <ComboBox x:Name="TaskCenterJobs" Height="32" DisplayMemberPath="DisplayText"
+                        AutomationProperties.Name="Select background Job" SelectionChanged="TaskCenterJobs_SelectionChanged"
+                        ToolTip="Jobs shown here are diagnostic data. Cancelling requires the same authenticated MCP ownership as the originating client."/>
+            </StackPanel>
+            <Button Grid.Column="1" x:Name="TaskCenterCancel" Content="Request cancel" IsEnabled="False"
+                    Style="{StaticResource SmallButton}" Margin="10,22,0,0" VerticalAlignment="Center"
+                    ToolTip="Requests cooperative cancellation through the existing MCP job-cancel tool. Unauthorized owners are denied; never forcibly kills the Worker."
+                    Click="TaskCenterCancel_Click"/>
+          </Grid>
           <TextBox x:Name="Status" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                    Height="44" Margin="0,8,0,0" Padding="10,6" Background="#F5F5F7" Foreground="#6E6E73"
                    BorderBrush="#E8E8ED" BorderThickness="1" FontFamily="Consolas" FontSize="12"/>
