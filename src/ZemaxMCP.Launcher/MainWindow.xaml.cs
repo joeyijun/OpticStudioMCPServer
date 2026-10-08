@@ -417,7 +417,9 @@ public partial class MainWindow : Window
                     Message = job["message"]?.ToString() ?? "No Worker message.",
                     Owner = job["owner"]?.ToString() ??
                         (health?["clientIsolation"]?.ToString().Contains("scoped") == true ? "Authenticated credential (owner-filtered)" :
-                         health?["controlLease"]?["owner"]?.ToString() ?? "Not individually reported"),
+                         (health?["controlLease"]?["owner"] == null ? "Not individually reported" :
+                            "current control lease: " + health["controlLease"]?["owner"]?.ToString() +
+                            " (may differ from Job creator)")),
                     WorkerGeneration = health?["worker"]?["workerGeneration"]?.ToString() ?? "Not reported",
                     Elapsed = job["elapsedSeconds"]?.ToString() ?? job["elapsed"]?.ToString() ?? "Not reported",
                     Queue = queue,
@@ -495,6 +497,7 @@ public partial class MainWindow : Window
 
     private void TasksPageJobs_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
+        if (TasksPageDetail == null || TasksPageCancel == null || TasksPageViewResult == null) return;
         var selected = TasksPageJobs?.SelectedItem as BackgroundJobView;
         TasksPageCancel.IsEnabled = selected?.IsActive == true;
         TasksPageViewResult.IsEnabled = selected != null;
