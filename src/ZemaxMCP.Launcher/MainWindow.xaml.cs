@@ -1040,7 +1040,7 @@ public partial class MainWindow : Window
         var request = (HttpWebRequest)WebRequest.Create(healthEndpoint);
         request.Method = "GET";
         request.Accept = "application/json";
-        request.Timeout = 10000;
+        request.Timeout = 105000; // Cold Worker/ZOS-API bootstrap may legitimately take up to 90s.
         AddAuthorization(request, accessToken);
         using var response = (HttpWebResponse)request.GetResponse();
         using var reader = new StreamReader(response.GetResponseStream());
@@ -1089,7 +1089,7 @@ public partial class MainWindow : Window
         request.Method = "POST";
         request.ContentType = "application/json";
         request.Accept = "application/json, text/event-stream";
-        request.Timeout = 20000;
+        request.Timeout = method == "tools/call" ? 105000 : 20000;
         request.Headers["MCP-Protocol-Version"] = "2026-07-28";
         request.Headers["Mcp-Method"] = method;
         if (!string.IsNullOrEmpty(routingName)) request.Headers["Mcp-Name"] = routingName;
