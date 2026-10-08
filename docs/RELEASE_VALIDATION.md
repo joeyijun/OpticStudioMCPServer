@@ -8,7 +8,7 @@ Every pull request must pass the Windows workflow at the exact release-candidate
 
 Hosted checks cover:
 
-- 117 Worker tool classes / 136 unique commands;
+- 119 Worker tool classes / 138 unique commands;
 - explicit domain and impact metadata for every public tool;
 - generated JSON schemas and deterministic static-manifest fingerprint;
 - official .NET 10 MCP Host behavior and MCP 2026-07-28 stateless requests;
@@ -161,7 +161,7 @@ The same no-op mutation must succeed and create a verified `.zmx` pre-change sna
 
 ## 5. Functional review order and current status
 
-The 136 public commands are reviewed in stages so release-critical editing/recovery paths are checked before specialized analyses.
+The 138 public commands are reviewed in stages so release-critical editing/recovery paths are checked before specialized analyses.
 
 | Stage | Functional area | Review status | Release focus |
 | --- | --- | --- | --- |
