@@ -26,25 +26,49 @@ internal sealed class OpticStudioControlLease
     public async Task<IDisposable> AcquireAsync(string clientId, string operation, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(clientId)) clientId = "anonymous";
+
+        // Reject a different live owner immediately, but do not register a new
+        // owner or extend idle activity while still waiting for the execution
+        // semaphore. A caller may cancel during that wait.
         lock (_sync)
         {
-            var expired = _ownerClientId != null && DateTimeOffset.UtcNow - _lastActivity > _idleTimeout &&
-                          _activeOperation == null && _jobHolds.Count == 0;
-            if (expired) _ownerClientId = null;
-            if (_ownerClientId != null && !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
+            if (!IsExpiredLocked() &&
+                _ownerClientId != null &&
+                !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
                 throw new InvalidOperationException("OpticStudio control is currently leased to another MCP client.");
-            _ownerClientId = clientId;
-            _lastActivity = DateTimeOffset.UtcNow;
         }
 
         await _execution.WaitAsync(cancellationToken).ConfigureAwait(false);
-        lock (_sync)
+        try
         {
-            _activeOperation = operation;
-            _lastActivity = DateTimeOffset.UtcNow;
+            // Revalidate after the wait: ownership may have changed while
+            // this request was queued behind another operation.
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_sync)
+            {
+                if (IsExpiredLocked()) _ownerClientId = null;
+                if (_ownerClientId != null &&
+                    !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
+                    throw new InvalidOperationException("OpticStudio control is currently leased to another MCP client.");
+
+                _ownerClientId = clientId;
+                _activeOperation = operation;
+                _lastActivity = DateTimeOffset.UtcNow;
+            }
+            return new Releaser(this, clientId);
         }
-        return new Releaser(this, clientId);
+        catch
+        {
+            _execution.Release();
+            throw;
+        }
     }
+
+    private bool IsExpiredLocked() =>
+        _ownerClientId != null &&
+        DateTimeOffset.UtcNow - _lastActivity > _idleTimeout &&
+        _activeOperation == null &&
+        _jobHolds.Count == 0;
 
     public bool ReleaseOwnership(string clientId)
     {
