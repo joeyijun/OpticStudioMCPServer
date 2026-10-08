@@ -90,6 +90,13 @@ internal static class Program
         };
         if (JobOwnerRegistry.FilterList(invalid, "scoped:a", 7, registry).IsError != true)
             throw new InvalidOperationException("Malformed Worker job-list data did not fail closed.");
+        var wrongSingle = new CallToolResult
+        {
+            Content = new List<ContentBlock> { new TextContentBlock { Text = "{\"jobId\":\"owned-2\",\"result\":\"client-b-private\"}" } },
+            IsError = false
+        };
+        if (JobOwnerRegistry.ValidateSingleResult(wrongSingle, "owned-1").IsError != true)
+            throw new InvalidOperationException("Job status/cancel returned a different owner's result despite authorized request parameters.");
 
         registry.ReleaseGeneration(7);
         if (registry.IsOwned("scoped:a", "owned-1", 7))
