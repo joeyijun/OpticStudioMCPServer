@@ -668,7 +668,7 @@ internal static class Program
                 if (!body.Contains("isError", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Foreign writer could cancel another client's Job: " + body);
             }
-            using (var scopedHealth = await SendScopedGetAsync(client, endpoint + "/health", otherWriter).ConfigureAwait(false))
+            using (var scopedHealth = await SendScopedGetAsync(client, new Uri(endpoint, endpoint.AbsolutePath.TrimEnd('/') + "/health"), otherWriter).ConfigureAwait(false))
             {
                 var body = await scopedHealth.Content.ReadAsStringAsync().ConfigureAwait(false);
                 if (!scopedHealth.IsSuccessStatusCode || !body.Contains("scoped", StringComparison.Ordinal) ||
@@ -676,7 +676,7 @@ internal static class Program
                     body.Contains("eventJobs", StringComparison.Ordinal))
                     throw new InvalidOperationException("Scoped /health leaked cross-client Jobs or Worker event state.");
             }
-            using (var scopedActivity = await SendScopedGetAsync(client, endpoint + "/activity", writer).ConfigureAwait(false))
+            using (var scopedActivity = await SendScopedGetAsync(client, new Uri(endpoint, endpoint.AbsolutePath.TrimEnd('/') + "/activity"), writer).ConfigureAwait(false))
             {
                 var body = await scopedActivity.Content.ReadAsStringAsync().ConfigureAwait(false);
                 if (!scopedActivity.IsSuccessStatusCode || body.Contains("fake-owned-job", StringComparison.Ordinal) ||
