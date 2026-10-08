@@ -137,7 +137,7 @@ internal static class WorkerTaskLedgerAssertions
                active!.State == "working",
             "Capacity eviction must drop only terminal records.");
         ledger.ObserveJob(11, new WorkerJobStatus { JobId = "active-3", State = "Unknown" });
-        Assert(!ledger.TryRegister("scoped:c", "active-1", 0, out _),
+        ExpectArgument(() => ledger.TryRegister("scoped:c", "active-1", 0, out _),
             "An invalid Worker generation must be rejected.");
     }
 
@@ -150,6 +150,13 @@ internal static class WorkerTaskLedgerAssertions
     private static void Assert(bool condition, string error)
     {
         if (!condition) throw new InvalidOperationException(error);
+    }
+
+    private static void ExpectArgument(Action action, string error)
+    {
+        try { action(); }
+        catch (ArgumentException) { return; }
+        throw new InvalidOperationException(error);
     }
 
     private static void ExpectInvalidOperation(Action action, string error)
