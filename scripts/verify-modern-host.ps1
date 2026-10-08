@@ -136,6 +136,11 @@ if ($hostSource -notmatch '"zemax_disconnect"' -or $hostSource -notmatch 'Releas
     $privateRpcTest -notmatch 'immediate handoff') {
   throw "A successful zemax_disconnect must release the owning client lease and the MCP E2E suite must verify immediate handoff."
 }
+if ($controlLeaseSource -notmatch '_execution.WaitAsync\(cancellationToken\)' -or
+    $controlLeaseSource -notmatch 'IsExpiredLocked\(' -or
+    $privateRpcTest -notmatch 'VerifyCancelledLeaseWaitAsync') {
+  throw "Cancelled control-lease waiters must not claim ownership or extend idle activity before acquiring the execution gate."
+}
 if ($hostSource -notmatch 'RetainForJob\(clientId' -or $hostSource -notmatch 'JobStateChanged' -or
     $rpcClient -notmatch 'GenerationEnded' -or $privateRpcTest -notmatch 'VerifyBackgroundJobLeaseRetentionAsync') {
   throw "Background jobs must retain client control ownership and be scoped to the Worker generation that created them."
