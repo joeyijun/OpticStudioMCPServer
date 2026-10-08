@@ -87,9 +87,10 @@ internal static class Program
 
                 ;
 
+            WorkerTaskLedger? taskLedger = null;
             if (options.EnableOfficialTasks)
             {
-                var taskLedger = new WorkerTaskLedger();
+                taskLedger = new WorkerTaskLedger();
                 workerClient.JobStateChanged += taskLedger.ObserveJob;
                 workerClient.GenerationEnded += taskLedger.ReleaseGeneration;
                 var adapter = new OfficialTasksAdapter(taskLedger, workerClient, jobOwners,
@@ -346,6 +347,15 @@ internal static class Program
                                 return profile != null && profile.StartsWith("scoped:", StringComparison.Ordinal) &&
                                     jobOwners.IsOwned("token:" + profile, job.JobId, worker.CurrentGeneration);
                             }).ToArray(),
+                    // Diagnostics expose Task IDs only to scoped bearer owners.
+                    // Shared/local clients use MCP tasks/get with their exact
+                    // client identity instead of a globally readable task list.
+                    tasks = taskLedger == null || credentialStore == null
+                        ? Array.Empty<object>()
+                        : taskLedger.ListOwnedMetadata(
+                            httpContext.User.FindFirst("zemax-mcp-auth-profile")?.Value is { } taskProfile &&
+                            taskProfile.StartsWith("scoped:", StringComparison.Ordinal)
+                            ? "token:" + taskProfile : "", 25),
                     requestTimeoutSeconds = options.RequestTimeoutSeconds,
                     requestWriteTimeoutSeconds = options.RequestWriteTimeoutSeconds,
                     hardRecoveryTimeoutSeconds = options.HardRecoveryTimeoutSeconds,
