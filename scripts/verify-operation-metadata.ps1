@@ -63,7 +63,7 @@ if ([string]::IsNullOrWhiteSpace($domainLookup) -or $domainLookup -match 'Starts
 $profileDomains = @{
     'basic-viewing' = @('system', 'sequential-editing', 'analysis', 'administration')
     'sequential-design' = @('system', 'sequential-editing', 'analysis', 'polarization', 'files', 'administration')
-    'nonsequential-stray-light' = @('system', 'non-sequential', 'analysis', 'polarization', 'files', 'administration')
+    'nonsequential-stray-light' = @('system', 'non-sequential', 'analysis', 'optimization', 'polarization', 'files', 'administration')
     'optimization-tolerance' = @('system', 'sequential-editing', 'analysis', 'optimization', 'tolerance', 'polarization', 'files', 'administration')
     'full-expert' = @('system', 'sequential-editing', 'non-sequential', 'analysis', 'optimization', 'tolerance', 'polarization', 'files', 'administration')
 }
