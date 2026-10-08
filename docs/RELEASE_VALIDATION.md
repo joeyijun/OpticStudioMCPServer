@@ -55,6 +55,26 @@ This performs an explicit `2025-11-25` initialize probe after the modern statele
 
 ## 3. Functional live acceptance
 
+For an offline OpticStudio computer, use the separate isolated acceptance bundle.
+Extract it and run `Run-Isolated-Acceptance.cmd`. It contains the self-contained
+runtime and PowerShell 5.1-compatible verifiers; no SDK, GitHub or network access
+is required. Each fixture gets an independent loopback Host, temporary runtime,
+random token and dedicated snapshots/logs. Existing installation preferences and
+normal service ports are not modified. The installer package is not installed by
+this test. A second Standalone instance may require another available license
+seat; failure to obtain one aborts instead of stopping the normal service.
+
+The destructive phase additionally checks the test Host PID, Worker executable
+path and parent PID before terminating a Worker, then requires a fresh licensed
+connection and actual `zemax_get_system` readback of its disposable fixture.
+Manual crash tests must provide `-ExpectedHostProcessId` and `-ExpectedWorkerPath`
+as well as the existing explicit acknowledgements. The test only proves process
+crash recovery, not non-cooperative COM grace-timeout recovery. Keep and return
+the generated `results-*` folder; runtime/working copies are retained for diagnosis.
+
+Both live verifiers match JSON/SSE results by the original request ID. Progress
+notifications and server requests cannot be mistaken for a tool response.
+
 The transport smoke test above is intentionally small. For real ZOS-API behavior, run the functional harness against a disposable fixture:
 
 ```powershell

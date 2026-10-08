@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tooling;
+using ZemaxMCP.Server.Tools.Base;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
@@ -38,7 +39,7 @@ public sealed class BatchSetSurfacesTool
         int RequestedEdits,
         int AppliedEdits,
         bool RolledBack,
-        IReadOnlyList<SurfaceState> Surfaces);
+        IReadOnlyList<SurfaceReadback> Surfaces);
 
     [ZemaxTool(Name = "zemax_batch_set_surfaces")]
     [Description("Atomically modify geometry/material/comment/stop state on multiple sequential LDE surfaces. The request is fully validated before mutation, creates one safety snapshot, verifies readback, and restores every touched surface if any write/readback fails.")]
@@ -76,7 +77,7 @@ public sealed class BatchSetSurfacesTool
                         edit => edit.SurfaceNumber,
                         edit => ReadState(lde.GetSurfaceAt(edit.SurfaceNumber), edit.SurfaceNumber));
 
-                    var applied = new List<SurfaceState>(edits.Count);
+                    var applied = new List<SurfaceReadback>(edits.Count);
                     try
                     {
                         foreach (var edit in edits)
@@ -98,7 +99,10 @@ public sealed class BatchSetSurfacesTool
                             cancellationToken.ThrowIfCancellationRequested();
                             var state = ReadState(lde.GetSurfaceAt(edit.SurfaceNumber), edit.SurfaceNumber);
                             VerifyReadback(edit, state);
-                            applied.Add(state);
+                            // Preserve raw originals for rollback, but never serialize COM infinity directly.
+                            // Convert inside the transaction so invalid readbacks also trigger rollback.
+                            applied.Add(SurfaceReadback.FromRaw(state.SurfaceNumber, state.Radius, state.Thickness,
+                                state.Material, state.SemiDiameter, state.Conic, state.Comment, state.IsStop));
                         }
 
                         return new Result(true, null, edits.Count, applied.Count, false, applied);
@@ -133,7 +137,7 @@ public sealed class BatchSetSurfacesTool
         }
         catch (Exception ex)
         {
-            return new Result(false, ex.Message, edits?.Count ?? 0, 0, rolledBack, Array.Empty<SurfaceState>());
+            return new Result(false, ex.Message, edits?.Count ?? 0, 0, rolledBack, Array.Empty<SurfaceReadback>());
         }
     }
 
@@ -194,7 +198,7 @@ public sealed class BatchSetSurfacesTool
 
     private static void VerifyReadback(SurfaceEdit edit, SurfaceState actual)
     {
-        VerifyDouble(edit.Radius, actual.Radius, edit.SurfaceNumber, nameof(edit.Radius));
+        VerifyDouble(edit.Radius, actual.Radius.SanitizeRadius(), edit.SurfaceNumber, nameof(edit.Radius));
         VerifyDouble(edit.Thickness, actual.Thickness, edit.SurfaceNumber, nameof(edit.Thickness));
         VerifyDouble(edit.SemiDiameter, actual.SemiDiameter, edit.SurfaceNumber, nameof(edit.SemiDiameter));
         VerifyDouble(edit.Conic, actual.Conic, edit.SurfaceNumber, nameof(edit.Conic));
@@ -215,6 +219,8 @@ public sealed class BatchSetSurfacesTool
     private static void VerifyDouble(double? requested, double actual, int surfaceNumber, string name)
     {
         if (!requested.HasValue) return;
+        if (double.IsNaN(actual) || double.IsInfinity(actual))
+            throw new InvalidDataException($"Surface {surfaceNumber} {name} returned a non-finite value for a finite requested edit.");
         var tolerance = Math.Max(1e-12, Math.Abs(requested.Value) * 1e-12);
         if (Math.Abs(requested.Value - actual) > tolerance)
             throw new InvalidDataException(

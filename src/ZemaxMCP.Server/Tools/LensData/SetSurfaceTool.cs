@@ -129,13 +129,13 @@ public class SetSurfaceTool
                     {
                         Number = surfaceNumber,
                         Comment = surface.Comment ?? "",
-                        Radius = surface.Radius,
+                        Radius = surface.Radius.SanitizeRadius(),
                         Thickness = surface.Thickness.OpticalDimension(),
                         ThicknessState = surface.Thickness.OpticalDimensionState(),
                         Material = surface.Material,
                         SemiDiameter = surface.SemiDiameter.OpticalDimension(),
                         SemiDiameterState = surface.SemiDiameter.OpticalDimensionState(),
-                        Conic = surface.Conic,
+                        Conic = surface.Conic.Sanitize(),
                         SurfaceType = surface.Type.ToString(),
                         IsStop = surface.IsStop
                     },

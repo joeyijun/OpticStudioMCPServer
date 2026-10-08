@@ -66,6 +66,27 @@ internal static class Program
 
     private static void VerifyScientificNumberTruthfulness()
     {
+        foreach (var radius in new[] { 0.0, double.PositiveInfinity, double.NegativeInfinity })
+        {
+            var rawRadius = radius;
+            var readback = SurfaceReadback.FromRaw(2, rawRadius, double.PositiveInfinity,
+                "", double.NegativeInfinity, 0, "plane", false);
+            using var parsed = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(readback));
+            Assert(parsed.RootElement.GetProperty("Radius").GetDouble() == 0 &&
+                parsed.RootElement.GetProperty("Thickness").ValueKind == System.Text.Json.JsonValueKind.Null &&
+                parsed.RootElement.GetProperty("ThicknessState").GetString() == "PositiveInfinity" &&
+                parsed.RootElement.GetProperty("SemiDiameterState").GetString() == "NegativeInfinity",
+                "Batch surface readback must serialize planes and signed optical infinity safely.");
+            Assert(rawRadius.Equals(radius), "Wire normalization must not modify the raw rollback value.");
+        }
+        var finiteSurface = SurfaceReadback.FromRaw(1, 12.5, 1.25, "N-BK7", 2, -1, "finite", true);
+        Assert(finiteSurface.Radius == 12.5 && finiteSurface.Thickness == 1.25 && finiteSurface.SemiDiameter == 2 &&
+            finiteSurface.Conic == -1 && finiteSurface.IsStop && finiteSurface.ThicknessState == "Finite",
+            "Batch readback must preserve finite values and surface metadata.");
+        AssertThrows<InvalidDataException>(() => SurfaceReadback.FromRaw(1, double.NaN, 1, "", 1, 0, "", false), "NaN radius accepted.");
+        AssertThrows<InvalidDataException>(() => SurfaceReadback.FromRaw(1, 0, double.NaN, "", 1, 0, "", false), "NaN thickness accepted.");
+        AssertThrows<InvalidDataException>(() => SurfaceReadback.FromRaw(1, 0, 1, "", double.NaN, 0, "", false), "NaN semi-diameter accepted.");
+        AssertThrows<InvalidDataException>(() => SurfaceReadback.FromRaw(1, 0, 1, "", 1, double.PositiveInfinity, "", false), "Invalid conic accepted.");
         Assert(double.PositiveInfinity.OpticalDimension() == null &&
                double.PositiveInfinity.OpticalDimensionState() == "PositiveInfinity",
                "Optical infinity must be explicitly represented, not fabricated as a finite number.");
@@ -85,6 +106,28 @@ internal static class Program
         AssertThrows<InvalidDataException>(
             () => double.NaN.SanitizeRadius(),
             "NaN radius must not be misreported as a plane surface.");
+        var cardinal = new CardinalPoints { Success = true, Magnification = 0, Wavelength = 1 };
+        var dimensions = typeof(CardinalPoints).GetProperties()
+            .Where(property => property.PropertyType == typeof(double?)).ToArray();
+        Assert(dimensions.Length == 9, "All nine cardinal optical dimensions must support explicit infinity.");
+        foreach (var value in new[] { 1.25, double.PositiveInfinity, double.NegativeInfinity })
+        {
+            foreach (var dimension in dimensions)
+            {
+                dimension.SetValue(cardinal, value.OpticalDimension());
+                cardinal.DimensionStates[dimension.Name] = value.OpticalDimensionState();
+            }
+            var json = System.Text.Json.JsonSerializer.Serialize(cardinal);
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            foreach (var dimension in dimensions)
+            {
+                var field = document.RootElement.GetProperty(dimension.Name);
+                Assert(double.IsInfinity(value) ? field.ValueKind == System.Text.Json.JsonValueKind.Null : field.GetDouble() == value,
+                    "Cardinal-point infinity or finite readback was lost during strict JSON serialization.");
+                Assert(document.RootElement.GetProperty("DimensionStates").GetProperty(dimension.Name).GetString() == value.OpticalDimensionState(),
+                    "Cardinal-point JSON lost the infinity sign.");
+            }
+        }
     }
 
     private static void VerifyStructuredMtf()

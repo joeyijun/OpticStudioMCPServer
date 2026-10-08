@@ -95,15 +95,17 @@ public record CardinalPoints
 {
     public bool Success { get; init; }
     public string? Error { get; init; }
-    public double EffectiveFocalLength { get; init; }
-    public double BackFocalLength { get; init; }
-    public double FrontFocalLength { get; init; }
-    public double EntrancePupilPosition { get; init; }
-    public double EntrancePupilDiameter { get; init; }
-    public double ExitPupilPosition { get; init; }
-    public double ExitPupilDiameter { get; init; }
-    public double ImageDistance { get; init; }
-    public double ObjectDistance { get; init; }
+    public double? EffectiveFocalLength { get; init; }
+    public double? BackFocalLength { get; init; }
+    public double? FrontFocalLength { get; init; }
+    public double? EntrancePupilPosition { get; init; }
+    public double? EntrancePupilDiameter { get; init; }
+    public double? ExitPupilPosition { get; init; }
+    public double? ExitPupilDiameter { get; init; }
+    public double? ImageDistance { get; init; }
+    public double? ObjectDistance { get; init; }
+    // Infinite optical dimensions use null plus an explicit signed state, never a fabricated finite value.
+    public Dictionary<string, string> DimensionStates { get; init; } = new();
     public double Magnification { get; init; }
     public int Wavelength { get; init; }
 }
