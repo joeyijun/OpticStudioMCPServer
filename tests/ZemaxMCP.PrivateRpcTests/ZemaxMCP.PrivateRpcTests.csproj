@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\..\src\ZemaxMCP.Server\Tooling\ZemaxToolAttributes.cs" Link="Worker\ZemaxToolAttributes.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\ToolCatalogTool.cs" Link="Worker\ToolCatalogTool.cs" />
   </ItemGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
