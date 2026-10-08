@@ -98,7 +98,8 @@ internal static class Program
             }
             else
             {
-                mcpBuilder.WithCallToolHandler(HandleToolCallAsync);
+                mcpBuilder.WithCallToolHandler((request, cancellationToken) =>
+                    new ValueTask<CallToolResult>(HandleToolCallAsync(request, cancellationToken)));
             }
 
             async Task<CallToolResult> HandleToolCallAsync(
