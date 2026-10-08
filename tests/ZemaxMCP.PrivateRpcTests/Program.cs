@@ -31,6 +31,7 @@ internal static class Program
             VerifyActivityOwnership();
             VerifyOriginBoundary();
             await VerifyBackgroundJobLeaseRetentionAsync().ConfigureAwait(false);
+            await VerifyCancelledLeaseWaitAsync().ConfigureAwait(false);
             VerifyStrictArgumentBinding();
             await VerifyWriteGateCancellationClassificationAsync().ConfigureAwait(false);
             await VerifyContractMismatchRejectedAsync().ConfigureAwait(false);
@@ -117,6 +118,37 @@ internal static class Program
         lease.ReleaseGeneration(7);
         await Task.Delay(80).ConfigureAwait(false);
         using var handedOff = await lease.AcquireAsync("client-b", "zemax_status", CancellationToken.None).ConfigureAwait(false);
+    }
+
+    private static async Task VerifyCancelledLeaseWaitAsync()
+    {
+        var lease = new OpticStudioControlLease(TimeSpan.FromMinutes(15));
+        using var active = await lease.AcquireAsync("client-a", "active-operation", CancellationToken.None).ConfigureAwait(false);
+
+        var initialHealth = lease.GetHealth();
+        var lastActivityProperty = initialHealth.GetType().GetProperty("lastActivity")
+            ?? throw new InvalidOperationException("Control lease health no longer exposes lastActivity.");
+        var initialActivity = (DateTimeOffset?)lastActivityProperty.GetValue(initialHealth);
+
+        using var cancelled = new CancellationTokenSource(TimeSpan.FromMilliseconds(30));
+        try
+        {
+            using var unexpected = await lease.AcquireAsync("client-a", "cancelled-waiter", cancelled.Token).ConfigureAwait(false);
+            throw new InvalidOperationException("A blocked control-lease waiter ignored cancellation.");
+        }
+        catch (OperationCanceledException) when (cancelled.IsCancellationRequested) { }
+
+        var afterHealth = lease.GetHealth();
+        var afterActivity = (DateTimeOffset?)lastActivityProperty.GetValue(afterHealth);
+        if (initialActivity != afterActivity)
+            throw new InvalidOperationException("A cancelled waiter changed control-lease activity before acquiring the execution gate.");
+        var operation = afterHealth.GetType().GetProperty("activeOperation")?.GetValue(afterHealth) as string;
+        if (operation != "active-operation")
+            throw new InvalidOperationException("A cancelled waiter replaced the currently running control operation.");
+
+        active.Dispose();
+        using var followupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using var followup = await lease.AcquireAsync("client-a", "followup-operation", followupTimeout.Token).ConfigureAwait(false);
     }
 
     private static void VerifyStrictArgumentBinding()
