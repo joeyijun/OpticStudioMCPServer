@@ -278,9 +278,20 @@ try {
                     }
                 }
                 finally {
-                    try { Get-ToolPayload (Invoke-Tool "zemax_open_file" @{ filePath = $workingCopy }) | Out-Null } catch { }
-                    if (-not [string]::IsNullOrWhiteSpace($restoredPath)) {
+                    $reopenedFixture = $false
+                    try {
+                        $reopen = Get-ToolPayload (Invoke-Tool "zemax_open_file" @{ filePath = $workingCopy })
+                        $reopenedFixture = -not [string]::IsNullOrWhiteSpace([string]$reopen.filePath) -and
+                            [string]::Equals([IO.Path]::GetFullPath([string]$reopen.filePath), $workingCopy, [StringComparison]::OrdinalIgnoreCase)
+                    }
+                    catch {
+                        Write-Warning "Could not reopen the validation fixture after snapshot restore: $($_.Exception.Message)"
+                    }
+                    if ($reopenedFixture -and -not [string]::IsNullOrWhiteSpace($restoredPath)) {
                         try { if (Test-Path -LiteralPath $restoredPath) { Remove-Item -LiteralPath $restoredPath -Force } } catch { }
+                    }
+                    elseif (-not [string]::IsNullOrWhiteSpace($restoredPath)) {
+                        Write-Warning "Restored working file may still be open; it was retained at $restoredPath"
                     }
                 }
 
