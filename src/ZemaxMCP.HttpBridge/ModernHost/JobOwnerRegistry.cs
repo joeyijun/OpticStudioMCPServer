@@ -28,11 +28,15 @@ internal sealed class JobOwnerRegistry
                     throw new InvalidOperationException("Background-job ID collision across owners or Worker generations.");
                 return;
             }
-            // Never silently forget another owner's history to make room for a
-            // new record. Reject before exposing a Job ID if the fixed bound
-            // is reached; a future quota/reconciliation layer can improve this.
+            // Worker Job history is separately capped at 128. The Host can
+            // forget the oldest authorization record (failing closed on later
+            // lookup) to keep ownership metadata bounded without blocking new
+            // background jobs after many successive completions.
             if (_owners.Count >= MaximumRecords)
-                throw new InvalidOperationException("Background-job ownership history is full for the current Worker generation.");
+            {
+                var oldest = _owners.OrderBy(pair => pair.Value.Sequence).First();
+                _owners.Remove(oldest.Key);
+            }
             _owners.Add(jobId, new Ownership(clientId, generation, ++_sequence));
         }
     }
