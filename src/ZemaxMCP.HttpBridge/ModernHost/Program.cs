@@ -355,7 +355,7 @@ internal static class Program
                     }),
                     clients = activityHealth.LastRequestAt == null ? Array.Empty<object>() : new[] { new { name = activityHealth.LastClient, lastRequestAt = activityHealth.LastRequestAt, lastMethod = activityHealth.LastTool } },
                     worker = worker.GetHealth(),
-                    controlLease = controlLease.GetHealth(),
+                    controlLease = credentialStore == null ? (object)controlLease.GetHealth() : new { ownershipRestricted = true },
                     activity = activityHealth
                 });
             });
