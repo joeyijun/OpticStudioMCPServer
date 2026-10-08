@@ -9,9 +9,11 @@ internal static class HostOptionsSecurityAssertions
     internal static void VerifyHostBindingAuthenticationBoundary()
     {
         var previousToken = Environment.GetEnvironmentVariable("ZEMAX_MCP_TOKEN");
+        var previousClientsFile = Environment.GetEnvironmentVariable("ZEMAX_MCP_CLIENTS_FILE");
         try
         {
             Environment.SetEnvironmentVariable("ZEMAX_MCP_TOKEN", null);
+            Environment.SetEnvironmentVariable("ZEMAX_MCP_CLIENTS_FILE", null);
 
             AssertAcceptedWithoutToken("127.0.0.1");
             AssertAcceptedWithoutToken("localhost");
@@ -39,6 +41,7 @@ internal static class HostOptionsSecurityAssertions
         finally
         {
             Environment.SetEnvironmentVariable("ZEMAX_MCP_TOKEN", previousToken);
+            Environment.SetEnvironmentVariable("ZEMAX_MCP_CLIENTS_FILE", previousClientsFile);
         }
     }
 
