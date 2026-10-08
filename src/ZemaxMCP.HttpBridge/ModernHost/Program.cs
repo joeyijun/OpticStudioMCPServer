@@ -55,6 +55,9 @@ internal static class Program
             var controlLease = new OpticStudioControlLease();
             workerClient.JobStateChanged += controlLease.ObserveJob;
             workerClient.GenerationEnded += controlLease.ReleaseGeneration;
+            var jobOwners = new JobOwnerRegistry();
+            workerClient.GenerationEnded += jobOwners.ReleaseGeneration;
+            builder.Services.AddSingleton(jobOwners);
             builder.Services.AddSingleton(controlLease);
             var activity = new McpActivityMonitor();
             builder.Services.AddSingleton(activity);
@@ -121,22 +124,43 @@ internal static class Program
                         };
                     }
 
-                    CallToolResult result;
-                    using (await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false))
-                        result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
-
-                    if (TryGetStartedJobId(request.Params.Name, result, out var jobId))
+                    var scoped = !string.IsNullOrWhiteSpace(options.ClientCredentialsFile);
+                    var jobOperation = request.Params.Name is "zemax_job_status" or "zemax_job_list" or "zemax_job_cancel";
+                    if (scoped && jobOperation && request.Params.Name != "zemax_job_list")
                     {
-                        var generation = workerClient.CurrentGeneration;
-                        if (controlLease.RetainForJob(clientId, jobId, generation) &&
-                            workerClient.TryGetJobStatus(generation, jobId, out var latestJob) &&
-                            latestJob != null)
+                        if (!JobOwnerRegistry.TryGetJobId(request.Params, out var requestedJobId) ||
+                            !jobOwners.IsOwned(clientId, requestedJobId, workerClient.CurrentGeneration))
+                            return JobOwnerRegistry.Denied();
+                    }
+
+                    // Scoped Job status/list/cancel are metadata operations:
+                    // authorize by immutable creator identity and generation,
+                    // not by the optical-system edit lease. Other clients can
+                    // observe their own Jobs even while a foreign Job owns the
+                    // optical system.
+                    CallToolResult result;
+                    if (scoped && jobOperation)
+                    {
+                        result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
+                        if (request.Params.Name == "zemax_job_list")
+                            result = JobOwnerRegistry.FilterList(result, clientId, workerClient.CurrentGeneration, jobOwners);
+                    }
+                    else
+                    {
+                        using (await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false))
                         {
-                            // A very short Job can become terminal before the
-                            // tools/call result carrying its Job ID reaches the
-                            // Host. Reconcile immediately so no stale lease hold
-                            // survives that race.
-                            controlLease.ObserveJob(generation, latestJob);
+                            result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
+                            if (TryGetStartedJobId(request.Params.Name, result, out var jobId))
+                            {
+                                var generation = workerClient.CurrentGeneration;
+                                if (scoped) jobOwners.Register(clientId, jobId, generation);
+                                if (controlLease.RetainForJob(clientId, jobId, generation) &&
+                                    workerClient.TryGetJobStatus(generation, jobId, out var latestJob) &&
+                                    latestJob != null)
+                                {
+                                    controlLease.ObserveJob(generation, latestJob);
+                                }
+                            }
                         }
                     }
 
@@ -189,6 +213,25 @@ internal static class Program
                         context.Response.Headers.WWWAuthenticate = "Bearer";
                         return;
                     }
+                }
+
+                if (credentialStore != null &&
+                    (context.Request.Path.Equals(options.McpPath + "/health", StringComparison.OrdinalIgnoreCase) ||
+                     context.Request.Path.Equals(options.McpPath + "/activity", StringComparison.OrdinalIgnoreCase)))
+                {
+                    // These legacy diagnostic endpoints carry all clients' Jobs,
+                    // progress and lease identities. Never expose their full
+                    // payload in scoped mode; return a safe liveness response.
+                    context.Response.StatusCode = StatusCodes.Status200OK;
+                    await context.Response.WriteAsJsonAsync(new
+                    {
+                        bridgeRunning = true,
+                        authenticationMode = "scoped",
+                        clientId = scopedCredential!.Id,
+                        permission = scopedCredential.Permission,
+                        jobDiagnostics = "per-client job tools only"
+                    }).ConfigureAwait(false);
+                    return;
                 }
 
                 var instanceHeader = context.Request.Headers[ClientInstanceHeader].FirstOrDefault();
@@ -244,7 +287,7 @@ internal static class Program
                     lastConnectionError = status?.LastConnectionError,
                     zemaxDataDirectory = status?.OpticStudioDataDirectory ?? "Not reported",
                     loadedZosApiFiles = new { zosApi = status?.ZosApiAssembly },
-                    authenticationRequired = !string.IsNullOrWhiteSpace(options.AccessToken),
+                    authenticationRequired = !string.IsNullOrWhiteSpace(options.AccessToken) || credentialStore != null,
                     originValidationEnabled = true,
                     readOnly = options.ReadOnly,
                     snapshotDirectory = status?.SnapshotDirectory ?? options.SnapshotDirectory,
