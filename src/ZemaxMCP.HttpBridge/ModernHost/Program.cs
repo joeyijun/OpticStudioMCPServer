@@ -341,6 +341,10 @@ internal static class Program
 
     private static bool IsAuthorizedTool(HostOptions options, ClaimsPrincipal? principal, ToolManifestEntry entry)
     {
+        if (!string.IsNullOrWhiteSpace(options.ClientCredentialsFile) &&
+            (principal?.FindFirst("zemax-mcp-auth-profile")?.Value?.StartsWith("scoped:", StringComparison.Ordinal) != true ||
+             principal.FindFirst("zemax-mcp-permission")?.Value is not ("read-only" or "read-write")))
+            return false;
         if (!StaticToolManifest.IsAllowed(options.Toolset, entry.Name, options.ReadOnly))
             return false;
         // The legacy global --read-only switch intentionally allows Caution
