@@ -608,8 +608,8 @@ internal static class Program
                 if (!list.IsSuccessStatusCode || !body.Contains("zemax_set_surface", StringComparison.Ordinal) ||
                     !body.Contains("zemax_open_file", StringComparison.Ordinal) ||
                     !body.Contains("zemax_job_cancel", StringComparison.Ordinal) ||
-                    System.Text.RegularExpressions.Regex.IsMatch(body, "\\"name\\"\\s*:\\s*\\"zemax_multistart_status\\"") ||
-                    System.Text.RegularExpressions.Regex.IsMatch(body, "\\"name\\"\\s*:\\s*\\"zemax_multistart_stop\\""))
+                    System.Text.RegularExpressions.Regex.IsMatch(body, "\"name\"\\s*:\\s*\"zemax_multistart_status\"") ||
+                    System.Text.RegularExpressions.Regex.IsMatch(body, "\"name\"\\s*:\\s*\"zemax_multistart_stop\"")))
                     throw new InvalidOperationException("Write credential did not enforce modern Job-only access and authorized tools.");
             }
 
