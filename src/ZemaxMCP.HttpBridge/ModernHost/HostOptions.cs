@@ -57,7 +57,10 @@ internal sealed class HostOptions
                 case "--read-only": options.ReadOnly = ParseBoolean(value, option); break;
                 case "--toolset": options.Toolset = value; break;
                 case "--snapshot-dir": options.SnapshotDirectory = value; break;
-                case "--client-credentials-file": options.ClientCredentialsFile = value; break;
+                case "--client-credentials-file":
+                    if (string.IsNullOrWhiteSpace(value)) throw new ArgumentException("--client-credentials-file cannot be empty.");
+                    options.ClientCredentialsFile = value;
+                    break;
                 // The superseded bridge test switches are intentionally rejected
                 // so test-only faults cannot leak into product execution.
                 default: throw new ArgumentException("Unknown Host option: " + args[i]);
@@ -66,6 +69,8 @@ internal sealed class HostOptions
 
         if (string.IsNullOrWhiteSpace(options.WorkerPath)) throw new ArgumentException("--worker cannot be empty.");
         if (string.IsNullOrWhiteSpace(options.Host)) throw new ArgumentException("--host cannot be empty.");
+        if (options.ClientCredentialsFile.Length != 0 && string.IsNullOrWhiteSpace(options.ClientCredentialsFile))
+            throw new ArgumentException("ZEMAX_MCP_CLIENTS_FILE cannot be whitespace.");
         if (options.HardRecoveryTimeoutSeconds <= options.RequestTimeoutSeconds)
             throw new ArgumentException("--hard-recovery-timeout-seconds must be greater than --request-timeout-seconds.");
         // Local loopback use may remain tokenless for zero-setup desktop clients.
