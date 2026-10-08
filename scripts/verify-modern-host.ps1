@@ -204,6 +204,14 @@ if ($functionalLiveVerifier -notmatch 'FixturePath' -or
     $functionalLiveVerifier -notmatch 'workingCopy') {
   throw "Functional live acceptance must use a temporary fixture copy, cover batch edit/readback, snapshot list/diff/restore, ray diagnostics, background-job correlation, real NSC/tolerancing execution, structured result checks, and emit a JSON report."
 }
+if ($functionalLiveVerifier -notmatch 'AllowReplaceCurrentSystem' -or
+    $functionalLiveVerifier -notmatch 'Aborting functional acceptance: test fixture was not opened' -or
+    $functionalLiveVerifier -notmatch 'Independent GetSystem readback does not point to the temporary fixture' -or
+    $functionalLiveVerifier -notmatch 'workingCopyRetained' -or
+    $functionalLiveVerifier -notmatch 'not \$script:openAttempted' -or
+    $functionalLiveVerifier -notmatch 'manifestFingerprint -ne \$script:healthBefore.workerManifestFingerprint') {
+  throw "Functional live acceptance must require explicit permission to replace the active model, fail closed on fixture/manifest mismatch, and never remove a potentially open working copy."
+}
 $listIndex = $liveVerifier.IndexOf('Invoke-ModernMcpRequest -Method "tools/list"', [StringComparison]::Ordinal)
 $healthIndex = $liveVerifier.IndexOf('$health = Get-McpHealth', [StringComparison]::Ordinal)
 if ($listIndex -lt 0 -or $healthIndex -lt 0 -or $listIndex -gt $healthIndex) {
