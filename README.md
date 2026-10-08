@@ -113,7 +113,7 @@ For an unusual portable layout, set `ZEMAX_ROOT` to the program directory and op
 Use **Configure clients** in the launcher. Existing unrelated MCP entries are preserved and a backup is kept when an existing configuration is replaced. Supported HTTP clients receive both the endpoint and its Bearer header; Claude's packaged proxy receives the token without putting it in the server URL. If a token is rotated, reconfigure each client so its saved credential matches. A green dot in the configuration menu means the local client configuration matches; the separate AI activity card turns green only while a tool call is in progress.
 
 | Client | Configuration used by the launcher | Connection confirmation |
-|---|---|
+|---|---|---|
 | Codex | `$CODEX_HOME/config.toml`, or `~/.codex/config.toml` | Make a tool call; the activity card reports the client and tool. |
 | Claude Desktop | `%APPDATA%/Claude/claude_desktop_config.json`; the packaged local stdio proxy reaches the HTTP/LAN endpoint and provides per-process client identity | Restart Claude, then make a tool call and check the activity card. |
 | Cursor | `~/.cursor/mcp.json` | Make a tool call and check the activity card. |
