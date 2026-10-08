@@ -141,9 +141,24 @@ internal static class Program
                     CallToolResult result;
                     if (scoped && jobOperation)
                     {
-                        result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
+                        var requestedLimit = 50;
+                        if (request.Params.Name == "zemax_job_list" &&
+                            !JobOwnerRegistry.TryGetRequestedListLimit(request.Params, out requestedLimit))
+                            return new CallToolResult
+                            {
+                                Content = new List<ContentBlock>
+                                {
+                                    new TextContentBlock { Text = "Job list limit must be an integer between 1 and 128." }
+                                },
+                                IsError = true
+                            };
+
+                        var workerRequest = request.Params.Name == "zemax_job_list"
+                            ? JobOwnerRegistry.ExpandListRequest(request.Params)
+                            : request.Params;
+                        result = await workerClient.CallToolAsync(workerRequest, cancellationToken, progressHandler).ConfigureAwait(false);
                         if (request.Params.Name == "zemax_job_list")
-                            result = JobOwnerRegistry.FilterList(result, clientId, workerClient.CurrentGeneration, jobOwners);
+                            result = JobOwnerRegistry.FilterList(result, clientId, workerClient.CurrentGeneration, jobOwners, requestedLimit);
                         else if (JobOwnerRegistry.TryGetJobId(request.Params, out var authorizedJobId))
                             result = JobOwnerRegistry.ValidateSingleResult(result, authorizedJobId);
                     }
