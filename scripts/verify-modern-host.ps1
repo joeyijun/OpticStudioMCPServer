@@ -214,6 +214,8 @@ if ($functionalLiveVerifier -notmatch 'AllowReplaceCurrentSystem' -or
     $functionalLiveVerifier -notmatch 'Aborting functional acceptance: test fixture was not opened' -or
     $functionalLiveVerifier -notmatch 'Independent GetSystem readback does not point to the temporary fixture' -or
     $functionalLiveVerifier -notmatch 'workingCopyRetained' -or
+    $functionalLiveVerifier -notmatch 'reopenedFixture' -or
+    $functionalLiveVerifier -notmatch 'Restored working file may still be open' -or
     $functionalLiveVerifier -notmatch 'not \$script:openAttempted' -or
     $functionalLiveVerifier -notmatch 'manifestFingerprint -ne \$script:healthBefore.workerManifestFingerprint') {
   throw "Functional live acceptance must require explicit permission to replace the active model, fail closed on fixture/manifest mismatch, and never remove a potentially open working copy."
