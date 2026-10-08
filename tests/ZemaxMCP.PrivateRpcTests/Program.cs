@@ -10,6 +10,7 @@ using ModelContextProtocol.Protocol;
 using ZemaxMCP.HttpBridge.ModernHost;
 using ZemaxMCP.Rpc;
 using ZemaxMCP.Server.Tooling;
+using ZemaxMCP.Server.Tools.Catalog;
 using ZemaxMCP.ToolManifest;
 
 namespace ZemaxMCP.PrivateRpcTests;
@@ -30,6 +31,7 @@ internal static class Program
         {
             VerifyActivityOwnership();
             VerifyOfficialTasksDefaults();
+            VerifyTaskPlanningCatalog();
             VerifyOriginBoundary();
             await VerifyBackgroundJobLeaseRetentionAsync().ConfigureAwait(false);
             await VerifyCancelledLeaseWaitAsync().ConfigureAwait(false);
@@ -53,6 +55,41 @@ internal static class Program
         {
             Console.Error.WriteLine(ex);
             return 1;
+        }
+    }
+
+    private static void VerifyTaskPlanningCatalog()
+    {
+        var previous = Environment.GetEnvironmentVariable("ZEMAX_MCP_TOOLSET");
+        var previousReadOnly = Environment.GetEnvironmentVariable("ZEMAX_MCP_READ_ONLY");
+        try
+        {
+            Environment.SetEnvironmentVariable("ZEMAX_MCP_TOOLSET", "basic-viewing");
+            Environment.SetEnvironmentVariable("ZEMAX_MCP_READ_ONLY", "1");
+            var catalog = new ToolCatalogTool();
+            var clipping = catalog.Execute(task: "clipping");
+            Assert(clipping.Playbooks.Count == 1 && clipping.Playbooks[0].Id == "clipping",
+                "Task planner should return the requested focused playbook.");
+            Assert(clipping.Playbooks[0].AvailableSteps.Contains("zemax_ray_trace_diagnostics") &&
+                   clipping.Playbooks[0].UnavailableSteps.Contains("zemax_aperture_throughput"),
+                "Task planner must identify both available and omitted operations for a narrow profile.");
+            Assert(clipping.Tools.All(entry => clipping.Playbooks[0].AvailableSteps.Contains(entry.Name)),
+                "Task-specific catalog must not advertise unrelated tools.");
+
+            Environment.SetEnvironmentVariable("ZEMAX_MCP_TOOLSET", "nonsequential-stray-light");
+            Environment.SetEnvironmentVariable("ZEMAX_MCP_READ_ONLY", "0");
+            var energy = catalog.Execute(task: "energy");
+            Assert(energy.Playbooks[0].AvailableSteps.Contains("zemax_get_nsc_detector") &&
+                   energy.Playbooks[0].AvailableSteps.Contains("zemax_nsc_energy_budget"),
+                "NSC energy playbook must include detector data and bounded budget tools.");
+            AssertThrows<ArgumentException>(
+                () => catalog.Execute(task: "invented-task"),
+                "Unknown AI playbook names must fail rather than silently selecting a broad catalog.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ZEMAX_MCP_TOOLSET", previous);
+            Environment.SetEnvironmentVariable("ZEMAX_MCP_READ_ONLY", previousReadOnly);
         }
     }
 
