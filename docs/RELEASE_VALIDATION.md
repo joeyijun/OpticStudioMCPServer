@@ -58,18 +58,19 @@ The transport smoke test above is intentionally small. For real ZOS-API behavior
 ```powershell
 ./scripts/verify-live-functional.ps1 `
   -FixturePath "C:\ZemaxValidation\sequential-fixture.zmx" `
+  -AllowReplaceCurrentSystem `
   -VerifyOptimization `
   -VerifyBackgroundJobs `
   -ReportPath ".\artifacts\live-functional-2024R1.json"
 ```
 
-The script copies the supplied ZMX/ZOS file to a temporary working directory before opening it. The original fixture is never intentionally edited. On a sequential fixture it verifies open/read, two-surface add → single edit → atomic batch edit → independent readback → cleanup, snapshot list/diff/controlled restore, structured ray-trace diagnostics, structured analysis, save, and optionally a bounded Local Optimize plus background-Job start/cancel/status lifecycle. Background Job status must preserve the originating Worker operation ID.
+The script requires explicit `-AllowReplaceCurrentSystem` consent because it replaces the active OpticStudio model; run it only after saving work, preferably in a dedicated validation instance. It copies the supplied ZMX/ZOS file to a temporary working directory before opening it. The original fixture is never intentionally edited. Discovery, health, manifest fingerprint, fixture-open confirmation, and independent model-identity checks are fail-closed gates; later mutation tests never execute after these gates fail. A working file that may remain open in OpticStudio is retained instead of being deleted by the verifier. On a sequential fixture it verifies open/read, two-surface add → single edit → atomic batch edit → independent readback → cleanup, snapshot list/diff/controlled restore, structured ray-trace diagnostics, structured analysis, save, and optionally a bounded Local Optimize plus background-Job start/cancel/status lifecycle. Background Job status must preserve the originating Worker operation ID.
 
 Use purpose-built fixtures for subsystem-specific acceptance:
 
 ```powershell
-./scripts/verify-live-functional.ps1 -FixturePath "C:\ZemaxValidation\nsc-fixture.zos" -VerifyNsc
-./scripts/verify-live-functional.ps1 -FixturePath "C:\ZemaxValidation\tolerance-fixture.zmx" -VerifyTolerance
+./scripts/verify-live-functional.ps1 -FixturePath "C:\ZemaxValidation\nsc-fixture.zos" -AllowReplaceCurrentSystem -VerifyNsc
+./scripts/verify-live-functional.ps1 -FixturePath "C:\ZemaxValidation\tolerance-fixture.zmx" -AllowReplaceCurrentSystem -VerifyTolerance
 ```
 
 The NSC path checks the structured scene summary/object inspection and executes a bounded real NSC ray trace. The tolerance path checks the TDE summary/operands and executes a small real Sensitivity + Monte Carlo run through `zemax_run_tolerancing`, requiring structured Monte Carlo and sensitivity results. The harness emits a JSON record containing protocol/toolset/fingerprint/license context, Host/Worker/ZOS-API assembly and file versions, Worker generation before/after, and PASS/FAIL/SKIPPED results so acceptance can be archived with release evidence.
@@ -135,7 +136,7 @@ For each public tool, review:
 - The Worker is explicitly x64 to avoid the legacy NetHelper/registry-view failure mode on older OpticStudio installations.
 - Packaged Workers record the ZOS-API release used to compile them and reject an older selected runtime before CLR type binding can fail on missing interface members.
 - HighImpact safety snapshots use `.zmx`, not `.zos`, so 2021 releases before 21.3 are not blocked by a file format they cannot read.
-- Snapshot management is bounded and path-confined: listing ignores reparse points; diff loads the selected snapshot only into a copied sequential system and returns bounded LDE parameter differences; restore first creates a fresh pre-restore safety snapshot, then loads the historical snapshot from a separate working copy so later saves cannot overwrite history.
+- Snapshot management is bounded and path-confined: listing ignores reparse points; diff loads the selected snapshot only into a copied sequential system and returns bounded LDE parameter differences; restore first creates a fresh pre-restore safety snapshot, then loads the historical snapshot into a uniquely named, user-editable working file. Restored files are **never automatically pruned**; retention cleanup must not delete later user modifications.
 
 ### Stage B — Sequential editing
 
