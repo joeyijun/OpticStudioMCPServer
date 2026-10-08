@@ -838,6 +838,46 @@ internal static class Program
                     throw new InvalidOperationException("Worker-confirmed cancellation did not reach Task state: " + payload);
             }
 
+            // A real (fake-process) Worker generation loss must invalidate
+            // the active Task, then allow a different authenticated controller
+            // to take the newly started Worker immediately.
+            string crashedTaskId;
+            using (var started = await SendTaskAsync(client, endpoint, 126, "tools/call",
+                       "zemax_pop", otherWriter).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(started).ConfigureAwait(false);
+                using var json = JsonDocument.Parse(payload);
+                if (!started.IsSuccessStatusCode ||
+                    json.RootElement.GetProperty("result").GetProperty("resultType").GetString() != "task")
+                    throw new InvalidOperationException("Worker-exit fixture did not create a Task: " + payload);
+                crashedTaskId = json.RootElement.GetProperty("result").GetProperty("taskId").GetString()!;
+            }
+            await Task.Delay(2200).ConfigureAwait(false);
+            using (var ended = await SendTaskAsync(client, endpoint, 127, "tasks/get",
+                       null, otherWriter, crashedTaskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(ended).ConfigureAwait(false);
+                if (!ended.IsSuccessStatusCode ||
+                    !payload.Contains("\"failed\"", StringComparison.Ordinal) ||
+                    !payload.Contains("generation", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Worker generation loss left a Task working or leaked a fake result: " + payload);
+            }
+            using (var foreignTask = await SendTaskAsync(client, endpoint, 128, "tasks/get",
+                       null, writer, crashedTaskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(foreignTask).ConfigureAwait(false);
+                if (!payload.Contains("\"error\"", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Worker recovery exposed a foreign failed Task: " + payload);
+            }
+            using (var immediateHandoff = await SendScopedAsync(client, endpoint, 129,
+                       "tools/call", "zemax_status", writer).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(immediateHandoff).ConfigureAwait(false);
+                if (!immediateHandoff.IsSuccessStatusCode ||
+                    !payload.Contains("echo-ok", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Worker failure retained an idle foreign control lease: " + payload);
+            }
+
             // The Task owner is revoked while its terminal result still exists.
             ScopedCredentialAssertions.Write(file, ("reader", "read-only", reader), ("writer", "read-write", writer));
             using (var revokedOwner = await SendTaskAsync(client, endpoint, 125, "tasks/get",
@@ -1065,6 +1105,20 @@ internal static class Program
                         message = "Fake progress"
                     }).ConfigureAwait(false);
                     await Task.Delay(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+                }
+                if (string.Equals(command, "zemax_pop", StringComparison.Ordinal))
+                {
+                    await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
+                    {
+                        content = new[] { new { type = "text",
+                            text = "{\"success\":true,\"jobId\":\"fake-crash-task-job\",\"state\":\"Queued\"}" } },
+                        isError = false
+                    }).ConfigureAwait(false);
+                    // A real Worker process exits AFTER the Job handle has
+                    // been returned. This exercises generation cleanup, not
+                    // the separate cancellation-grace clock.
+                    await Task.Delay(1500).ConfigureAwait(false);
+                    return;
                 }
                 if (string.Equals(command, "zemax_run_nsc_ray_trace", StringComparison.Ordinal))
                 {
