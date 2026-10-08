@@ -10,10 +10,14 @@ param(
     [switch]$VerifyNsc,
     [switch]$VerifyTolerance,
     [int]$JobWaitSeconds = 90,
+    [switch]$AllowReplaceCurrentSystem,
     [switch]$KeepWorkingCopy
 )
 
 $ErrorActionPreference = "Stop"
+if (-not $AllowReplaceCurrentSystem) {
+    throw "Functional live tests replace the currently open OpticStudio system. Save your work and use a dedicated validation instance; rerun with -AllowReplaceCurrentSystem to acknowledge the replacement."
+}
 $endpointUri = $Endpoint.TrimEnd("/")
 $fixture = [IO.Path]::GetFullPath($FixturePath)
 if (-not (Test-Path -LiteralPath $fixture -PathType Leaf)) { throw "Fixture file not found: $fixture" }
@@ -131,32 +135,46 @@ $healthBefore = $null
 $tools = @()
 $systemMode = ""
 $surfaceCountBefore = 0
+$script:openAttempted = $false
 
 try {
-    Invoke-Check "static-discovery" {
+    if (-not (Invoke-Check "static-discovery" {
         $list = Invoke-Mcp -Method "tools/list"
         $script:tools = @($list.result.tools | ForEach-Object { $_.name })
         if ($script:tools.Count -eq 0) { throw "tools/list returned no tools." }
         "$($script:tools.Count) tools"
-    } | Out-Null
+    })) { throw "Aborting functional acceptance: MCP static discovery failed." }
 
-    Invoke-Check "health-contract" {
+    if (-not (Invoke-Check "health-contract" {
         $script:healthBefore = Get-Health
         if (-not $script:healthBefore.bridgeRunning -or -not $script:healthBefore.mcpServerRunning) { throw "Host/Worker is not healthy." }
         if ($script:healthBefore.rpcVersion -ne $script:healthBefore.workerRpcVersion) { throw "Host/Worker RPC mismatch." }
+        if ([string]::IsNullOrWhiteSpace([string]$script:healthBefore.manifestFingerprint) -or
+            $script:healthBefore.manifestFingerprint -ne $script:healthBefore.workerManifestFingerprint) {
+            throw "Host/Worker tool manifest fingerprint mismatch."
+        }
+        if ($script:healthBefore.readOnly) { throw "Functional acceptance needs a read/write Host profile." }
         "RPC=$($script:healthBefore.rpcVersion), toolset=$($script:healthBefore.toolset)"
-    } | Out-Null
+    })) { throw "Aborting functional acceptance: Host/Worker health or contract validation failed." }
 
-    Invoke-Check "open-temp-fixture" {
+    if (-not (Invoke-Check "open-temp-fixture" {
         if ("zemax_open_file" -notin $script:tools) { throw "Active profile does not expose zemax_open_file." }
+        $script:openAttempted = $true
         $opened = Get-ToolPayload (Invoke-Tool "zemax_open_file" @{ filePath = $workingCopy })
-        if (-not $opened.filePath) { throw "Open result did not report the active file." }
+        if ([string]::IsNullOrWhiteSpace([string]$opened.filePath) -or
+            -not [string]::Equals([IO.Path]::GetFullPath([string]$opened.filePath), $workingCopy, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "OpenFile did not confirm the temporary fixture as the active optical system."
+        }
         [IO.Path]::GetFileName([string]$opened.filePath)
-    } | Out-Null
+    })) { throw "Aborting functional acceptance: test fixture was not opened. No mutation tests will be executed." }
 
-    Invoke-Check "read-system-baseline" {
+    if (-not (Invoke-Check "read-system-baseline" {
         if ("zemax_get_system" -in $script:tools) {
             $system = Get-ToolPayload (Invoke-Tool "zemax_get_system")
+            if ([string]::IsNullOrWhiteSpace([string]$system.filePath) -or
+                -not [string]::Equals([IO.Path]::GetFullPath([string]$system.filePath), $workingCopy, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Independent GetSystem readback does not point to the temporary fixture."
+            }
             $script:systemMode = [string]$system.systemMode
             $script:surfaceCountBefore = [int]$system.numberOfSurfaces
             return "mode=$($script:systemMode), surfaces=$($script:surfaceCountBefore)"
@@ -168,7 +186,7 @@ try {
             return "mode=$($script:systemMode), NSC-focused profile"
         }
         throw "Active profile exposes neither zemax_get_system nor zemax_get_nonsequential_system_settings."
-    } | Out-Null
+    })) { throw "Aborting functional acceptance: model identity or mode could not be verified." }
 
     if ($systemMode -notmatch "NonSequential" -and "zemax_get_system" -in $tools) {
         $script:addedSurfaces = @()
@@ -395,6 +413,7 @@ finally {
         endpoint = $endpointUri
         fixture = $fixture
         workingCopy = $workingCopy
+        workingCopyRetained = ($KeepWorkingCopy -or $script:openAttempted)
         protocolVersion = $script:protocolVersion
         toolCount = $tools.Count
         toolset = if ($healthBefore) { $healthBefore.toolset } else { $null }
@@ -414,8 +433,14 @@ finally {
     $report | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $ReportPath -Encoding UTF8
     Write-Host "Functional live report: $ReportPath"
 
-    if (-not $KeepWorkingCopy) {
+    # The active OpticStudio system may still point to this working copy.
+    # Never delete an open/tested lens underneath an active session.
+    if (-not $KeepWorkingCopy -and -not $script:openAttempted) {
         try { Remove-Item -LiteralPath $runRoot -Recurse -Force } catch { }
+    }
+    else {
+        Write-Host "Working fixture retained for safety: $workingCopy"
+        Write-Host "Close or switch the OpticStudio system before manually deleting this temporary directory."
     }
 }
 
