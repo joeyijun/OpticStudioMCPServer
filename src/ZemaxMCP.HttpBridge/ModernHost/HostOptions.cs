@@ -19,6 +19,7 @@ internal sealed class HostOptions
     public int JobRecoveryTimeoutSeconds { get; private set; } = 60;
     public int CancellationWriteTimeoutSeconds { get; private set; } = 5;
     public bool ReadOnly { get; private set; }
+    public bool EnableOfficialTasks { get; private set; }
     public string Toolset { get; private set; } = "full-expert";
     public string SnapshotDirectory { get; private set; } = Environment.GetEnvironmentVariable("ZEMAX_MCP_SNAPSHOT_DIR") ??
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZemaxMCP", "snapshots");
@@ -55,6 +56,7 @@ internal sealed class HostOptions
                 case "--allowed-origin": options._allowedOrigins.Add(OriginRule.Parse(value)); break;
                 case "--allowed-host": options._allowedHosts.Add(ParseHost(value, option)); break;
                 case "--read-only": options.ReadOnly = ParseBoolean(value, option); break;
+                case "--enable-official-tasks": options.EnableOfficialTasks = ParseBoolean(value, option); break;
                 case "--toolset": options.Toolset = value; break;
                 case "--snapshot-dir": options.SnapshotDirectory = value; break;
                 case "--client-credentials-file":
