@@ -141,10 +141,14 @@ foreach ($fanFile in @("RayFanTool.cs", "OpticalPathFanTool.cs", "PupilAberratio
 }
 
 $throughput = Get-Content -LiteralPath (Join-Path $analysisRoot "ApertureThroughputTool.cs") -Raw
+$pupilSampler = Get-Content -LiteralPath (Join-Path $analysisRoot "SequentialPupilSampler.cs") -Raw
 if ($throughput -notmatch 'SuccessfulRays' -or
     $throughput -notmatch 'ClearFraction:\s*\(double\)clear / successful' -or
-    $throughput -notmatch 'cancellationToken\.ThrowIfCancellationRequested\(\)' -or
-    $throughput -notmatch 'ValidateNormalized') {
+    $throughput -notmatch 'SequentialPupilSampler\.Trace' -or
+    $throughput -notmatch 'ValidateNormalized' -or
+    $pupilSampler -notmatch 'cancellationToken\.ThrowIfCancellationRequested\(\)' -or
+    $pupilSampler -notmatch 'SingleRayNormUnpol' -or
+    $pupilSampler -notmatch 'px \* px \+ py \* py') {
     throw "zemax_aperture_throughput must keep trace errors separate from aperture loss and remain cancellable."
 }
 
