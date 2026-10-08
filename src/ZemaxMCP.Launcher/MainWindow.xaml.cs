@@ -379,6 +379,8 @@ public partial class MainWindow : Window
     private sealed class BackgroundJobView
     {
         public string JobId { get; set; } = "";
+        public string TaskId { get; set; } = "";
+        public bool IsOfficialTask => TaskId.Length > 0;
         public string State { get; set; } = "";
         public string DisplayText { get; set; } = "";
         public string ToolName { get; set; } = "";
@@ -388,7 +390,10 @@ public partial class MainWindow : Window
         public string Elapsed { get; set; } = "Not reported";
         public string Queue { get; set; } = "";
         public string Progress { get; set; } = "";
-        public bool IsActive => State == "Queued" || State == "Running" || State == "Cancelling";
+        public bool IsActive => State.Equals("Queued", StringComparison.OrdinalIgnoreCase) ||
+            State.Equals("Running", StringComparison.OrdinalIgnoreCase) ||
+            State.Equals("Working", StringComparison.OrdinalIgnoreCase) ||
+            State.Equals("Cancelling", StringComparison.OrdinalIgnoreCase);
     }
 
     private List<BackgroundJobView> _taskHistory = new List<BackgroundJobView>();
@@ -430,6 +435,35 @@ public partial class MainWindow : Window
             }).ToList();
 
         _taskHistory = items;
+        if (health?["tasks"] is JArray ownerTasks)
+        {
+            foreach (var record in ownerTasks.OfType<JObject>().Take(25))
+            {
+                var taskId = record["taskId"]?.ToString() ?? "";
+                if (taskId.Length == 0) continue;
+                var linkedJobId = record["jobId"]?.ToString() ?? "";
+                var state = record["state"]?.ToString() ?? "working";
+                var started = DateTimeOffset.TryParse(record["createdAt"]?.ToString(), out var born)
+                    ? born : DateTimeOffset.UtcNow;
+                var completedAt = DateTimeOffset.TryParse(record["updatedAt"]?.ToString(), out var updated)
+                    ? updated : DateTimeOffset.UtcNow;
+                var elapsed = ((state == "working" ? DateTimeOffset.UtcNow : completedAt) - started).TotalSeconds;
+                _taskHistory.Add(new BackgroundJobView
+                {
+                    TaskId = taskId,
+                    JobId = linkedJobId,
+                    State = state,
+                    ToolName = "Official MCP Task",
+                    Owner = "This authenticated credential",
+                    WorkerGeneration = record["generation"]?.ToString() ?? "Not reported",
+                    Elapsed = Math.Max(0, elapsed).ToString("F0") + "s",
+                    Message = (record["message"]?.ToString() ?? "") +
+                        (record["cancelRequested"]?.Value<bool>() == true ? " · cancellation requested" : "") +
+                        (record["resultExpired"]?.Value<bool>() == true ? " · result expired" : ""),
+                    DisplayText = "MCP Task · " + state + " · " + taskId.Substring(0, Math.Min(8, taskId.Length))
+                });
+            }
+        }
         RefreshTasksPage();
         TaskCenterJobs.ItemsSource = items;
         TaskCenterJobs.SelectedItem = items.FirstOrDefault(item => item.JobId == selectedId)
@@ -464,7 +498,11 @@ public partial class MainWindow : Window
         TaskCenterCancel.IsEnabled = false;
         try
         {
-            var result = await Task.Run(() => RequestJobCancellation(endpoint, token, selection.JobId));
+            var result = await Task.Run(() => selection.IsOfficialTask
+                ? SendMcpJsonRpc(endpoint, token, "tasks/cancel",
+                    new JObject { ["taskId"] = selection.TaskId }, selection.TaskId)
+                    .ToString(Newtonsoft.Json.Formatting.None)
+                : RequestJobCancellation(endpoint, token, selection.JobId));
             Report("Background Job cancel request: " + result);
         }
         catch (Exception ex)
@@ -480,14 +518,13 @@ public partial class MainWindow : Window
         var selected = (TasksPageJobs.SelectedItem as BackgroundJobView)?.JobId;
         var state = (TasksPageFilter?.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() ?? "All";
         var visible = _taskHistory.Where(item => state == "All" ||
-            (state == "Failed" && item.State == "Failed") ||
-            (state == "Cancelled" && item.State == "Cancelled") ||
+            (state == "Running" && item.State.Equals("Working", StringComparison.OrdinalIgnoreCase)) ||
             string.Equals(item.State, state, StringComparison.OrdinalIgnoreCase)).ToList();
         TasksPageJobs.ItemsSource = visible;
         TasksPageJobs.SelectedItem = visible.FirstOrDefault(item => item.JobId == selected) ??
             visible.FirstOrDefault();
         TasksPageSummary.Text = visible.Count + " shown · " + _taskHistory.Count +
-            " reported (up to 25) · cancellation requires Job ownership.";
+            " reported (max 25 Worker Jobs plus 25 owner-visible Tasks).";
     }
 
     private void TasksPageFilter_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -502,7 +539,8 @@ public partial class MainWindow : Window
         TasksPageCancel.IsEnabled = selected?.IsActive == true;
         TasksPageViewResult.IsEnabled = selected != null;
         TasksPageDetail.Text = selected == null ? "Select a Job to inspect its details." :
-            "Job ID: " + selected.JobId + "\nTool: " + selected.ToolName +
+            (selected.IsOfficialTask ? "Task ID: " + selected.TaskId + "\nLinked Job: " + selected.JobId :
+                "Job ID: " + selected.JobId) + "\nTool: " + selected.ToolName +
             "\nState: " + selected.State +
             "\nWorker generation: " + selected.WorkerGeneration +
             "\nOwner visibility: " + selected.Owner +
@@ -510,7 +548,7 @@ public partial class MainWindow : Window
             "\nProgress: " + (string.IsNullOrWhiteSpace(selected.Progress) ? "Not reported" : selected.Progress) +
             "\nQueue: " + (string.IsNullOrWhiteSpace(selected.Queue) ? "Not queued" : selected.Queue) +
             "\nWorker message / failure reason: " + selected.Message +
-            "\n\n'View Job result' checks the existing authenticated Worker Job status. "+
+            "\n\n'View result' calls Tasks/get for owned official Tasks or job_status for Worker Jobs. "+
             "A completed Job may have expired its result; official Tasks require their separate Task ID.";
     }
 
@@ -528,7 +566,11 @@ public partial class MainWindow : Window
         TasksPageViewResult.IsEnabled = false;
         try
         {
-            var text = await Task.Run(() => RequestJobTool(endpoint, token, job.JobId, "zemax_job_status"));
+            var text = await Task.Run(() => job.IsOfficialTask
+                ? SendMcpJsonRpc(endpoint, token, "tasks/get",
+                    new JObject { ["taskId"] = job.TaskId }, job.TaskId)
+                    ["result"]?.ToString(Newtonsoft.Json.Formatting.Indented) ?? "No Task result returned."
+                : RequestJobTool(endpoint, token, job.JobId, "zemax_job_status"));
             TasksPageDetail.Text = text.Length <= 24000 ? text :
                 text.Substring(0, 24000) + "\n[Display truncated to 24000 characters; full result stays on the Worker.]";
         }
