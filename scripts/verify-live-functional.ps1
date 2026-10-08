@@ -38,6 +38,14 @@ if ($VerifyWorkerCrashRecovery -and (-not $VerifyOfficialTasks -or -not $AllowWo
     -not ($VerifyNsc -or $VerifyBackgroundJobs))) {
     throw "Worker crash recovery requires -VerifyOfficialTasks, -AllowWorkerTermination and an NSC or global-search job. It forcibly terminates the licensed Worker process."
 }
+if ($VerifyWorkerCrashRecovery) {
+    # PID checks and Stop-Process execute on THIS machine. Never apply a PID
+    # returned by a remote LAN Host to an unrelated local process.
+    $validationEndpoint = [Uri]$endpointUri
+    if ($validationEndpoint.Host -notin @("localhost", "127.0.0.1", "::1")) {
+        throw "Worker process termination is allowed only for a local loopback Host, not a LAN endpoint."
+    }
+}
 
 $runRoot = Join-Path ([IO.Path]::GetTempPath()) ("ZemaxMCP-live-functional-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
