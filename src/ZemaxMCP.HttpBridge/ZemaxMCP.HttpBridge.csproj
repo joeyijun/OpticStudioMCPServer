@@ -10,6 +10,7 @@
   <ItemGroup>
     <PackageReference Include="ModelContextProtocol" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" />
+    <PackageReference Include="ModelContextProtocol.Extensions.Tasks" />
     <PackageReference Include="Serilog.Sinks.File" />
     <PackageReference Include="Serilog.AspNetCore" />
   </ItemGroup>
