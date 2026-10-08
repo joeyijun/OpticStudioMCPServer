@@ -80,6 +80,23 @@ internal sealed class JobOwnerRegistry
         IsError = true
     };
 
+    internal static CallToolResult ValidateSingleResult(CallToolResult result, string jobId)
+    {
+        if (result.IsError == true) return result;
+        if (result.Content.Count != 1 || result.Content[0] is not TextContentBlock textBlock)
+            return Denied();
+        try
+        {
+            using var document = JsonDocument.Parse(textBlock.Text);
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                !TryReadJobId(document.RootElement, out var returnedId) ||
+                !string.Equals(returnedId, jobId, StringComparison.Ordinal))
+                return Denied();
+            return result;
+        }
+        catch (JsonException) { return Denied(); }
+    }
+
     internal static CallToolResult FilterList(CallToolResult result, string clientId, long generation, JobOwnerRegistry registry)
     {
         if (result.IsError == true) return result;
