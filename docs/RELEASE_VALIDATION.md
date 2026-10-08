@@ -16,6 +16,7 @@ Hosted checks cover:
 - Host-only `tools/list` and lazy Worker startup;
 - client-instance identity, OpticStudio control-lease isolation, background-Job lease retention, and immediate disconnect handoff;
 - optional SHA-256 per-client bearer identities: static read-only admission across discovery/calls, credential rotation/revocation without restart, malformed-credential fail-closed behavior, and mutual exclusion with the legacy shared token;
+- generation-bound scoped background-Job ownership: deny foreign status/cancel, filter foreign Job-list result payloads, redact global health/activity, and exclude process-global legacy multistart status/stop;
 - updater rollback, rollback-backup preservation contract, exact-release-SHA CI signing gate, and signed-update tamper rejection;
 - syntax/protocol-shape validation of both live release verifiers;
 - functional-safety guards covering reviewed Stage A-F contracts;
