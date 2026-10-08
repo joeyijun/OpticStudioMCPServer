@@ -24,11 +24,12 @@ public sealed class McpJobTools
     [ZemaxTool(Name = "zemax_job_list")]
     [Description("List recent background Zemax jobs with bounded output. Optionally filter by lifecycle state.")]
     public IReadOnlyList<JobInfo> List(
-        [Description("Maximum jobs to return (1-128), newest first")] int limit = 50,
+        [Description("Maximum jobs to return (1-193), newest first")] int limit = 50,
         [Description("Optional state filter: Queued, Running, Cancelling, Completed, Cancelled, or Failed")] string? state = null)
     {
-        if (limit is < 1 or > McpJobManager.DefaultMaxHistory)
-            throw new ArgumentOutOfRangeException(nameof(limit), $"limit must be between 1 and {McpJobManager.DefaultMaxHistory}.");
+        const int maximumVisibleJobs = McpJobManager.DefaultMaxHistory + McpJobManager.DefaultMaxPending + 1;
+        if (limit is < 1 or > maximumVisibleJobs)
+            throw new ArgumentOutOfRangeException(nameof(limit), $"limit must be between 1 and {maximumVisibleJobs}.");
 
         McpJobState? filter = null;
         if (!string.IsNullOrWhiteSpace(state))
