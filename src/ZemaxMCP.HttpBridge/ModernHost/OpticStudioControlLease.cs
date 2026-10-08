@@ -116,8 +116,18 @@ internal sealed class OpticStudioControlLease
         if (generation <= 0) return;
         lock (_sync)
         {
-            foreach (var jobId in _jobHolds.Where(pair => pair.Value.Generation == generation).Select(pair => pair.Key).ToArray())
+            var invalidated = _jobHolds.Where(pair => pair.Value.Generation == generation)
+                .Select(pair => pair.Key).ToArray();
+            foreach (var jobId in invalidated)
                 _jobHolds.Remove(jobId);
+
+            // The old Worker is gone and can no longer own the lens. After
+            // its background holds disappear, release its idle owner too so
+            // another authenticated client can take the replacement Worker
+            // immediately rather than wait 15 minutes. Never revoke another
+            // active foreground call or a newer-generation Job hold.
+            if (invalidated.Length > 0 && _activeOperation == null && _jobHolds.Count == 0)
+                _ownerClientId = null;
             _lastActivity = DateTimeOffset.UtcNow;
         }
     }
