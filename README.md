@@ -140,7 +140,7 @@ The launcher can expose a smaller task-focused tool surface without renaming MCP
 | **Optimization & tolerancing** | 66 explicitly selected optimization, job, tolerance, core sequential, file, snapshot, and verification tools |
 | **Full expert** | All 135 tools and all impacts |
 
-Global **Read-only mode** and the task profile are separate controls. Global read-only blocks `HighImpact` operations while preserving `Caution` session/connection operations; **View & analyze** limits the profile itself to explicit `ReadOnly` impact.
+Global **Read-only mode** and the task profile are separate controls. Global read-only blocks `HighImpact` operations while preserving `Caution` session/connection operations; **View & analyze** limits the profile itself to explicit `ReadOnly` impact. For multi-client deployments, [scoped bearer credentials](docs/MULTI_CLIENT_AUTH.md) provide distinct authenticated identities, hot-revocable SHA-256 token hashes, and strict per-client `read-only` (ReadOnly-impact tools only) or `read-write` permissions without changing the default local/shared-token modes.
 
 `zemax_tool_catalog` groups tools as follows:
 
