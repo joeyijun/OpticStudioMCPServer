@@ -1,6 +1,6 @@
 # Official MCP Tasks adoption assessment
 
-Status: **evaluated, not enabled**. The server remains on ordinary `tools/call` plus the existing `zemax_job_status`, `zemax_job_list`, and `zemax_job_cancel` compatibility path.
+Status: **experimental, default OFF**. The official SDK adapter is implemented behind `--enable-official-tasks true`. Without that flag the server continues to use ordinary `tools/call` plus existing `zemax_job_status`, `zemax_job_list`, and `zemax_job_cancel`. Licensed OpticStudio acceptance is still outstanding.
 
 ## Protocol / SDK facts
 
@@ -92,3 +92,18 @@ Production-enable gate: complete the Windows CI suite and run licensed
 NSC/Tolerancing/optimization scenarios (including Worker hard recovery).
 The disabled-by-default switch must remain off in shipped Launcher config
 until both the deterministic tests and the licensed scenarios pass.
+
+## Live acceptance and hard-recovery evidence (2026-10-08)
+
+The existing `scripts/verify-live-functional.ps1` now supports these explicit additional gates:
+
+- `-VerifyOfficialTasks -VerifyNsc`: a real asynchronous NSC ray trace must return a Task handle, remain pollable and complete with the *actual* ZOS-API result (`success`, `state`, `runtimeSeconds`).
+- `-VerifyOfficialTasks -VerifyTolerance`: real asynchronous Sensitivity/Monte Carlo with structured final result; fails if the final result contains no Monte Carlo rows.
+- `-VerifyOfficialTasks -VerifyBackgroundJobs -VerifyTaskCancellation`: a long Global Search (`timeoutSeconds=0`) is cancelled through `tasks/cancel` and reaches a bounded terminal state. A cancellation that races with completion **does not pass** this strict gate; use an adequately complex fixture. An observed Worker generation change is required if cancellation instead produces a hard-recovery failure.
+- `-VerifyWorkerCrashRecovery -AllowWorkerTermination` together with `-VerifyOfficialTasks` and a long NSC or Global Search fixture: **destructively terminates the dedicated Worker process** after Task creation; validates generation change, old Task failure, and fresh Worker response. Run on a dedicated licensed validation machine only. This tests forced process-loss recovery, **not** the cancellation grace timer.
+
+All these tests require `-AllowReplaceCurrentSystem` and operate on a temporary fixture copy. For live recovery, use local/shared-token Host mode with full diagnostic health; scoped mode intentionally redacts Worker PID/generation. The shipped Launcher keeps Tasks default-off.
+
+The existing CI `VerifyJobHardRecoveryAsync` separately injects a deliberately non-cooperative background Job with a short cancellation grace and asserts a failed terminal state and hard-recovery callback. The private RPC tests cover Worker-generation fault, immediate control-lease handoff and cross-token Task confidentiality.
+
+**Do not report actual licensed OpticStudio runs as PASS until the resulting JSON evidence exists.** Hosted Windows CI validates syntax and fake-Worker/simulation behavior only.
