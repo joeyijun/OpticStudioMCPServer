@@ -384,6 +384,12 @@ internal static class Program
 
     private static bool IsAuthorizedTool(HostOptions options, ClaimsPrincipal? principal, ToolManifestEntry entry)
     {
+        // The legacy multistart status/stop tools expose one process-global
+        // optimizer state without a Job ID. Scoped clients must use the
+        // owner-bound zemax_job_status/zemax_job_cancel variants instead.
+        if (!string.IsNullOrWhiteSpace(options.ClientCredentialsFile) &&
+            entry.Name is "zemax_multistart_status" or "zemax_multistart_stop")
+            return false;
         if (!string.IsNullOrWhiteSpace(options.ClientCredentialsFile) &&
             (principal?.FindFirst("zemax-mcp-auth-profile")?.Value?.StartsWith("scoped:", StringComparison.Ordinal) != true ||
              principal.FindFirst("zemax-mcp-permission")?.Value is not ("read-only" or "read-write")))
