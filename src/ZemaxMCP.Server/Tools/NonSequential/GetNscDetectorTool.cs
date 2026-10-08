@@ -84,19 +84,29 @@ public sealed class GetNscDetectorTool
                         objectNumber, row.TypeName, row.Comment, columns, rows, totalPixels, row.TypeData.DetectorShowAs.ToString());
                 }
 
-                if (row.Type is ZOSAPI.Editors.NCE.ObjectType.DetectorColor or
-                    ZOSAPI.Editors.NCE.ObjectType.DetectorPolar)
+                if (includePixels && (row.Type is ZOSAPI.Editors.NCE.ObjectType.DetectorColor or
+                    ZOSAPI.Editors.NCE.ObjectType.DetectorPolar))
                     return new Result(false, "Color/polar detectors require their dedicated NSC detector-data API; generic flux pixels are not interpreted as irradiance.",
                         objectNumber, row.TypeName, row.Comment, columns, rows, totalPixels, row.TypeData.DetectorShowAs.ToString());
 
                 // The official GetDetectorData pixel index starts at one.
                 // Index zero is a summary statistic, never pixel (0,0).
-                if (!nce.GetDetectorData(objectNumber, 0, 0, out var totalFlux) ||
-                    !nce.GetDetectorData(objectNumber, -3, 0, out var rayHits) ||
-                    double.IsNaN(totalFlux) || double.IsInfinity(totalFlux) ||
-                    double.IsNaN(rayHits) || double.IsInfinity(rayHits))
-                    return new Result(false, "Detector flux/hit summary is unavailable or non-finite.", objectNumber,
-                        row.TypeName, row.Comment, columns, rows, totalPixels, row.TypeData.DetectorShowAs.ToString());
+                // A newly opened lens may have no traced detector buffer.
+                // Preserve the pre-1.6 dimensional readback behavior: missing
+                // power statistics are explicitly null, not a fabricated zero
+                // and not an error for a dimensions-only request.
+                double? totalFlux = null;
+                double? rayHits = null;
+                if (nce.GetDetectorData(objectNumber, 0, 0, out var flux) &&
+                    !double.IsNaN(flux) && !double.IsInfinity(flux))
+                    totalFlux = flux;
+                if (nce.GetDetectorData(objectNumber, -3, 0, out var hits) &&
+                    !double.IsNaN(hits) && !double.IsInfinity(hits))
+                    rayHits = hits;
+                if (includePixels && (!totalFlux.HasValue || !rayHits.HasValue))
+                    return new Result(false, "Trace the NSC system before requesting pixel data; flux/hit statistics are unavailable.",
+                        objectNumber, row.TypeName, row.Comment, columns, rows,
+                        totalPixels, row.TypeData.DetectorShowAs.ToString());
 
                 double[][]? pixelGrid = null;
                 if (includePixels)
