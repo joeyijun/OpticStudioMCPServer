@@ -298,7 +298,7 @@ internal static class Program
             // the Worker's GetStatus RPC.
             app.MapGet(options.McpPath + "/activity", () => Results.Json(activity.GetHealth()));
 
-            app.MapGet(options.McpPath + "/health", async (CancellationToken cancellationToken) =>
+            app.MapGet(options.McpPath + "/health", async (HttpContext httpContext, CancellationToken cancellationToken) =>
             {
                 WorkerStatus? status = null;
                 try { status = await worker.GetStatusAsync(cancellationToken).ConfigureAwait(false); }
@@ -329,7 +329,14 @@ internal static class Program
                     readOnly = options.ReadOnly,
                     snapshotDirectory = status?.SnapshotDirectory ?? options.SnapshotDirectory,
                     lastSnapshotPath = status?.LastSnapshotPath,
-                    jobs = status?.Jobs ?? Array.Empty<WorkerJobStatus>(),
+                    jobs = credentialStore == null
+                        ? status?.Jobs ?? Array.Empty<WorkerJobStatus>()
+                        : (status?.Jobs ?? Array.Empty<WorkerJobStatus>())
+                            .Where(job => {
+                                var profile = httpContext.User.FindFirst("zemax-mcp-auth-profile")?.Value;
+                                return profile != null && profile.StartsWith("scoped:", StringComparison.Ordinal) &&
+                                    jobOwners.IsOwned("token:" + profile, job.JobId, worker.CurrentGeneration);
+                            }).ToArray(),
                     requestTimeoutSeconds = options.RequestTimeoutSeconds,
                     requestWriteTimeoutSeconds = options.RequestWriteTimeoutSeconds,
                     hardRecoveryTimeoutSeconds = options.HardRecoveryTimeoutSeconds,
