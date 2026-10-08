@@ -526,6 +526,9 @@ public partial class MainWindow : Window
                 " (" + FormatUptime(activeOperation["elapsedSeconds"]?.Value<long?>()) + ")";
             var jobs = health["jobs"] as JArray;
             RefreshTaskCenter(jobs);
+            var leaseOwner = health["controlLease"]?["owner"]?.ToString();
+            if (!string.IsNullOrWhiteSpace(leaseOwner))
+                TaskCenterSummary.Text += " · controller: " + FormatClientName(leaseOwner);
             var activeJob = jobs?.FirstOrDefault(x =>
             {
                 var state = x["state"]?.ToString();
