@@ -969,16 +969,27 @@ public partial class MainWindow : Window
         System.Windows.Clipboard.SetText(diagnostics);
         Report("Connection diagnostics copied to the clipboard.");
     }
-    private async void TestMcp_Click(object sender, RoutedEventArgs e)
+    private async void CheckConnection_Click(object sender, RoutedEventArgs e)
     {
         var endpoint = McpUrl;
-        var accessToken = McpToken;
-        Report("Testing MCP service: " + endpoint + "…");
-        try { Report(await Task.Run(() => TestMcp(endpoint, accessToken))); }
-        catch (Exception ex) { Report("MCP connection failed: " + ex.Message + Environment.NewLine + "On the OpticStudio computer, keep Start-Zemax-MCP open, start the bridge, then enable Share with a trusted LAN computer."); }
+        var token = McpToken;
+        Report("Checking Host/Worker/ZOS-API connection...");
+        try { Report(await Task.Run(() => CheckConnectionHealth(endpoint, token))); }
+        catch (Exception ex) { Report("Connection/authorization check failed: " + ex.Message); }
         await RefreshStatusAsync();
     }
-    private static string TestMcp(string endpoint, string accessToken)
+
+    private async void TestMcpTools_Click(object sender, RoutedEventArgs e)
+    {
+        var endpoint = McpUrl;
+        var token = McpToken;
+        Report("Testing MCP tools/list, read-only tool result and Tasks negotiation...");
+        try { Report(await Task.Run(() => TestMcpFunctionality(endpoint, token))); }
+        catch (Exception ex) { Report("MCP functionality check failed: " + ex.Message); }
+        await RefreshStatusAsync();
+    }
+
+    private static string CheckConnectionHealth(string endpoint, string accessToken)
     {
         var healthEndpoint = endpoint.TrimEnd('/') + "/health";
         var request = (HttpWebRequest)WebRequest.Create(healthEndpoint);
@@ -986,17 +997,136 @@ public partial class MainWindow : Window
         request.Accept = "application/json";
         request.Timeout = 10000;
         AddAuthorization(request, accessToken);
-        using (var response = (HttpWebResponse)request.GetResponse())
-        using (var reader = new StreamReader(response.GetResponseStream()))
+        using var response = (HttpWebResponse)request.GetResponse();
+        using var reader = new StreamReader(response.GetResponseStream());
+        var result = JObject.Parse(reader.ReadToEnd());
+        var bridge = result["bridgeRunning"]?.Value<bool>() == true;
+        var worker = result["mcpServerRunning"]?.Value<bool>() == true;
+        var zos = result["zosApiConnected"]?.Value<bool>() == true;
+        var loaded = result["zosApiLoaded"]?.Value<bool>() == true;
+        var licensed = result["licenseValidForApi"]?.Value<bool?>();
+        if (!bridge) throw new InvalidOperationException("Host is reachable but reports bridgeRunning=false.");
+        return "Connection check — Host: reachable; authentication: accepted; Worker: " +
+            (worker ? "running" : "unavailable") + "; ZOS-API: " +
+            (loaded ? "loaded" : "not loaded") + "; OpticStudio: " +
+            (zos ? "connected" : "disconnected") + "; license: " +
+            (result["licenseStatus"]?.ToString() ?? "not reported") +
+            "; API license valid: " + (licensed.HasValue ? licensed.Value.ToString() : "not reported") +
+            ". This is a health check, not a tool execution test.";
+    }
+
+    private static JObject SendMcpJsonRpc(string endpoint, string accessToken,
+        string method, JObject parameters, string? routingName = null)
+    {
+        // 2026-07-28 stateless MCP transport: no optical edits.
+        var meta = new JObject
         {
-            var result = JObject.Parse(reader.ReadToEnd());
-            var bridgeRunning = result["bridgeRunning"]?.Value<bool>() == true;
-            var serverRunning = result["mcpServerRunning"]?.Value<bool>() == true;
-            if (response.StatusCode != HttpStatusCode.OK || !bridgeRunning || !serverRunning)
-                throw new InvalidOperationException("the endpoint health check did not report a running MCP service.");
-            return "MCP connection succeeded: Zemax MCP service is reachable at " + endpoint;
+            ["io.modelcontextprotocol/protocolVersion"] = "2026-07-28",
+            ["io.modelcontextprotocol/clientInfo"] = new JObject
+            {
+                ["name"] = "zemax-launcher",
+                ["version"] = "1.5.0"
+            },
+            ["io.modelcontextprotocol/clientCapabilities"] = new JObject
+            {
+                ["extensions"] = new JObject { ["io.modelcontextprotocol/tasks"] = new JObject() }
+            }
+        };
+        parameters["_meta"] = meta;
+        var message = new JObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = 2741,
+            ["method"] = method,
+            ["params"] = parameters
+        };
+        var request = (HttpWebRequest)WebRequest.Create(endpoint);
+        request.Method = "POST";
+        request.ContentType = "application/json";
+        request.Accept = "application/json, text/event-stream";
+        request.Timeout = 20000;
+        request.Headers["MCP-Protocol-Version"] = "2026-07-28";
+        request.Headers["Mcp-Method"] = method;
+        if (!string.IsNullOrEmpty(routingName)) request.Headers["Mcp-Name"] = routingName;
+        AddAuthorization(request, accessToken);
+        var bytes = Encoding.UTF8.GetBytes(message.ToString(Newtonsoft.Json.Formatting.None));
+        using (var stream = request.GetRequestStream()) stream.Write(bytes, 0, bytes.Length);
+        using var response = (HttpWebResponse)request.GetResponse();
+        using var reader = new StreamReader(response.GetResponseStream());
+        var raw = reader.ReadToEnd();
+        if (response.ContentType?.StartsWith("text/event-stream", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            // Choose the actual JSON data event; ignore SSE comments/keepalives.
+            var data = raw.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Where(line => line.StartsWith("data:", StringComparison.Ordinal))
+                .Select(line => line.Substring(5).Trim())
+                .FirstOrDefault(line => line.StartsWith("{", StringComparison.Ordinal));
+            if (string.IsNullOrWhiteSpace(data))
+                throw new InvalidDataException("MCP SSE response contained no JSON data event.");
+            raw = data;
+        }
+        var rpc = JObject.Parse(raw);
+        if (rpc["error"] is JToken error)
+            throw new InvalidOperationException("MCP " + method + ": " +
+                (error["message"]?.ToString() ?? "JSON-RPC error"));
+        return rpc;
+    }
+
+    private static string TestMcpFunctionality(string endpoint, string accessToken)
+    {
+        var list = SendMcpJsonRpc(endpoint, accessToken, "tools/list", new JObject());
+        var tools = list["result"]?["tools"] as JArray ??
+            throw new InvalidDataException("tools/list returned no tool array.");
+        if (tools.Count == 0 || !tools.Any(t => t["name"]?.ToString() == "zemax_status"))
+            throw new InvalidDataException("MCP has no discoverable read-only zemax_status tool.");
+        var status = SendMcpJsonRpc(endpoint, accessToken, "tools/call",
+            new JObject { ["name"] = "zemax_status", ["arguments"] = new JObject() }, "zemax_status");
+        if (status["result"]?["isError"]?.Value<bool>() == true ||
+            !(status["result"]?["content"] is JArray content) || content.Count == 0)
+            throw new InvalidDataException("Actual MCP zemax_status call returned no successful tool result.");
+
+        // Negotiate extension explicitly. This does not create a long-running
+        // optical Task: result round-trip is exercised only with an owned Task ID.
+        var init = SendMcpJsonRpc(endpoint, accessToken, "initialize",
+            new JObject
+            {
+                ["protocolVersion"] = "2026-07-28",
+                ["capabilities"] = new JObject
+                {
+                    ["extensions"] = new JObject { ["io.modelcontextprotocol/tasks"] = new JObject() }
+                },
+                ["clientInfo"] = new JObject { ["name"] = "zemax-launcher", ["version"] = "1.5.0" }
+            });
+        var tasks = init["result"]?["capabilities"]?["extensions"]?["io.modelcontextprotocol/tasks"] != null;
+        return "MCP functional test PASS — tools/list: " + tools.Count +
+            " tools; real read-only zemax_status: result returned; 2026-07-28 initialize: success; " +
+            "official Tasks advertised: " + (tasks ? "yes" : "no") +
+            ". A completed Task result requires an owned Task ID in the Tasks page; this test does not start an optical Job.";
+    }
+
+    private async void TasksPageGetTask_Click(object sender, RoutedEventArgs e)
+    {
+        var id = TasksPageTaskId.Text?.Trim() ?? "";
+        if (id.Length == 0 || id.Length > 128)
+        {
+            TasksPageDetail.Text = "Enter the exact MCP Task ID (not the Worker Job ID).";
+            return;
+        }
+        var endpoint = McpUrl;
+        var token = McpToken;
+        try
+        {
+            var result = await Task.Run(() => SendMcpJsonRpc(endpoint, token,
+                "tasks/get", new JObject { ["taskId"] = id }, id));
+            TasksPageDetail.Text = result["result"]?.ToString(Newtonsoft.Json.Formatting.Indented) ??
+                "No Task result returned.";
+        }
+        catch (Exception ex)
+        {
+            TasksPageDetail.Text = "Task result is unavailable (or not owned by this credential/client identity): " + ex.Message;
         }
     }
+
     private static void AddAuthorization(HttpWebRequest request, string accessToken)
     {
         if (!string.IsNullOrWhiteSpace(accessToken)) request.Headers[HttpRequestHeader.Authorization] = "Bearer " + accessToken;
