@@ -6,6 +6,8 @@ param(
     [string]$AccessToken = $env:ZEMAX_MCP_TOKEN,
     [string]$ReportPath = "",
     [switch]$VerifyOptimization,
+    [switch]$VerifyEngineeringOptics,
+    [int]$BudgetFinalSurface = 0,
     [switch]$VerifyBackgroundJobs,
     [switch]$VerifyNsc,
     [int]$NscEnergyDetectorObject = 0,
@@ -33,6 +35,9 @@ if (-not (Test-Path -LiteralPath $fixture -PathType Leaf)) { throw "Fixture file
 $extension = [IO.Path]::GetExtension($fixture)
 if ($extension -notin @(".zmx", ".zos")) { throw "FixturePath must be a .zmx or .zos file." }
 if ($JobWaitSeconds -lt 10 -or $JobWaitSeconds -gt 1800) { throw "JobWaitSeconds must be between 10 and 1800." }
+if ($BudgetFinalSurface -lt 0 -or $BudgetFinalSurface -gt 24) {
+    throw "BudgetFinalSurface must be 0 (default image surface) or 1..24."
+}
 if ($NscEnergyDetectorObject -lt 0 -or $NscLaunchedFlux -lt 0 -or [double]::IsNaN($NscLaunchedFlux) -or [double]::IsInfinity($NscLaunchedFlux) -or
     ($NscEnergyDetectorObject -gt 0 -and -not $VerifyNsc) -or
     ($NscLaunchedFlux -gt 0 -and $NscEnergyDetectorObject -eq 0)) {
@@ -403,6 +408,49 @@ try {
             } | Out-Null
         }
 
+        if ($VerifyEngineeringOptics) {
+            Invoke-Check "sequential-footprint-and-energy-budget" {
+                foreach ($required in @("zemax_energy_budget", "zemax_ray_footprint", "zemax_aperture_throughput")) {
+                    if ($required -notin $tools) { throw "Active profile does not expose $required." }
+                }
+                $case = Get-ToolPayload (Invoke-Tool "zemax_energy_budget" @{
+                    fields = @(@(0.0, 0.0), @(0.0, 0.5));
+                    wavelengths = @(1); gridSize = 11; finalSurface = $BudgetFinalSurface
+                })
+                if (@($case.cases).Count -ne 2 -or [int]$case.numberOfPupilSamples -lt 10) {
+                    throw "Energy-budget multi-field sampling returned an invalid array."
+                }
+                foreach ($item in @($case.cases)) {
+                    if (@($item.surfaces).Count -lt 1) { throw "Energy budget has no surfaces." }
+                    foreach ($surface in @($item.surfaces)) {
+                        $counts = [int]$surface.clearRays + [int]$surface.vignettedRays + [int]$surface.traceErrorRays
+                        if ($counts -ne [int]$surface.totalPupilSamples -or
+                            [double]$surface.clearPupilFraction -lt 0 -or
+                            [double]$surface.clearPupilFraction -gt 1) {
+                            throw "Energy budget did not conserve sampled ray categories."
+                        }
+                    }
+                }
+                $last = [int](@($case.cases[0].surfaces)[-1].surface)
+                $fp = Get-ToolPayload (Invoke-Tool "zemax_ray_footprint" @{
+                    surfaces = @($last); hx = 0.0; hy = 0.0; wavelength = 1;
+                    gridSize = 11; maxPointsPerSurface = 4
+                })
+                if (@($fp.surfaces).Count -ne 1 -or [int]$fp.surfaces[0].pupilRays -ne
+                    [int]$case.numberOfPupilSamples -or @($fp.surfaces[0].points).Count -gt 4) {
+                    throw "Footprint sampling and energy-budget pupil grids are inconsistent."
+                }
+                $aperture = Get-ToolPayload (Invoke-Tool "zemax_aperture_throughput" @{
+                    hx = 0.0; hy = 0.0; wavelength = 1; surface = $last; gridSize = 11
+                })
+                if ([int]$aperture.totalPupilRays -ne [int]$fp.surfaces[0].pupilRays -or
+                    [int]$aperture.clearRays -ne [int]$fp.surfaces[0].clearRays) {
+                    throw "Independent legacy aperture sampling disagrees with Ray Footprint."
+                }
+                "fields=2 wave=1; testedSurface=$last; pupil=$($case.numberOfPupilSamples); footprintPoints=$(@($fp.surfaces[0].points).Count)"
+            } | Out-Null
+        }
+
         if ("zemax_cardinal_points" -in $tools) {
             Invoke-Check "sequential-analysis-cardinal-points" {
                 $cardinal = Get-ToolPayload (Invoke-Tool "zemax_cardinal_points")
@@ -497,6 +545,15 @@ try {
                 throw "Energy tool returned an invalid detector count or wrongly marked unrelated detector totals as additive."
             }
             $flux = [double]$budget.detectors[0].incidentFlux
+            if ([double]$detector.roiFluxSum -ne [double]$detector.roiFluxIntegral -or
+                [Math]::Abs([double]$detector.roiFluxIntegral - [double]$detector.roiPixels[0][0]) -gt
+                1e-9 * [Math]::Max(1.0, [Math]::Abs([double]$detector.roiFluxIntegral))) {
+                throw "Raw 1x1 NSC ROI flux sum/integral disagrees with detector pixel readback."
+            }
+            if ($detector.objectType -eq 'Detector Rectangle' -and
+                ($null -eq $detector.pixelPitchX -or $null -eq $detector.pixelPitchY)) {
+                throw "Detector Rectangle must return a defensible native pixel pitch."
+            }
             if ([double]::IsNaN($flux) -or [double]::IsInfinity($flux) -or
                 [Math]::Abs($flux - [double]$detector.totalIncidentFlux) -gt
                     1e-9 * [Math]::Max(1.0, [Math]::Abs($flux))) {
