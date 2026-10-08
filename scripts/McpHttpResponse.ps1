@@ -1,5 +1,22 @@
 # Consumer-side acceptance helper, not an MCP transport implementation.
 # A completed HTTP response can contain notifications/requests before its result.
+function Wait-McpWorkerRecovery {
+    param([scriptblock]$Probe, [long]$PreviousGeneration, [int]$TimeoutSeconds = 90, [int]$PollMilliseconds = 300)
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+    $lastError = 'Worker has not reported a newer connected generation with a valid license.'
+    do {
+        $remaining = [int][Math]::Ceiling(($deadline - [DateTimeOffset]::UtcNow).TotalSeconds)
+        if ($remaining -lt 1) { break }
+        try {
+            $health = & $Probe ([Math]::Min(30, $remaining))
+            if ([long]$health.worker.workerGeneration -gt $PreviousGeneration -and
+                $health.zosApiConnected -eq $true -and $health.licenseValidForApi -eq $true) { return $health }
+        } catch { $lastError = $_.Exception.Message }
+        if ($PollMilliseconds -gt 0) { Start-Sleep -Milliseconds $PollMilliseconds }
+    } while ([DateTimeOffset]::UtcNow -lt $deadline)
+    throw "Worker recovery did not become ready within $TimeoutSeconds seconds: $lastError"
+}
+
 function ConvertFrom-McpToolResult {
     param($Response)
     $text = [string](@($Response.result.content | Where-Object { $_.type -eq 'text' } | Select-Object -First 1).text)

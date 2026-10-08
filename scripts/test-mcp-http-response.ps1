@@ -1,5 +1,20 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'McpHttpResponse.ps1')
+$probeState = @{calls=0}
+$recovery = Wait-McpWorkerRecovery -PreviousGeneration 1 -TimeoutSeconds 5 -PollMilliseconds 0 -Probe {
+    param($timeout)
+    if ($timeout -lt 1 -or $timeout -gt 5) { throw 'Probe timeout is not bounded by remaining deadline.' }
+    $probeState.calls++
+    if ($probeState.calls -eq 1) { throw 'Transient health request timeout.' }
+    return @{worker=@{workerGeneration=if($probeState.calls -eq 2){1}else{2}};
+        zosApiConnected=$true;licenseValidForApi=($probeState.calls -ge 4)}
+}
+if ($probeState.calls -ne 4 -or $recovery.worker.workerGeneration -ne 2) { throw 'Recovery must retry transient failures and require a newer licensed generation.' }
+$rejected=$false
+try {
+    Wait-McpWorkerRecovery -PreviousGeneration 1 -TimeoutSeconds 1 -PollMilliseconds 50 -Probe { throw 'Permanent health failure.' } | Out-Null
+} catch { if ($_.Exception.Message -like 'Worker recovery did not become ready*Permanent health failure*') {$rejected=$true} else {throw} }
+if (-not $rejected) { throw 'Recovery deadline failure was swallowed.' }
 function Response([string]$text, [string]$type='text/event-stream') { return @{Content=$text;Headers=@{'Content-Type'=$type}} }
 $notification='{"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":1}}'
 $request='{"jsonrpc":"2.0","id":7,"method":"sampling/createMessage","params":{}}'

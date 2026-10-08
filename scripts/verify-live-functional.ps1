@@ -197,9 +197,10 @@ function Invoke-Check {
 }
 
 function Get-Health {
+    param([int]$TimeoutSeconds = 30)
     $headers = @{}
     if ($AccessToken) { $headers.Authorization = "Bearer $AccessToken" }
-    return Invoke-RestMethod -Uri ($endpointUri + "/health") -Headers $headers -TimeoutSec 30
+    return Invoke-RestMethod -Uri ($endpointUri + "/health") -Headers $headers -TimeoutSec $TimeoutSeconds
 }
 
 $healthBefore = $null
@@ -600,21 +601,14 @@ try {
             if ($active.result.status -ne 'working') { throw 'Fixture ended before crash injection; refusing to terminate Worker.' }
             Stop-Process -Id $workerPid -Force -ErrorAction Stop
             Start-Sleep -Seconds 2
-            $recovered = Get-Health
-            if ([long]$recovered.worker.workerGeneration -le $generation) {
-                throw "Worker generation was not replaced after terminating the dedicated Worker process."
+            $recovered = Wait-McpWorkerRecovery -PreviousGeneration $generation -Probe {
+                param($remainingTimeout)
+                Get-Health -TimeoutSeconds $remainingTimeout
             }
             $terminal = Wait-OfficialTask $taskId
             if ($terminal.status -ne "failed") {
                 throw "A Task from a terminated Worker generation should fail, got $($terminal.status)."
             }
-            $readyDeadline = [DateTimeOffset]::UtcNow.AddSeconds(90)
-            do {
-                $ready = Get-Health
-                if ($ready.zosApiConnected -and $ready.licenseValidForApi -eq $true) { break }
-                Start-Sleep -Milliseconds 300
-            } while ([DateTimeOffset]::UtcNow -lt $readyDeadline)
-            if (-not $ready.zosApiConnected -or $ready.licenseValidForApi -ne $true) { throw 'Restarted Worker is not connected with a valid API license.' }
             Get-ToolPayload (Invoke-Tool 'zemax_open_file' @{filePath=$workingCopy}) | Out-Null
             $alive = Get-ToolPayload (Invoke-Tool 'zemax_get_system' @{includeSurfaces=$true})
             if (-not [string]::Equals([string]$alive.filePath, $workingCopy, [StringComparison]::OrdinalIgnoreCase)) {
