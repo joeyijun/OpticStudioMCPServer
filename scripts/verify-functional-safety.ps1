@@ -58,6 +58,13 @@ foreach ($requiredTool in @("SpotDiagramTool.cs", "RmsSpotTool.cs", "CardinalPoi
 # These Stage A/B/C fixes are release-safety contracts rather than style. Keep
 # explicit false/empty semantics, normalized ray bounds and cancellation wired.
 $batchSetSurfaces = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Server\Tools\LensData\BatchSetSurfacesTool.cs") -Raw
+if ($batchSetSurfaces -notmatch 'IReadOnlyList<SurfaceReadback> Surfaces' -or
+    $batchSetSurfaces -notmatch 'applied\.Add\(SurfaceReadback\.FromRaw' -or
+    $batchSetSurfaces -notmatch 'actual\.Radius\.SanitizeRadius\(\)' -or
+    $batchSetSurfaces -notmatch 'double\.IsNaN\(actual\) \|\| double\.IsInfinity\(actual\)' -or
+    $batchSetSurfaces -notmatch 'row\.Radius = state\.Radius') {
+    throw 'Batch edits must preserve raw rollback state, serialize normalized surface readbacks and reject invalid finite-edit readbacks.'
+}
 $snapshotTools = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Server\Tools\System\SnapshotTools.cs") -Raw
 $zemaxSession = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Core\Session\ZemaxSession.cs") -Raw
 $setSurface = Get-Content -LiteralPath (Join-Path $root "src\ZemaxMCP.Server\Tools\LensData\SetSurfaceTool.cs") -Raw

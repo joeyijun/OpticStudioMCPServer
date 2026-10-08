@@ -296,6 +296,13 @@ try {
                 if ([int]$batch.appliedEdits -ne 2 -or $batch.rolledBack -eq $true) {
                     throw "Batch surface edit did not report two committed edits."
                 }
+                if (@($batch.surfaces).Count -ne 2) { throw 'Batch readback must contain both edited surfaces.' }
+                foreach ($surface in $batch.surfaces) {
+                    if ($null -eq $surface.radius -or [double]$surface.radius -ne 0 -or
+                        $surface.thicknessState -ne 'Finite' -or $null -eq $surface.thickness) {
+                        throw 'Batch plane-radius or finite-thickness readback is inconsistent.'
+                    }
+                }
 
                 $readback = Get-ToolPayload (Invoke-Tool "zemax_get_system")
                 $matchA = @($readback.surfaces | Where-Object { [int]$_.number -eq $first } | Select-Object -First 1)

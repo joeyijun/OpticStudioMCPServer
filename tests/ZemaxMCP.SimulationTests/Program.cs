@@ -66,6 +66,27 @@ internal static class Program
 
     private static void VerifyScientificNumberTruthfulness()
     {
+        foreach (var radius in new[] { 0.0, double.PositiveInfinity, double.NegativeInfinity })
+        {
+            var rawRadius = radius;
+            var readback = SurfaceReadback.FromRaw(2, rawRadius, double.PositiveInfinity,
+                "", double.NegativeInfinity, 0, "plane", false);
+            using var parsed = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(readback));
+            Assert(parsed.RootElement.GetProperty("Radius").GetDouble() == 0 &&
+                parsed.RootElement.GetProperty("Thickness").ValueKind == System.Text.Json.JsonValueKind.Null &&
+                parsed.RootElement.GetProperty("ThicknessState").GetString() == "PositiveInfinity" &&
+                parsed.RootElement.GetProperty("SemiDiameterState").GetString() == "NegativeInfinity",
+                "Batch surface readback must serialize planes and signed optical infinity safely.");
+            Assert(rawRadius.Equals(radius), "Wire normalization must not modify the raw rollback value.");
+        }
+        var finiteSurface = SurfaceReadback.FromRaw(1, 12.5, 1.25, "N-BK7", 2, -1, "finite", true);
+        Assert(finiteSurface.Radius == 12.5 && finiteSurface.Thickness == 1.25 && finiteSurface.SemiDiameter == 2 &&
+            finiteSurface.Conic == -1 && finiteSurface.IsStop && finiteSurface.ThicknessState == "Finite",
+            "Batch readback must preserve finite values and surface metadata.");
+        AssertThrows<InvalidDataException>(() => SurfaceReadback.FromRaw(1, double.NaN, 1, "", 1, 0, "", false), "NaN radius accepted.");
+        AssertThrows<InvalidDataException>(() => SurfaceReadback.FromRaw(1, 0, double.NaN, "", 1, 0, "", false), "NaN thickness accepted.");
+        AssertThrows<InvalidDataException>(() => SurfaceReadback.FromRaw(1, 0, 1, "", double.NaN, 0, "", false), "NaN semi-diameter accepted.");
+        AssertThrows<InvalidDataException>(() => SurfaceReadback.FromRaw(1, 0, 1, "", 1, double.PositiveInfinity, "", false), "Invalid conic accepted.");
         Assert(double.PositiveInfinity.OpticalDimension() == null &&
                double.PositiveInfinity.OpticalDimensionState() == "PositiveInfinity",
                "Optical infinity must be explicitly represented, not fabricated as a finite number.");
