@@ -113,7 +113,7 @@ public sealed class RayFootprintTool
                                         Math.Sqrt(Math.Pow(x.X - dx.Value, 2) + Math.Pow(x.Y - dy.Value, 2)));
                             }
                             var semi = row.SemiDiameter;
-                            double? reference = double.IsFinite(semi) && semi >= 0 ? semi : null;
+                            double? reference = !double.IsNaN(semi) && !double.IsInfinity(semi) && semi >= 0 ? semi : null;
                             var points = clear.Take(maxPointsPerSurface)
                                 .Select(x => new FootprintPoint(x.Pupil.Px, x.Pupil.Py, x.X, x.Y, x.Intensity))
                                 .ToArray();
