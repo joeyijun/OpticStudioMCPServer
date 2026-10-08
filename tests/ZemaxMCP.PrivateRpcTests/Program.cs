@@ -33,6 +33,7 @@ internal static class Program
             await VerifyBackgroundJobLeaseRetentionAsync().ConfigureAwait(false);
             await VerifyCancelledLeaseWaitAsync().ConfigureAwait(false);
             ScopedCredentialAssertions.Verify();
+            VerifyJobOwnershipRegistry();
             VerifyStrictArgumentBinding();
             await VerifyWriteGateCancellationClassificationAsync().ConfigureAwait(false);
             await VerifyContractMismatchRejectedAsync().ConfigureAwait(false);
@@ -50,6 +51,55 @@ internal static class Program
             Console.Error.WriteLine(ex);
             return 1;
         }
+    }
+
+    private static void VerifyJobOwnershipRegistry()
+    {
+        var registry = new JobOwnerRegistry();
+        registry.Register("scoped:a", "owned-1", 7);
+        registry.Register("scoped:b", "owned-2", 7);
+        if (!registry.IsOwned("scoped:a", "owned-1", 7) ||
+            registry.IsOwned("scoped:b", "owned-1", 7) ||
+            registry.IsOwned("scoped:a", "owned-1", 8))
+            throw new InvalidOperationException("Job ownership is not bound to its authenticated client and Worker generation.");
+
+        var mixed = new CallToolResult
+        {
+            Content = new List<ContentBlock>
+            {
+                new TextContentBlock
+                {
+                    Text = "[{\"jobId\":\"owned-1\",\"result\":\"client-a-private\"}," +
+                           "{\"jobId\":\"owned-2\",\"result\":\"client-b-private\"}," +
+                           "{\"jobId\":\"unknown\",\"result\":\"other-private\"}]"
+                }
+            },
+            IsError = false
+        };
+        var filtered = JobOwnerRegistry.FilterList(mixed, "scoped:a", 7, registry);
+        var text = (filtered.Content.Single() as TextContentBlock)?.Text ?? string.Empty;
+        if (filtered.IsError == true || !text.Contains("client-a-private", StringComparison.Ordinal) ||
+            text.Contains("client-b-private", StringComparison.Ordinal) ||
+            text.Contains("other-private", StringComparison.Ordinal))
+            throw new InvalidOperationException("Job list did not remove foreign result payloads.");
+
+        var invalid = new CallToolResult
+        {
+            Content = new List<ContentBlock> { new TextContentBlock { Text = "{\"unexpected\":true}" } },
+            IsError = false
+        };
+        if (JobOwnerRegistry.FilterList(invalid, "scoped:a", 7, registry).IsError != true)
+            throw new InvalidOperationException("Malformed Worker job-list data did not fail closed.");
+
+        registry.ReleaseGeneration(7);
+        if (registry.IsOwned("scoped:a", "owned-1", 7))
+            throw new InvalidOperationException("Worker generation change did not revoke old Job IDs.");
+
+        for (var index = 0; index < JobOwnerRegistry.MaximumRecords + 10; index++)
+            registry.Register("scoped:a", "bounded-" + index, 8);
+        if (registry.IsOwned("scoped:a", "bounded-0", 8) ||
+            !registry.IsOwned("scoped:a", "bounded-" + (JobOwnerRegistry.MaximumRecords + 9), 8))
+            throw new InvalidOperationException("Bounded job owner history did not drop stale entries safely.");
     }
 
     private static void VerifyActivityOwnership()
