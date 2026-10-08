@@ -33,7 +33,7 @@ if (-not (Test-Path -LiteralPath $fixture -PathType Leaf)) { throw "Fixture file
 $extension = [IO.Path]::GetExtension($fixture)
 if ($extension -notin @(".zmx", ".zos")) { throw "FixturePath must be a .zmx or .zos file." }
 if ($JobWaitSeconds -lt 10 -or $JobWaitSeconds -gt 1800) { throw "JobWaitSeconds must be between 10 and 1800." }
-if ($NscEnergyDetectorObject < 0 -or $NscLaunchedFlux < 0 -or [double]::IsNaN($NscLaunchedFlux) -or [double]::IsInfinity($NscLaunchedFlux) -or
+if ($NscEnergyDetectorObject -lt 0 -or $NscLaunchedFlux -lt 0 -or [double]::IsNaN($NscLaunchedFlux) -or [double]::IsInfinity($NscLaunchedFlux) -or
     ($NscEnergyDetectorObject -gt 0 -and -not $VerifyNsc) -or
     ($NscLaunchedFlux -gt 0 -and $NscEnergyDetectorObject -eq 0)) {
     throw "NSC budgeting requires -VerifyNsc -NscEnergyDetectorObject <positive>; optional -NscLaunchedFlux must be positive and finite."
