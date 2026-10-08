@@ -337,6 +337,9 @@
     </Style>
   </Window.Resources>
 
+  <TabControl x:Name="MainSections" Background="Transparent" BorderThickness="0" Padding="0"
+              Margin="8,4,8,4" SelectedIndex="0">
+    <TabItem Header="Overview" Padding="12,4">
   <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
     <Grid Margin="28,20,28,24">
       <Grid.RowDefinitions>
@@ -362,8 +365,10 @@
                   ToolTip="Stop the local MCP service" Click="Stop_Click"/>
           <Button Content="Refresh" Style="{StaticResource ActionButton}" MinWidth="74" Height="34" Padding="10,5" Margin="0,0,7,0"
                   ToolTip="Refresh live service status" Click="RefreshStatus_Click"/>
-          <Button Content="Test MCP" Style="{StaticResource ActionButton}" MinWidth="80" Height="34" Padding="10,5" Margin="0,0,9,0"
-                  ToolTip="Test the currently selected MCP endpoint" Click="TestMcp_Click"/>
+          <Button Content="Check connection" Style="{StaticResource ActionButton}" MinWidth="120" Height="34" Padding="9,5" Margin="0,0,7,0"
+                  ToolTip="Inspect Host, authentication, Worker, ZOS-API and license without changing the optical system" Click="CheckConnection_Click"/>
+          <Button Content="Test MCP tools" Style="{StaticResource ActionButton}" MinWidth="110" Height="34" Padding="9,5" Margin="0,0,9,0"
+                  ToolTip="Actually perform tools/list and a read-only tools/call and inspect Tasks capability; no optical edits or long Jobs" Click="TestMcpTools_Click"/>
           <Button Content="Exit service" Style="{StaticResource ExitButton}" VerticalAlignment="Center"
                   ToolTip="Stop the MCP service and close the launcher" Click="Exit_Click"/>
         </StackPanel>
@@ -579,6 +584,20 @@
           <TextBlock x:Name="ConnectionSummary" Text="Checking status automatically…" TextWrapping="Wrap"
                      TextTrimming="CharacterEllipsis" Height="36" ToolTip="{Binding Text, ElementName=ConnectionSummary}"
                      Foreground="{StaticResource BodyBrush}" FontSize="13" LineHeight="18"/>
+          <Grid Margin="0,11,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel>
+              <TextBlock Text="Background task center" Style="{StaticResource StatusHeading}"/>
+              <TextBlock x:Name="TaskCenterSummary" Text="No background Jobs reported." Style="{StaticResource HelperText}" Margin="0,3,0,5"/>
+              <ComboBox x:Name="TaskCenterJobs" Height="32" DisplayMemberPath="DisplayText"
+                        AutomationProperties.Name="Select background Job" SelectionChanged="TaskCenterJobs_SelectionChanged"
+                        ToolTip="Jobs shown here are diagnostic data. Cancelling requires the same authenticated MCP ownership as the originating client."/>
+            </StackPanel>
+            <Button Grid.Column="1" x:Name="TaskCenterCancel" Content="Request cancel" IsEnabled="False"
+                    Style="{StaticResource SmallButton}" Margin="10,22,0,0" VerticalAlignment="Center"
+                    ToolTip="Requests cooperative cancellation through the existing MCP job-cancel tool. Unauthorized owners are denied; never forcibly kills the Worker."
+                    Click="TaskCenterCancel_Click"/>
+          </Grid>
           <TextBox x:Name="Status" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                    Height="44" Margin="0,8,0,0" Padding="10,6" Background="#F5F5F7" Foreground="#6E6E73"
                    BorderBrush="#E8E8ED" BorderThickness="1" FontFamily="Consolas" FontSize="12"/>
@@ -586,4 +605,53 @@
       </Border>
     </Grid>
   </ScrollViewer>
+    </TabItem>
+    <TabItem Header="Tasks" Padding="12,4">
+      <Grid Margin="20,15,20,20">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <StackPanel>
+            <TextBlock Text="Background Tasks &amp; Jobs" FontSize="24" FontWeight="SemiBold" Foreground="{StaticResource HeadingBrush}"/>
+            <TextBlock x:Name="TasksPageSummary" Text="Waiting for Worker diagnostics..." Style="{StaticResource HelperText}" Margin="0,5,0,8"/>
+          </StackPanel>
+          <ComboBox x:Name="TasksPageFilter" Grid.Column="1" Width="160" Height="32" Margin="12,0,0,0"
+                    VerticalAlignment="Center" SelectedIndex="0" SelectionChanged="TasksPageFilter_Changed"
+                    AutomationProperties.Name="Filter Tasks and Jobs by state">
+            <ComboBoxItem Content="All"/>
+            <ComboBoxItem Content="Running"/>
+            <ComboBoxItem Content="Queued"/>
+            <ComboBoxItem Content="Completed"/>
+            <ComboBoxItem Content="Failed"/>
+            <ComboBoxItem Content="Cancelled"/>
+          </ComboBox>
+        </Grid>
+        <TextBlock Grid.Row="1" Text="Select a job to inspect state, owner visibility, generation, elapsed time and any reported failure. This page never grants elevated access."
+                   Style="{StaticResource HelperText}" TextWrapping="Wrap" Margin="0,8,0,12"/>
+        <Grid Grid.Row="2">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="1.1*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="1*"/></Grid.ColumnDefinitions>
+          <ListBox x:Name="TasksPageJobs" Grid.Column="0" DisplayMemberPath="DisplayText" MinHeight="280"
+                   SelectionChanged="TasksPageJobs_Changed" AutomationProperties.Name="Background Job list"/>
+          <TextBox x:Name="TasksPageDetail" Grid.Column="2" IsReadOnly="True" TextWrapping="Wrap"
+                   VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="12"
+                   Padding="12" Text="Select a Job to inspect its details."/>
+        </Grid>
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+          <TextBox x:Name="TasksPageTaskId" Width="150" Height="32" Margin="0,0,8,0" Padding="7,5"
+                   ToolTip="Optional exact MCP Task ID returned by an AI client. Not a Worker Job ID."/>
+          <Button Content="Get Task result" Style="{StaticResource ActionButton}"
+                  MinWidth="112" Margin="0,0,9,0" Click="TasksPageGetTask_Click"/>
+          <Button x:Name="TasksPageViewResult" Content="View Job result" Style="{StaticResource ActionButton}" IsEnabled="False"
+                  MinWidth="118" Margin="0,0,9,0" Click="TasksPageViewResult_Click"/>
+          <Button x:Name="TasksPageCancel" Content="Request cancel" Style="{StaticResource SmallButton}" IsEnabled="False"
+                  MinWidth="130" Click="TasksPageCancel_Click"/>
+        </StackPanel>
+      </Grid>
+    </TabItem>
+  </TabControl>
 </Window>

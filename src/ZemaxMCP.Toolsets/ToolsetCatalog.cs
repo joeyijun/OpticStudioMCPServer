@@ -62,6 +62,8 @@ public static class ToolsetCatalog
         ["zemax_add_surface"] = "sequential-editing",
         ["zemax_batch_set_surfaces"] = "sequential-editing",
         ["zemax_aperture_throughput"] = "analysis",
+        ["zemax_energy_budget"] = "analysis",
+        ["zemax_ray_footprint"] = "analysis",
         ["zemax_cardinal_points"] = "analysis",
         ["zemax_chromatic_focal_shift"] = "analysis",
         ["zemax_clear_vignetting"] = "sequential-editing",
@@ -105,6 +107,7 @@ public static class ToolsetCatalog
         ["zemax_get_nsc_object_parameters"] = "non-sequential",
         ["zemax_get_nsc_objects"] = "non-sequential",
         ["zemax_nsc_scene_summary"] = "non-sequential",
+        ["zemax_nsc_energy_budget"] = "non-sequential",
         ["zemax_get_polarization"] = "polarization",
         ["zemax_get_ray_aiming"] = "system",
         ["zemax_get_ray_aiming_settings"] = "system",
@@ -199,13 +202,13 @@ public static class ToolsetCatalog
     // it can observe and analyse a sequential system, but cannot alter it.
     private static readonly HashSet<string> ReadOnlyTools = new HashSet<string>(StringComparer.Ordinal)
     {
-        "zemax_aperture_throughput", "zemax_cardinal_points", "zemax_chromatic_focal_shift", "zemax_diffraction_encircled_energy", "zemax_fft_mtf", "zemax_fft_mtf_vs_field",
+        "zemax_aperture_throughput", "zemax_energy_budget", "zemax_ray_footprint", "zemax_cardinal_points", "zemax_chromatic_focal_shift", "zemax_diffraction_encircled_energy", "zemax_fft_mtf", "zemax_fft_mtf_vs_field",
         "zemax_fft_psf", "zemax_field_curvature_distortion", "zemax_filter_glasses", "zemax_geometric_encircled_energy", "zemax_geometric_image_analysis",
         "zemax_geometric_mtf", "zemax_geometric_mtf_vs_field", "zemax_get_advanced_system_settings", "zemax_get_afocal_mode", "zemax_get_aperture_settings",
         "zemax_get_apodization", "zemax_get_aspheric_surface", "zemax_get_clear_semi_diameter_margin", "zemax_get_configuration",
         "zemax_get_configuration_operands", "zemax_get_environment", "zemax_get_extra_data", "zemax_get_field_settings", "zemax_get_first_order_data",
         "zemax_get_glass_catalogs", "zemax_get_glasses", "zemax_get_global_matrix", "zemax_get_material_catalog_settings", "zemax_get_merit_function",
-        "zemax_get_mtf_units", "zemax_get_nonsequential_system_settings", "zemax_get_nsc_detector", "zemax_get_nsc_object_parameters", "zemax_get_nsc_objects", "zemax_nsc_scene_summary",
+        "zemax_get_mtf_units", "zemax_get_nonsequential_system_settings", "zemax_get_nsc_detector", "zemax_get_nsc_object_parameters", "zemax_get_nsc_objects", "zemax_nsc_scene_summary", "zemax_nsc_energy_budget",
         "zemax_get_polarization", "zemax_get_ray_aiming", "zemax_get_ray_aiming_settings", "zemax_get_stop_surface", "zemax_get_surface",
         "zemax_get_surface_aperture", "zemax_get_surface_solves", "zemax_get_system", "zemax_get_system_files", "zemax_get_system_metadata",
         "zemax_get_tolerances", "zemax_tolerance_summary", "zemax_get_units", "zemax_get_variables", "zemax_get_vignetting", "zemax_get_wavelength_settings", "zemax_huygens_psf",
@@ -245,7 +248,7 @@ public static class ToolsetCatalog
                 "zemax_get_aperture_settings", "zemax_get_advanced_system_settings", "zemax_get_ray_aiming_settings",
                 "zemax_get_material_catalog_settings", "zemax_get_configuration", "zemax_get_field_settings",
                 "zemax_get_wavelength_settings", "zemax_get_stop_surface", "zemax_get_first_order_data",
-                "zemax_get_surface", "zemax_get_surface_aperture", "zemax_get_vignetting",
+                "zemax_get_surface", "zemax_get_surface_aperture", "zemax_get_vignetting", "zemax_energy_budget", "zemax_ray_footprint",
                 "zemax_cardinal_points", "zemax_fft_mtf", "zemax_fft_psf", "zemax_spot_diagram",
                 "zemax_rms_spot", "zemax_ray_fan", "zemax_ray_trace", "zemax_ray_trace_diagnostics", "zemax_field_curvature_distortion",
                 "zemax_chromatic_focal_shift", "zemax_lateral_color", "zemax_relative_illumination",
@@ -273,7 +276,7 @@ public static class ToolsetCatalog
                 "zemax_quick_focus", "zemax_scale_lens",
                 "zemax_cardinal_points", "zemax_fft_mtf", "zemax_fft_mtf_vs_field", "zemax_fft_psf",
                 "zemax_spot_diagram", "zemax_rms_spot", "zemax_ray_fan", "zemax_opd_fan",
-                "zemax_ray_trace", "zemax_ray_trace_diagnostics", "zemax_ray_trace_extended", "zemax_field_curvature_distortion",
+                "zemax_ray_trace", "zemax_ray_trace_diagnostics", "zemax_ray_trace_extended", "zemax_energy_budget", "zemax_ray_footprint", "zemax_field_curvature_distortion",
                 "zemax_chromatic_focal_shift", "zemax_lateral_color", "zemax_relative_illumination",
                 "zemax_seidel_coefficients", "zemax_geometric_mtf", "zemax_huygens_psf"),
 
@@ -283,7 +286,7 @@ public static class ToolsetCatalog
                 "zemax_get_system_metadata", "zemax_get_environment", "zemax_get_material_catalog_settings",
                 "zemax_get_polarization", "zemax_get_nonsequential_system_settings",
                 "zemax_get_nsc_objects", "zemax_get_nsc_object_parameters", "zemax_get_nsc_detector",
-                "zemax_nsc_scene_summary", "zemax_run_nsc_ray_trace",
+                "zemax_nsc_scene_summary", "zemax_nsc_energy_budget", "zemax_run_nsc_ray_trace",
                 "zemax_job_status", "zemax_job_list", "zemax_job_cancel", "zemax_export_analysis"),
 
             [OptimizationTolerance] = NewToolSet(
@@ -302,7 +305,7 @@ public static class ToolsetCatalog
                 "zemax_job_status", "zemax_job_list", "zemax_job_cancel", "zemax_get_tolerances", "zemax_tolerance_summary", "zemax_run_tolerancing",
                 "zemax_cardinal_points", "zemax_fft_mtf", "zemax_fft_mtf_vs_field", "zemax_fft_psf",
                 "zemax_spot_diagram", "zemax_rms_spot", "zemax_ray_fan", "zemax_opd_fan",
-                "zemax_ray_trace", "zemax_ray_trace_diagnostics", "zemax_field_curvature_distortion", "zemax_chromatic_focal_shift",
+                "zemax_ray_trace", "zemax_ray_trace_diagnostics", "zemax_energy_budget", "zemax_ray_footprint", "zemax_field_curvature_distortion", "zemax_chromatic_focal_shift",
                 "zemax_relative_illumination", "zemax_seidel_coefficients")
         };
 

@@ -34,7 +34,7 @@ For a single computer, the AI client uses the local MCP address. For two compute
 - **Upgrade-safe installation** — GUI and portable upgrades preserve connection settings, credentials, LAN sharing preferences and runtime data. The installer waits for old application processes, retries transient file locks, prevents overlapping updates, and uses versioned shortcut icon paths to avoid stale icon caches.
 - **Graphical install and update** — `Install.exe`, existing portable installs, and in-app updates converge on the same Updater replacement/rollback path for upgrades. Fresh installs copy only runtime payloads; package-only installer/update metadata is not left in the installed tree. Portable fallback is explicit when replacement cannot complete.
 - **Official .NET 10 MCP Host** — `ZemaxMCP.Host` uses stable `ModelContextProtocol.AspNetCore` 2.1 for Streamable HTTP, protocol negotiation, request IDs, SSE, cancellation, progress, and compatibility. The application does not maintain a hand-written MCP HTTP/JSON-RPC dispatcher.
-- **Static Host tool contract** — a build-time Roslyn generator produces the 135 tool names, descriptions, JSON schemas, domains, and impact levels. `tools/list` is answered by the Host without starting OpticStudio or the Worker.
+- **Static Host tool contract** — a build-time Roslyn generator produces the 138 tool names, descriptions, JSON schemas, domains, and impact levels. `tools/list` is answered by the Host without starting OpticStudio or the Worker.
 - **Hardened Host / Worker isolation** — MCP ends at the Host. The `net48` Worker accepts only private RPC v3, keeps STA/ZOS-API state, and never exposes a network transport. The Host verifies Worker PID, per-launch secret, RPC version, and the static manifest SHA-256 fingerprint before ZOS-API initialization or any OpticStudio COM operation.
 - **Transport-independent control lease** — modern MCP requests can be stateless while OpticStudio remains deliberately single-owner, single-STA, and serialized. Per-instance identity prevents supported same-machine clients from collapsing into one owner.
 - **Authenticated LAN use** — every launcher-managed request uses a random Bearer token. LAN listening is refused without a token, and token rotation is one click.
@@ -88,7 +88,7 @@ See `docs/ZOSAPI_COMPATIBILITY.md` for the current 2021/2023/2024/2026 compatibi
 
 Hosted CI validates the public/static contract, safety metadata, Host/private-RPC boundary, recovery paths, desktop packaging, updater rollback, signed-update tamper rejection, and the cross-version ZOS-API policy guards. It also runs functional safety guards that keep global ZOS-API initialization in Worker startup and prohibit ReadOnly analysis tools from structurally modifying the user's Merit Function Editor.
 
-A licensed OpticStudio installation is still required for release acceptance. `scripts/verify-live-mcp.ps1` verifies the transport/contract/safety boundary, while `scripts/verify-live-functional.ps1` requires explicit `-AllowReplaceCurrentSystem` acknowledgement, copies a supplied ZMX/ZOS fixture to a temporary working file, verifies fixture identity before mutation, and performs real edit/readback plus optional optimization, background-job, NSC, and tolerance acceptance, emitting a JSON report. `docs/RELEASE_VALIDATION.md` records the staged 135-tool review, old-version compile matrix, and exact live release gate. A green hosted workflow is therefore necessary but is not claimed as proof that every ZOS-API operation has been exercised against a real OpticStudio build.
+A licensed OpticStudio installation is still required for release acceptance. `scripts/verify-live-mcp.ps1` verifies the transport/contract/safety boundary, while `scripts/verify-live-functional.ps1` requires explicit `-AllowReplaceCurrentSystem` acknowledgement, copies a supplied ZMX/ZOS fixture to a temporary working file, verifies fixture identity before mutation, and performs real edit/readback plus optional optimization, background-job, NSC, and tolerance acceptance, emitting a JSON report. `docs/RELEASE_VALIDATION.md` records the staged 138-tool review, old-version compile matrix, and exact live release gate. A green hosted workflow is therefore necessary but is not claimed as proof that every ZOS-API operation has been exercised against a real OpticStudio build.
 
 ## Connection modes
 
@@ -127,7 +127,7 @@ Clients capable of setting custom MCP request metadata may send `io.zemaxmcp/cli
 
 ## MCP capabilities
 
-The full-expert package contains 135 named tools; a narrower run configuration exposes only its permitted subset. AI clients discover the exact version-matched schemas through MCP `tools/list`; `zemax_tool_catalog` reads the same static manifest and returns each tool's domain, impact, description, and safety guidance. Use the installed package's `tools/list` as the authoritative source rather than treating this README as a complete API reference.
+The current development branch contains 138 named tools; the signed v1.5.0 release contained 135. a narrower run configuration exposes only its permitted subset. AI clients discover the exact version-matched schemas through MCP `tools/list`; `zemax_tool_catalog` reads the same static manifest and returns each tool's domain, impact, description, and safety guidance. Use `zemax_tool_catalog` with `task=clipping|imaging|straylight|energy|optimize|tolerance|safe-edit` for an ordered, profile-aware shortlist. The new `zemax_energy_budget` and `zemax_ray_footprint` provide bounded, read-only sequential ray-based diagnostics; NSC detector ROI pixels and a detector-specific launched-flux ratio are available separately. These are *not* absolute spectral radiometry without a sourced power denominator. See [Engineering optical analysis](docs/ENGINEERING_OPTICS.md) for limits, examples and interpretation. Use the installed package's `tools/list` as the authoritative source rather than treating this README as a complete API reference.
 
 ### Tool navigation, run configurations, and safety
 
@@ -135,11 +135,11 @@ The launcher can expose a smaller task-focused tool surface without renaming MCP
 
 | Launcher configuration | Enabled domains and impacts |
 |---|---|
-| **View & analyze** | 34 explicitly selected read-only inspection/analysis tools |
-| **Sequential design** | 79 explicitly selected sequential edit, system, file, snapshot, polarization, and analysis tools |
-| **Non-sequential & stray light** | 24 explicitly selected NSC inspection, tracing, Job monitoring/cancellation, system/file, snapshot, polarization, and diagnostic tools |
-| **Optimization & tolerancing** | 66 explicitly selected optimization, job, tolerance, core sequential, file, snapshot, and verification tools |
-| **Full expert** | All 135 tools and all impacts |
+| **View & analyze** | 36 explicitly selected read-only inspection/analysis tools |
+| **Sequential design** | 81 explicitly selected sequential edit, system, file, snapshot, polarization, and analysis tools |
+| **Non-sequential & stray light** | 25 explicitly selected NSC inspection, tracing, Job monitoring/cancellation, system/file, snapshot, polarization, and diagnostic tools |
+| **Optimization & tolerancing** | 68 explicitly selected optimization, job, tolerance, core sequential, file, snapshot, and verification tools |
+| **Full expert** | All 138 tools and all impacts |
 
 For authenticated multi-client Hosts, [Job ownership and scoped diagnostics](docs/MULTI_CLIENT_AUTH.md#job-ownership-and-diagnostics) prevent cross-token status, result, list, and cancel access; legacy process-global multistart status/stop are not exposed. [Official Tasks integration](docs/TASKS_ADOPTION.md) is experimental and enabled by default. On the OpticStudio computer, use **Run configuration → Enable official Tasks (experimental)** to change it, then Stop / Start when idle. The preference persists across restarts; command-line Hosts can disable it with `--enable-official-tasks false`. Compatible clients must still opt in per request; ordinary clients retain normal tool/Job responses. Fake-Worker tests pass, while licensed official Tasks completion/cancellation/recovery acceptance remains pending.
 

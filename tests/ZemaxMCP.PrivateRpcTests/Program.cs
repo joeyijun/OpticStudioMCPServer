@@ -10,6 +10,7 @@ using ModelContextProtocol.Protocol;
 using ZemaxMCP.HttpBridge.ModernHost;
 using ZemaxMCP.Rpc;
 using ZemaxMCP.Server.Tooling;
+using ZemaxMCP.Server.Tools.Catalog;
 using ZemaxMCP.ToolManifest;
 
 namespace ZemaxMCP.PrivateRpcTests;
@@ -30,6 +31,7 @@ internal static class Program
         {
             VerifyActivityOwnership();
             VerifyOfficialTasksDefaults();
+            VerifyTaskPlanningCatalog();
             VerifyOriginBoundary();
             await VerifyBackgroundJobLeaseRetentionAsync().ConfigureAwait(false);
             await VerifyCancelledLeaseWaitAsync().ConfigureAwait(false);
@@ -41,6 +43,7 @@ internal static class Program
             await VerifyContractMismatchRejectedAsync().ConfigureAwait(false);
             await VerifyPipeFaultRecoveryAsync().ConfigureAwait(false);
             await VerifyHardTimeoutRecoveryAsync().ConfigureAwait(false);
+            await VerifyNonCooperativeToolHardRecoveryAsync().ConfigureAwait(false);
             await VerifyClientCancellationRecoveryBarrierAsync().ConfigureAwait(false);
             await VerifyProgressEventDispatchAsync().ConfigureAwait(false);
             await VerifyMcpHttpToWorkerEndToEndAsync().ConfigureAwait(false);
@@ -53,6 +56,53 @@ internal static class Program
             Console.Error.WriteLine(ex);
             return 1;
         }
+    }
+
+    private static void VerifyTaskPlanningCatalog()
+    {
+        var previous = Environment.GetEnvironmentVariable("ZEMAX_MCP_TOOLSET");
+        var previousReadOnly = Environment.GetEnvironmentVariable("ZEMAX_MCP_READ_ONLY");
+        try
+        {
+            Environment.SetEnvironmentVariable("ZEMAX_MCP_TOOLSET", "basic-viewing");
+            Environment.SetEnvironmentVariable("ZEMAX_MCP_READ_ONLY", "1");
+            var catalog = new ToolCatalogTool();
+            var clipping = catalog.Execute(task: "clipping");
+            Assert(clipping.Playbooks.Count == 1 && clipping.Playbooks[0].Id == "clipping",
+                "Task planner should return the requested focused playbook.");
+            Assert(clipping.Playbooks[0].AvailableSteps.Contains("zemax_ray_trace_diagnostics") &&
+                   clipping.Playbooks[0].UnavailableSteps.Contains("zemax_aperture_throughput"),
+                "Task planner must identify both available and omitted operations for a narrow profile.");
+            Assert(clipping.Tools.All(entry => clipping.Playbooks[0].AvailableSteps.Contains(entry.Name)),
+                "Task-specific catalog must not advertise unrelated tools.");
+
+            Environment.SetEnvironmentVariable("ZEMAX_MCP_TOOLSET", "nonsequential-stray-light");
+            Environment.SetEnvironmentVariable("ZEMAX_MCP_READ_ONLY", "0");
+            var energy = catalog.Execute(task: "energy");
+            Assert(energy.Playbooks[0].AvailableSteps.Contains("zemax_get_nsc_detector") &&
+                   energy.Playbooks[0].AvailableSteps.Contains("zemax_nsc_energy_budget"),
+                "NSC energy playbook must include detector data and bounded budget tools.");
+            AssertThrows<ArgumentException>(
+                () => catalog.Execute(task: "invented-task"),
+                "Unknown AI playbook names must fail rather than silently selecting a broad catalog.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ZEMAX_MCP_TOOLSET", previous);
+            Environment.SetEnvironmentVariable("ZEMAX_MCP_READ_ONLY", previousReadOnly);
+        }
+    }
+
+    private static void Assert(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+    }
+
+    private static void AssertThrows<T>(Action action, string message) where T : Exception
+    {
+        try { action(); }
+        catch (T) { return; }
+        throw new InvalidOperationException(message);
     }
 
     private static void VerifyOfficialTasksDefaults()
@@ -346,6 +396,33 @@ internal static class Program
         Environment.SetEnvironmentVariable("ZEMAX_MCP_FAKE_WORKER_MODE", null);
         var recovered = await client.GetStatusAsync(CancellationToken.None).ConfigureAwait(false);
         if (!recovered.Connected) throw new InvalidOperationException("Host did not start a clean Worker after hard recovery.");
+    }
+
+    private static async Task VerifyNonCooperativeToolHardRecoveryAsync()
+    {
+        // This is a deterministic RPC/Worker-process fault injection. The fake
+        // Worker never responds to cancellation; it is not an actual ZOS COM
+        // invocation. It proves the Host's hard timer kills that generation.
+        Environment.SetEnvironmentVariable("ZEMAX_MCP_FAKE_WORKER_MODE", null);
+        await using var client = new WorkerRpcClient(CreateOptions(10, 20));
+        var ready = await client.GetStatusAsync(CancellationToken.None).ConfigureAwait(false);
+        if (!ready.Connected) throw new InvalidOperationException("Initial fake Worker connection failed.");
+        var before = client.CurrentGeneration;
+        var timer = Stopwatch.StartNew();
+        try
+        {
+            await client.CallToolAsync(TestTool("zemax_test_hang"), CancellationToken.None).ConfigureAwait(false);
+            throw new InvalidOperationException("A non-cooperative Worker tool unexpectedly completed.");
+        }
+        catch (TimeoutException) { }
+
+        timer.Stop();
+        if (timer.Elapsed < TimeSpan.FromSeconds(10) || timer.Elapsed > TimeSpan.FromSeconds(26))
+            throw new InvalidOperationException("Hard recovery did not respect its configured soft/hard timeout window.");
+
+        var result = await client.CallToolAsync(TestTool("zemax_test_echo"), CancellationToken.None).ConfigureAwait(false);
+        if (result.IsError == true || client.CurrentGeneration <= before)
+            throw new InvalidOperationException("A non-cooperative fake Worker was not replaced by a newer, responsive generation.");
     }
 
     private static async Task VerifyClientCancellationRecoveryBarrierAsync()
@@ -664,6 +741,24 @@ internal static class Program
                 if (!started.IsSuccessStatusCode || !body.Contains("fake-owned-job", StringComparison.Ordinal))
                     throw new InvalidOperationException("The scoped test Job did not register its creator: " + body);
             }
+            // The Launcher consumes /health and /activity. Those endpoints
+            // must obey exactly the same scoped ownership confidentiality as
+            // explicit Job status/list and official Tasks.
+            foreach (var route in new[] { "/health", "/activity" })
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, endpoint + route);
+                request.Headers.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", writer);
+                using var response = await client.SendAsync(request).ConfigureAwait(false);
+                var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode ||
+                    body.Contains("fake-owned-job", StringComparison.Ordinal) ||
+                    body.Contains("token:scoped:writer-two", StringComparison.Ordinal) ||
+                    body.Contains("zemax_run_nsc_ray_trace", StringComparison.Ordinal) ||
+                    body.Contains("private-job-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Scoped diagnostic endpoint exposed a foreign background Job: " + route);
+            }
+
             using (var foreignStatus = await SendScopedAsync(client, endpoint, 109, "tools/call", "zemax_job_status", writer,
                        new { jobId = "fake-owned-job" }).ConfigureAwait(false))
             {

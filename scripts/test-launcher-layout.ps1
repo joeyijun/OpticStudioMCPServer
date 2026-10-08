@@ -32,7 +32,9 @@ function Render($window, [string]$name) {
 try {
  Render $owner 'dashboard.png'
  if ($owner.Width -ne 960 -or $owner.Height -ne 740) { throw 'Compact default window size regressed.' }
- $scroll = $owner.Content
+ $tabs = $owner.Content
+ if ($tabs -isnot [System.Windows.Controls.TabControl] -or $tabs.Items.Count -lt 2) { throw 'Launcher must expose overview and an independent Tasks page.' }
+ $scroll = $tabs.Items[0].Content
  if ($scroll.ScrollableHeight -le 0) { throw 'Compact window must allow scrolling to lower content.' }
  $bar = $scroll.Template.FindName('PART_VerticalScrollBar', $scroll)
  if ($bar.Width -ne 12) { throw 'Slim scrollbar hit-target width regressed.' }
@@ -41,6 +43,12 @@ try {
  $scroll.ScrollToVerticalOffset(70)
  $scroll.UpdateLayout()
  if ($scroll.VerticalOffset -le 0) { throw 'Slim scrollbar cannot scroll content.' }
+ $tabs.SelectedIndex = 1
+ $tabs.UpdateLayout()
+ Render $owner 'tasks-page.png'
+ if ($tabs.Items[1].Header -ne 'Tasks') { throw 'Independent Tasks tab not present.' }
+ $tabs.SelectedIndex = 0
+ $tabs.UpdateLayout()
  [void]([Windows.Interop.WindowInteropHelper]::new($owner)).EnsureHandle()
  $flags = [Reflection.BindingFlags]'Instance,NonPublic'
  $constructor = $assembly.GetType('ZemaxMCP.Launcher.LauncherDialog').GetConstructors($flags)[0]

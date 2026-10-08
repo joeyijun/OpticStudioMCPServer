@@ -9,8 +9,8 @@ internal static class StaticToolManifestAssertions
     [ModuleInitializer]
     internal static void VerifyStaticToolManifestContract()
     {
-        if (StaticToolManifest.All.Count != 135)
-            throw new InvalidOperationException("Static Host tool manifest must contain all 135 Worker commands.");
+        if (StaticToolManifest.All.Count != 138)
+            throw new InvalidOperationException("Static Host tool manifest must contain all 138 Worker commands.");
         if (StaticToolManifest.ContractFingerprint.Length != 64 ||
             StaticToolManifest.ContractFingerprint.Any(character => !Uri.IsHexDigit(character)))
             throw new InvalidOperationException("Static tool contract fingerprint must be a SHA-256 hex digest.");
@@ -37,11 +37,11 @@ internal static class StaticToolManifestAssertions
 
         var expectedProfileCounts = new Dictionary<string, int>(StringComparer.Ordinal)
         {
-            ["basic-viewing"] = 34,
-            ["sequential-design"] = 79,
-            ["nonsequential-stray-light"] = 24,
-            ["optimization-tolerance"] = 66,
-            ["full-expert"] = 135
+            ["basic-viewing"] = 36,
+            ["sequential-design"] = 81,
+            ["nonsequential-stray-light"] = 25,
+            ["optimization-tolerance"] = 68,
+            ["full-expert"] = 138
         };
         foreach (var pair in expectedProfileCounts)
         {
@@ -52,6 +52,36 @@ internal static class StaticToolManifestAssertions
         if (StaticToolManifest.IsAllowed("nonsequential-stray-light", "zemax_set_surface", readOnly: false) ||
             StaticToolManifest.IsAllowed("optimization-tolerance", "zemax_get_nsc_objects", readOnly: false))
             throw new InvalidOperationException("Focused profiles leaked unrelated editor domains back into tools/list.");
+
+        var budget = StaticToolManifest.GetRequired("zemax_nsc_energy_budget");
+        if (budget.DomainId != "non-sequential" || budget.Impact != "ReadOnly" ||
+            !StaticToolManifest.IsAllowed("nonsequential-stray-light", budget.Name, readOnly: true) ||
+            StaticToolManifest.IsAllowed("basic-viewing", budget.Name, readOnly: false))
+            throw new InvalidOperationException("NSC energy budget must be non-mutating and available only in appropriate profiles.");
+        var budgetSchema = budget.InputSchema;
+        if (budgetSchema.GetProperty("properties").GetProperty("detectorObjects").GetProperty("type").GetString() != "array" ||
+            !budgetSchema.GetProperty("required").EnumerateArray().Any(x => x.GetString() == "detectorObjects"))
+            throw new InvalidOperationException("NSC energy budgeting must require an array of detector IDs.");
+
+        var detectorSchema = StaticToolManifest.GetRequired("zemax_get_nsc_detector").InputSchema.GetProperty("properties");
+        foreach (var field in new[] { "includePixels", "dataType", "startRow", "startColumn", "rowCount", "columnCount" })
+            if (!detectorSchema.TryGetProperty(field, out _))
+                throw new InvalidOperationException("Detector ROI tool is missing the published field " + field);
+
+        foreach (var pair in new[] {
+            (Name: "zemax_energy_budget", Domain: "analysis",
+                RequiredField: "gridSize"),
+            (Name: "zemax_ray_footprint", Domain: "analysis",
+                RequiredField: "maxPointsPerSurface")
+        })
+        {
+            var entry = StaticToolManifest.GetRequired(pair.Name);
+            if (entry.DomainId != pair.Domain || entry.Impact != "ReadOnly" ||
+                !StaticToolManifest.IsAllowed("sequential-design", pair.Name, readOnly: true) ||
+                StaticToolManifest.IsAllowed("nonsequential-stray-light", pair.Name, readOnly: false) ||
+                !entry.InputSchema.GetProperty("properties").TryGetProperty(pair.RequiredField, out _))
+                throw new InvalidOperationException("Engineering analysis tool schema/permission contract regressed: " + pair.Name);
+        }
 
         var snapshotList = StaticToolManifest.GetRequired("zemax_snapshot_list").InputSchema.GetProperty("properties");
         if (snapshotList.GetProperty("limit").GetProperty("default").GetInt32() != 25)

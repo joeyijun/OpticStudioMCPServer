@@ -20,6 +20,13 @@ internal static class WorkerTaskLedgerAssertions
         Assert(ledger.TryRegister("scoped:alice", "job-1", 5, out var task) && task != null,
             "A valid Worker Job must create one Task.");
         var taskId = task!.TaskId;
+        var visible = System.Text.Json.JsonSerializer.Serialize(ledger.ListOwnedMetadata("scoped:alice"));
+        var invisible = System.Text.Json.JsonSerializer.Serialize(ledger.ListOwnedMetadata("scoped:bob"));
+        if (!visible.Contains(taskId, StringComparison.Ordinal) ||
+            visible.Contains("real-optical-result", StringComparison.Ordinal) ||
+            invisible.Contains(taskId, StringComparison.Ordinal) ||
+            ledger.ListOwnedMetadata("").Count != 0)
+            throw new InvalidOperationException("Owner-scoped Task diagnostics must expose only owned identifiers and no result payloads.");
         Assert(task.State == "working" && task.Result == null,
             "A newly registered Task must not complete on receiving the Job ID.");
         Assert(!ledger.TryGet("scoped:bob", taskId, out _) &&

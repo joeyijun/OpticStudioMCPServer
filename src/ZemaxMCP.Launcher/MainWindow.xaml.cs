@@ -376,6 +376,265 @@ public partial class MainWindow : Window
         catch (Exception) { /* The next full health check owns offline state. */ }
         finally { _refreshingActivity = false; }
     }
+    private sealed class BackgroundJobView
+    {
+        public string JobId { get; set; } = "";
+        public string TaskId { get; set; } = "";
+        public bool IsOfficialTask => TaskId.Length > 0;
+        public string State { get; set; } = "";
+        public string DisplayText { get; set; } = "";
+        public string ToolName { get; set; } = "";
+        public string Message { get; set; } = "";
+        public string Owner { get; set; } = "Not individually reported";
+        public string WorkerGeneration { get; set; } = "Not reported";
+        public string Elapsed { get; set; } = "Not reported";
+        public string Queue { get; set; } = "";
+        public string Progress { get; set; } = "";
+        public bool IsActive => State.Equals("Queued", StringComparison.OrdinalIgnoreCase) ||
+            State.Equals("Running", StringComparison.OrdinalIgnoreCase) ||
+            State.Equals("Working", StringComparison.OrdinalIgnoreCase) ||
+            State.Equals("Cancelling", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private List<BackgroundJobView> _taskHistory = new List<BackgroundJobView>();
+
+    private void RefreshTaskCenter(JArray? jobs, JObject? health = null)
+    {
+        var selectedId = (TaskCenterJobs.SelectedItem as BackgroundJobView)?.JobId;
+        var items = (jobs ?? new JArray()).OfType<JObject>()
+            .Where(job => !string.IsNullOrWhiteSpace(job["jobId"]?.ToString()))
+            .Take(25)
+            .Select(job =>
+            {
+                var id = job["jobId"]!.ToString();
+                var state = job["state"]?.ToString() ?? "Unknown";
+                var tool = job["toolName"]?.ToString() ?? job["tool"]?.ToString() ?? "ZOS-API Job";
+                var progress = job["fraction"]?.Value<double?>() ?? job["progress"]?.Value<double?>();
+                var pct = progress.HasValue && !double.IsNaN(progress.Value) &&
+                    !double.IsInfinity(progress.Value) && progress.Value >= 0 && progress.Value <= 1
+                    ? " · " + Math.Round(progress.Value * 100) + "%" : "";
+                var queue = job["queuePosition"]?.Value<int?>() is { } position && position > 0
+                    ? " · queue " + position : "";
+                return new BackgroundJobView
+                {
+                    JobId = id,
+                    ToolName = tool,
+                    Message = job["message"]?.ToString() ?? "No Worker message.",
+                    Owner = job["owner"]?.ToString() ??
+                        (health?["clientIsolation"]?.ToString().Contains("scoped") == true ? "Authenticated credential (owner-filtered)" :
+                         (health?["controlLease"]?["owner"] == null ? "Not individually reported" :
+                            "current control lease: " + health["controlLease"]?["owner"]?.ToString() +
+                            " (may differ from Job creator)")),
+                    WorkerGeneration = health?["worker"]?["workerGeneration"]?.ToString() ?? "Not reported",
+                    Elapsed = job["elapsedSeconds"]?.ToString() ?? job["elapsed"]?.ToString() ?? "Not reported",
+                    Queue = queue,
+                    Progress = pct,
+                    State = state,
+                    DisplayText = tool + " · " + state + pct + queue + " · " + id.Substring(0, Math.Min(id.Length, 8))
+                };
+            }).ToList();
+
+        _taskHistory = items;
+        if (health?["tasks"] is JArray ownerTasks)
+        {
+            foreach (var record in ownerTasks.OfType<JObject>().Take(25))
+            {
+                var taskId = record["taskId"]?.ToString() ?? "";
+                if (taskId.Length == 0) continue;
+                var linkedJobId = record["jobId"]?.ToString() ?? "";
+                var state = record["state"]?.ToString() ?? "working";
+                var started = DateTimeOffset.TryParse(record["createdAt"]?.ToString(), out var born)
+                    ? born : DateTimeOffset.UtcNow;
+                var completedAt = DateTimeOffset.TryParse(record["updatedAt"]?.ToString(), out var updated)
+                    ? updated : DateTimeOffset.UtcNow;
+                var elapsed = ((state == "working" ? DateTimeOffset.UtcNow : completedAt) - started).TotalSeconds;
+                _taskHistory.Add(new BackgroundJobView
+                {
+                    TaskId = taskId,
+                    JobId = linkedJobId,
+                    State = state,
+                    ToolName = "Official MCP Task",
+                    Owner = "This authenticated credential",
+                    WorkerGeneration = record["generation"]?.ToString() ?? "Not reported",
+                    Elapsed = Math.Max(0, elapsed).ToString("F0") + "s",
+                    Message = (record["message"]?.ToString() ?? "") +
+                        (record["cancelRequested"]?.Value<bool>() == true ? " · cancellation requested" : "") +
+                        (record["resultExpired"]?.Value<bool>() == true ? " · result expired" : ""),
+                    DisplayText = "MCP Task · " + state + " · " + taskId.Substring(0, Math.Min(8, taskId.Length))
+                });
+            }
+        }
+        RefreshTasksPage();
+        TaskCenterJobs.ItemsSource = items;
+        TaskCenterJobs.SelectedItem = items.FirstOrDefault(item => item.JobId == selectedId)
+            ?? items.FirstOrDefault(item => item.IsActive) ?? items.FirstOrDefault();
+        var active = items.Count(item => item.IsActive);
+        TaskCenterSummary.Text = items.Count == 0
+            ? "No background Jobs reported for this client."
+            : active + " active · " + (items.Count - active) + " recent · most recent 25";
+        TaskCenterCancel.IsEnabled = (TaskCenterJobs.SelectedItem as BackgroundJobView)?.IsActive == true;
+    }
+
+    private void TaskCenterJobs_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        TaskCenterCancel.IsEnabled = (TaskCenterJobs.SelectedItem as BackgroundJobView)?.IsActive == true;
+    }
+
+    private async void TaskCenterCancel_Click(object sender, RoutedEventArgs e)
+    {
+        if (TaskCenterJobs.SelectedItem is not BackgroundJobView selection || !selection.IsActive) return;
+        await RequestCancellationAsync(selection);
+    }
+
+    private async Task RequestCancellationAsync(BackgroundJobView selection)
+    {
+        var decision = System.Windows.MessageBox.Show(
+            "Request cooperative cancellation of " + selection.DisplayText +
+            "?\nOnly the authenticated Job owner may cancel; other clients will be denied.",
+            "Cancel optical Job", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (decision != MessageBoxResult.Yes) return;
+        var endpoint = McpUrl;
+        var token = McpToken;
+        TaskCenterCancel.IsEnabled = false;
+        try
+        {
+            var result = await Task.Run(() => selection.IsOfficialTask
+                ? SendMcpJsonRpc(endpoint, token, "tasks/cancel",
+                    new JObject { ["taskId"] = selection.TaskId }, selection.TaskId)
+                    .ToString(Newtonsoft.Json.Formatting.None)
+                : RequestJobCancellation(endpoint, token, selection.JobId));
+            Report("Background Job cancel request: " + result);
+        }
+        catch (Exception ex)
+        {
+            Report("Background Job cancel denied or failed: " + ex.Message);
+        }
+        finally { await RefreshStatusAsync(); }
+    }
+
+    private void RefreshTasksPage()
+    {
+        if (TasksPageJobs == null) return;
+        var selected = (TasksPageJobs.SelectedItem as BackgroundJobView)?.JobId;
+        var state = (TasksPageFilter?.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() ?? "All";
+        var visible = _taskHistory.Where(item => state == "All" ||
+            (state == "Running" && item.State.Equals("Working", StringComparison.OrdinalIgnoreCase)) ||
+            string.Equals(item.State, state, StringComparison.OrdinalIgnoreCase)).ToList();
+        TasksPageJobs.ItemsSource = visible;
+        TasksPageJobs.SelectedItem = visible.FirstOrDefault(item => item.JobId == selected) ??
+            visible.FirstOrDefault();
+        TasksPageSummary.Text = visible.Count + " shown · " + _taskHistory.Count +
+            " reported (max 25 Worker Jobs plus 25 owner-visible Tasks).";
+    }
+
+    private void TasksPageFilter_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (TasksPageJobs != null) RefreshTasksPage();
+    }
+
+    private void TasksPageJobs_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (TasksPageDetail == null || TasksPageCancel == null || TasksPageViewResult == null) return;
+        var selected = TasksPageJobs?.SelectedItem as BackgroundJobView;
+        TasksPageCancel.IsEnabled = selected?.IsActive == true;
+        TasksPageViewResult.IsEnabled = selected != null;
+        TasksPageDetail.Text = selected == null ? "Select a Job to inspect its details." :
+            (selected.IsOfficialTask ? "Task ID: " + selected.TaskId + "\nLinked Job: " + selected.JobId :
+                "Job ID: " + selected.JobId) + "\nTool: " + selected.ToolName +
+            "\nState: " + selected.State +
+            "\nWorker generation: " + selected.WorkerGeneration +
+            "\nOwner visibility: " + selected.Owner +
+            "\nElapsed: " + selected.Elapsed +
+            "\nProgress: " + (string.IsNullOrWhiteSpace(selected.Progress) ? "Not reported" : selected.Progress) +
+            "\nQueue: " + (string.IsNullOrWhiteSpace(selected.Queue) ? "Not queued" : selected.Queue) +
+            "\nWorker message / failure reason: " + selected.Message +
+            "\n\n'View result' calls Tasks/get for owned official Tasks or job_status for Worker Jobs. "+
+            "A completed Job may have expired its result; official Tasks require their separate Task ID.";
+    }
+
+    private async void TasksPageCancel_Click(object sender, RoutedEventArgs e)
+    {
+        if (TasksPageJobs.SelectedItem is BackgroundJobView job && job.IsActive)
+            await RequestCancellationAsync(job);
+    }
+
+    private async void TasksPageViewResult_Click(object sender, RoutedEventArgs e)
+    {
+        if (TasksPageJobs.SelectedItem is not BackgroundJobView job) return;
+        var endpoint = McpUrl;
+        var token = McpToken;
+        TasksPageViewResult.IsEnabled = false;
+        try
+        {
+            var text = await Task.Run(() => job.IsOfficialTask
+                ? SendMcpJsonRpc(endpoint, token, "tasks/get",
+                    new JObject { ["taskId"] = job.TaskId }, job.TaskId)
+                    ["result"]?.ToString(Newtonsoft.Json.Formatting.Indented) ?? "No Task result returned."
+                : RequestJobTool(endpoint, token, job.JobId, "zemax_job_status"));
+            TasksPageDetail.Text = text.Length <= 24000 ? text :
+                text.Substring(0, 24000) + "\n[Display truncated to 24000 characters; full result stays on the Worker.]";
+        }
+        catch (Exception ex) { TasksPageDetail.Text = "Result retrieval unavailable: " + ex.Message; }
+        finally { TasksPageViewResult.IsEnabled = true; }
+    }
+
+    private static string RequestJobCancellation(string endpoint, string accessToken, string jobId)
+    {
+        _ = RequestJobTool(endpoint, accessToken, jobId, "zemax_job_cancel");
+        return "accepted for " + jobId + "; final state will be confirmed by the next status poll.";
+    }
+
+    private static string RequestJobTool(string endpoint, string accessToken, string jobId, string toolName)
+    {
+        // Always route through ordinary MCP tools/call so scoped ownership and
+        // the Worker's generation check remain authoritative. This is not an
+        // elevated Launcher-specific administrative cancellation API.
+        var body = new JObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = 1,
+            ["method"] = "tools/call",
+            ["params"] = new JObject
+            {
+                ["name"] = toolName,
+                ["arguments"] = new JObject { ["jobId"] = jobId },
+                ["_meta"] = new JObject
+                {
+                    ["io.modelcontextprotocol/protocolVersion"] = "2026-07-28",
+                    ["io.modelcontextprotocol/clientInfo"] = new JObject
+                    {
+                        ["name"] = "zemax-launcher",
+                        ["version"] = "1.5.0"
+                    }
+                }
+            }
+        };
+        var request = (HttpWebRequest)WebRequest.Create(endpoint);
+        request.Method = "POST";
+        request.ContentType = "application/json";
+        request.Accept = "application/json, text/event-stream";
+        request.Timeout = 15000;
+        request.Headers["MCP-Protocol-Version"] = "2026-07-28";
+        request.Headers["Mcp-Method"] = "tools/call";
+        request.Headers["Mcp-Name"] = toolName;
+        AddAuthorization(request, accessToken);
+        var bytes = Encoding.UTF8.GetBytes(body.ToString(Newtonsoft.Json.Formatting.None));
+        using (var stream = request.GetRequestStream()) stream.Write(bytes, 0, bytes.Length);
+        using var response = (HttpWebResponse)request.GetResponse();
+        using var reader = new StreamReader(response.GetResponseStream());
+        var raw = reader.ReadToEnd();
+        if (response.ContentType?.StartsWith("text/event-stream", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            raw = raw.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault(line => line.StartsWith("data:", StringComparison.Ordinal))?.Substring(5) ?? "";
+        }
+        var rpc = JObject.Parse(raw);
+        if (rpc["error"] != null || rpc["result"]?["isError"]?.Value<bool>() == true)
+            throw new InvalidOperationException("MCP rejected the request (not owner, stale generation, or cancellation error).");
+        return rpc["result"]?["content"]?.FirstOrDefault()?["text"]?.ToString() ??
+            rpc["result"]?.ToString(Newtonsoft.Json.Formatting.Indented) ?? "No Job result payload.";
+    }
+
     private async Task RefreshStatusAsync()
     {
         if (_refreshingStatus) return;
@@ -404,6 +663,10 @@ public partial class MainWindow : Window
                 "; current: " + (activeOperation["tool"]?.ToString() ?? activeOperation["method"]?.ToString() ?? "MCP request") +
                 " (" + FormatUptime(activeOperation["elapsedSeconds"]?.Value<long?>()) + ")";
             var jobs = health["jobs"] as JArray;
+            RefreshTaskCenter(jobs, health);
+            var leaseOwner = health["controlLease"]?["owner"]?.ToString();
+            if (!string.IsNullOrWhiteSpace(leaseOwner))
+                TaskCenterSummary.Text += " · controller: " + FormatClientName(leaseOwner);
             var activeJob = jobs?.FirstOrDefault(x =>
             {
                 var state = x["state"]?.ToString();
@@ -469,6 +732,11 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             _healthReachable = false;
+            TaskCenterCancel.IsEnabled = false;
+            TaskCenterSummary.Text = "Service offline; Job information unavailable.";
+            TaskCenterJobs.ItemsSource = null;
+            _taskHistory.Clear();
+            RefreshTasksPage();
             ConnectionSummary.Text = "Offline — MCP endpoint is not reachable\n" + endpoint;
             _fullDiagnostics = "MCP endpoint: not reachable\n" +
                 "ZOS-API files: " + (apiFiles ? "found" : root == null ? "remote endpoint" : "missing") +
@@ -746,34 +1014,164 @@ public partial class MainWindow : Window
         System.Windows.Clipboard.SetText(diagnostics);
         Report("Connection diagnostics copied to the clipboard.");
     }
-    private async void TestMcp_Click(object sender, RoutedEventArgs e)
+    private async void CheckConnection_Click(object sender, RoutedEventArgs e)
     {
         var endpoint = McpUrl;
-        var accessToken = McpToken;
-        Report("Testing MCP service: " + endpoint + "…");
-        try { Report(await Task.Run(() => TestMcp(endpoint, accessToken))); }
-        catch (Exception ex) { Report("MCP connection failed: " + ex.Message + Environment.NewLine + "On the OpticStudio computer, keep Start-Zemax-MCP open, start the bridge, then enable Share with a trusted LAN computer."); }
+        var token = McpToken;
+        Report("Checking Host/Worker/ZOS-API connection...");
+        try { Report(await Task.Run(() => CheckConnectionHealth(endpoint, token))); }
+        catch (Exception ex) { Report("Connection/authorization check failed: " + ex.Message); }
         await RefreshStatusAsync();
     }
-    private static string TestMcp(string endpoint, string accessToken)
+
+    private async void TestMcpTools_Click(object sender, RoutedEventArgs e)
+    {
+        var endpoint = McpUrl;
+        var token = McpToken;
+        Report("Testing MCP tools/list, read-only tool result and Tasks negotiation...");
+        try { Report(await Task.Run(() => TestMcpFunctionality(endpoint, token))); }
+        catch (Exception ex) { Report("MCP functionality check failed: " + ex.Message); }
+        await RefreshStatusAsync();
+    }
+
+    private static string CheckConnectionHealth(string endpoint, string accessToken)
     {
         var healthEndpoint = endpoint.TrimEnd('/') + "/health";
         var request = (HttpWebRequest)WebRequest.Create(healthEndpoint);
         request.Method = "GET";
         request.Accept = "application/json";
-        request.Timeout = 10000;
+        request.Timeout = 105000; // Cold Worker/ZOS-API bootstrap may legitimately take up to 90s.
         AddAuthorization(request, accessToken);
-        using (var response = (HttpWebResponse)request.GetResponse())
-        using (var reader = new StreamReader(response.GetResponseStream()))
+        using var response = (HttpWebResponse)request.GetResponse();
+        using var reader = new StreamReader(response.GetResponseStream());
+        var result = JObject.Parse(reader.ReadToEnd());
+        var bridge = result["bridgeRunning"]?.Value<bool>() == true;
+        var worker = result["mcpServerRunning"]?.Value<bool>() == true;
+        var zos = result["zosApiConnected"]?.Value<bool>() == true;
+        var loaded = result["zosApiLoaded"]?.Value<bool>() == true;
+        var licensed = result["licenseValidForApi"]?.Value<bool?>();
+        if (!bridge) throw new InvalidOperationException("Host is reachable but reports bridgeRunning=false.");
+        return "Connection check — Host: reachable; authentication: accepted; Worker: " +
+            (worker ? "running" : "unavailable") + "; ZOS-API: " +
+            (loaded ? "loaded" : "not loaded") + "; OpticStudio: " +
+            (zos ? "connected" : "disconnected") + "; license: " +
+            (result["licenseStatus"]?.ToString() ?? "not reported") +
+            "; API license valid: " + (licensed.HasValue ? licensed.Value.ToString() : "not reported") +
+            ". This is a health check, not a tool execution test.";
+    }
+
+    private static JObject SendMcpJsonRpc(string endpoint, string accessToken,
+        string method, JObject parameters, string? routingName = null)
+    {
+        // 2026-07-28 stateless MCP transport: no optical edits.
+        var meta = new JObject
         {
-            var result = JObject.Parse(reader.ReadToEnd());
-            var bridgeRunning = result["bridgeRunning"]?.Value<bool>() == true;
-            var serverRunning = result["mcpServerRunning"]?.Value<bool>() == true;
-            if (response.StatusCode != HttpStatusCode.OK || !bridgeRunning || !serverRunning)
-                throw new InvalidOperationException("the endpoint health check did not report a running MCP service.");
-            return "MCP connection succeeded: Zemax MCP service is reachable at " + endpoint;
+            ["io.modelcontextprotocol/protocolVersion"] = "2026-07-28",
+            ["io.modelcontextprotocol/clientInfo"] = new JObject
+            {
+                ["name"] = "zemax-launcher",
+                ["version"] = "1.5.0"
+            },
+            ["io.modelcontextprotocol/clientCapabilities"] = new JObject
+            {
+                ["extensions"] = new JObject { ["io.modelcontextprotocol/tasks"] = new JObject() }
+            }
+        };
+        parameters["_meta"] = meta;
+        var message = new JObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = 2741,
+            ["method"] = method,
+            ["params"] = parameters
+        };
+        var request = (HttpWebRequest)WebRequest.Create(endpoint);
+        request.Method = "POST";
+        request.ContentType = "application/json";
+        request.Accept = "application/json, text/event-stream";
+        request.Timeout = method == "tools/call" ? 105000 : 20000;
+        request.Headers["MCP-Protocol-Version"] = "2026-07-28";
+        request.Headers["Mcp-Method"] = method;
+        if (!string.IsNullOrEmpty(routingName)) request.Headers["Mcp-Name"] = routingName;
+        AddAuthorization(request, accessToken);
+        var bytes = Encoding.UTF8.GetBytes(message.ToString(Newtonsoft.Json.Formatting.None));
+        using (var stream = request.GetRequestStream()) stream.Write(bytes, 0, bytes.Length);
+        using var response = (HttpWebResponse)request.GetResponse();
+        using var reader = new StreamReader(response.GetResponseStream());
+        var raw = reader.ReadToEnd();
+        if (response.ContentType?.StartsWith("text/event-stream", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            // Choose the actual JSON data event; ignore SSE comments/keepalives.
+            var data = raw.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Where(line => line.StartsWith("data:", StringComparison.Ordinal))
+                .Select(line => line.Substring(5).Trim())
+                .FirstOrDefault(line => line.StartsWith("{", StringComparison.Ordinal));
+            if (string.IsNullOrWhiteSpace(data))
+                throw new InvalidDataException("MCP SSE response contained no JSON data event.");
+            raw = data;
+        }
+        var rpc = JObject.Parse(raw);
+        if (rpc["error"] is JToken error)
+            throw new InvalidOperationException("MCP " + method + ": " +
+                (error["message"]?.ToString() ?? "JSON-RPC error"));
+        return rpc;
+    }
+
+    private static string TestMcpFunctionality(string endpoint, string accessToken)
+    {
+        var list = SendMcpJsonRpc(endpoint, accessToken, "tools/list", new JObject());
+        var tools = list["result"]?["tools"] as JArray ??
+            throw new InvalidDataException("tools/list returned no tool array.");
+        if (tools.Count == 0 || !tools.Any(t => t["name"]?.ToString() == "zemax_status"))
+            throw new InvalidDataException("MCP has no discoverable read-only zemax_status tool.");
+        var status = SendMcpJsonRpc(endpoint, accessToken, "tools/call",
+            new JObject { ["name"] = "zemax_status", ["arguments"] = new JObject() }, "zemax_status");
+        if (status["result"]?["isError"]?.Value<bool>() == true ||
+            !(status["result"]?["content"] is JArray content) || content.Count == 0)
+            throw new InvalidDataException("Actual MCP zemax_status call returned no successful tool result.");
+
+        // Negotiate extension explicitly. This does not create a long-running
+        // optical Task: result round-trip is exercised only with an owned Task ID.
+        var init = SendMcpJsonRpc(endpoint, accessToken, "initialize",
+            new JObject
+            {
+                ["protocolVersion"] = "2026-07-28",
+                ["capabilities"] = new JObject
+                {
+                    ["extensions"] = new JObject { ["io.modelcontextprotocol/tasks"] = new JObject() }
+                },
+                ["clientInfo"] = new JObject { ["name"] = "zemax-launcher", ["version"] = "1.5.0" }
+            });
+        var tasks = init["result"]?["capabilities"]?["extensions"]?["io.modelcontextprotocol/tasks"] != null;
+        return "MCP functional test PASS — tools/list: " + tools.Count +
+            " tools; real read-only zemax_status: result returned; 2026-07-28 initialize: success; " +
+            "official Tasks advertised: " + (tasks ? "yes" : "no") +
+            ". A completed Task result requires an owned Task ID in the Tasks page; this test does not start an optical Job.";
+    }
+
+    private async void TasksPageGetTask_Click(object sender, RoutedEventArgs e)
+    {
+        var id = TasksPageTaskId.Text?.Trim() ?? "";
+        if (id.Length == 0 || id.Length > 128)
+        {
+            TasksPageDetail.Text = "Enter the exact MCP Task ID (not the Worker Job ID).";
+            return;
+        }
+        var endpoint = McpUrl;
+        var token = McpToken;
+        try
+        {
+            var result = await Task.Run(() => SendMcpJsonRpc(endpoint, token,
+                "tasks/get", new JObject { ["taskId"] = id }, id));
+            TasksPageDetail.Text = result["result"]?.ToString(Newtonsoft.Json.Formatting.Indented) ??
+                "No Task result returned.";
+        }
+        catch (Exception ex)
+        {
+            TasksPageDetail.Text = "Task result is unavailable (or not owned by this credential/client identity): " + ex.Message;
         }
     }
+
     private static void AddAuthorization(HttpWebRequest request, string accessToken)
     {
         if (!string.IsNullOrWhiteSpace(accessToken)) request.Headers[HttpRequestHeader.Authorization] = "Bearer " + accessToken;
