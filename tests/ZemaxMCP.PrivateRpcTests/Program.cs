@@ -717,6 +717,18 @@ internal static class Program
             }
 
 
+            // A synchronous tool never becomes a Task merely because the
+            // client advertises Tasks support.
+            using (var inline = await SendTaskAsync(client, endpoint, 1141, "tools/call",
+                       "zemax_status", otherWriter).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(inline).ConfigureAwait(false);
+                if (!inline.IsSuccessStatusCode ||
+                    !payload.Contains("echo-ok", StringComparison.Ordinal) ||
+                    payload.Contains("\"resultType\":\"task\"", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Opt-in changed synchronous tool semantics: " + payload);
+            }
+
             // Real 2026-07-28 Tasks protocol E2E. Identical spoofable client
             // metadata must never override the independently authenticated owner.
             string taskId;
@@ -749,6 +761,22 @@ internal static class Program
                 var payload = await ReadFirstMcpPayloadAsync(missingCapability).ConfigureAwait(false);
                 if (!payload.Contains("error", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Task polling without per-call opt-in was accepted.");
+            }
+
+
+            using (var emptyUpdate = await SendTaskAsync(client, endpoint, 1171, "tasks/update", null,
+                       otherWriter, taskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(emptyUpdate).ConfigureAwait(false);
+                if (!emptyUpdate.IsSuccessStatusCode || payload.Contains("\"error\":", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Owner's empty Task update should be acknowledged: " + payload);
+            }
+            using (var unsolicited = await SendTaskAsync(client, endpoint, 1172, "tasks/update", null,
+                       otherWriter, taskId, inputResponsesJson: "{\"unknown\":{\"result\":{}}}").ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(unsolicited).ConfigureAwait(false);
+                if (!payload.Contains("\"error\":", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Worker Job falsely accepted an unsolicited Task input response.");
             }
 
             using (var working = await SendTaskAsync(client, endpoint, 118, "tasks/get", null,
@@ -847,7 +875,7 @@ internal static class Program
 
     private static Task<HttpResponseMessage> SendTaskAsync(
         HttpClient client, Uri endpoint, int id, string method, string? toolName,
-        string bearer, string? taskId = null, bool capability = true)
+        string bearer, string? taskId = null, bool capability = true, string? inputResponsesJson = null)
     {
         var body = Build2026Body(id, method, toolName, "spoofable-client-name", "same-instance-id");
         if (capability)
@@ -856,6 +884,9 @@ internal static class Program
                 StringComparison.Ordinal);
         if (taskId != null)
             body = body.Replace("\"_meta\":{", "\"taskId\":" + JsonSerializer.Serialize(taskId) + ",\"_meta\":{",
+                StringComparison.Ordinal);
+        if (inputResponsesJson != null)
+            body = body.Replace("\"_meta\":{", "\"inputResponses\":" + inputResponsesJson + ",\"_meta\":{",
                 StringComparison.Ordinal);
         var request = Create2026Request(endpoint, body, method, toolName ?? taskId);
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearer);
