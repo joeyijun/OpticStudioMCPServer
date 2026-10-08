@@ -22,6 +22,7 @@ if ($inventory.Count -ne 138) {
 # An acceptance case proves a workflow scenario, not every possible call or
 # every numerical edge case of one listed tool.
 $scenarioTools = @{
+    'sequential-footprint-and-energy-budget' = @('zemax_energy_budget','zemax_ray_footprint','zemax_aperture_throughput')
     'sequential-ray-diagnostics' = @('zemax_ray_trace_diagnostics')
     'sequential-analysis-cardinal-points' = @('zemax_cardinal_points')
     'nsc-structural-summary' = @('zemax_nsc_scene_summary','zemax_get_nsc_objects','zemax_run_nsc_ray_trace')
