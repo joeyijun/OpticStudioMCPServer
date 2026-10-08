@@ -570,7 +570,7 @@ try {
             if ($workerPid -eq $PID) { throw "Refusing to kill the current verifier process." }
             $workerProc = Get-CimInstance Win32_Process -Filter "ProcessId = $workerPid"
             if ($null -eq $workerProc -or
-                [string]$workerProc.Name -notmatch '^ZemaxMCP\\.Worker\\.exe$') {
+                [string]$workerProc.Name -notmatch '^ZemaxMCP\.Worker\.exe$') {
                 throw "PID $workerPid is not the dedicated ZemaxMCP.Worker.exe. Refusing to terminate it."
             }
             Stop-Process -Id $workerPid -Force -ErrorAction Stop
