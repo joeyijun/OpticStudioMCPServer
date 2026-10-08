@@ -31,8 +31,11 @@ payloads. New result fields and new tools should follow these rules.
 - `zemax_get_nsc_detector` returns dimensions and summary flux/hit count;
   `includePixels: true` reads a **bounded native 0-based row/column ROI**
   through the official **1-based pixel** API. `dataType: 0` means
-  per-pixel flux; `dataType: 1` means flux per detector area. These data
-  are not interchangeable and do not assume a visually upright heatmap.
+  per-pixel incident flux; `dataType: 1` means flux per detector area for
+  rectangle/surface detectors but absorbed flux for volume detectors. Color
+  and polar detectors require dedicated API calls rather than generic flux
+  decoding. These values are not interchangeable or guaranteed to be a
+  visually upright heatmap.
 - One response contains at most **4096 pixels**. Larger images require
   multiple explicit, non-overlapping ROIs; never truncate silently.
 - `zemax_nsc_energy_budget` reports incident flux for **individual** detector
