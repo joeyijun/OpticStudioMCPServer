@@ -168,8 +168,11 @@ function Assert-RealTaskCompletion {
     if ([string]::IsNullOrWhiteSpace($content)) { throw "$ToolName Task result was empty." }
     try { $parsed = $content | ConvertFrom-Json }
     catch { throw "$ToolName Task result could not be decoded as a real structured Worker payload." }
-    if ($parsed.PSObject.Properties.Name -contains "jobId") {
-        throw "$ToolName Task returned only a Job ID instead of the final operation result."
+    if ($parsed.success -ne $true -or $parsed.state -ne "Completed") {
+        throw "$ToolName Task did not provide the successfully completed optical operation (state=$($parsed.state))."
+    }
+    if ($parsed.PSObject.Properties.Name -notcontains "runtimeSeconds") {
+        throw "$ToolName Task result lacks actual optical runtime data."
     }
     return $parsed
 }
