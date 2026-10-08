@@ -73,8 +73,10 @@ public sealed class NscEnergyBudgetTool
                             double.IsNaN(flux) || double.IsInfinity(flux) ||
                             double.IsNaN(hits) || double.IsInfinity(hits))
                             throw new InvalidOperationException($"NSC detector {id} returned invalid incident flux/hits.");
-                        values.Add(new DetectorContribution(id, row.TypeName, flux, hits,
-                            launchedFlux.HasValue ? flux / launchedFlux.Value : null));
+                        double? fraction = launchedFlux.HasValue ? flux / launchedFlux.Value : null;
+                        if (fraction.HasValue && (double.IsNaN(fraction.Value) || double.IsInfinity(fraction.Value)))
+                            throw new InvalidOperationException("The detector/source flux ratio is non-finite; check denominator scaling and physical units.");
+                        values.Add(new DetectorContribution(id, row.TypeName, flux, hits, fraction));
                     }
                     return new Result(true, null, launchedFlux, unit, values, caveat);
                 }, cancellationToken).ConfigureAwait(false);
