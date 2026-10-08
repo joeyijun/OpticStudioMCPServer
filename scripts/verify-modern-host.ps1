@@ -5,6 +5,8 @@ $root = Split-Path $PSScriptRoot -Parent
 $hostProject = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ZemaxMCP.HttpBridge.csproj")
 $hostSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\Program.cs")
 $hostOptions = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\HostOptions.cs")
+$scopedCredentials = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\ClientCredentialStore.cs")
+$scopedTests = Get-Content -Raw (Join-Path $root "tests\ZemaxMCP.PrivateRpcTests\ScopedCredentialAssertions.cs")
 $controlLeaseSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\OpticStudioControlLease.cs")
 $originPolicy = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\OriginPolicy.cs")
 $rpcClient = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.HttpBridge\ModernHost\WorkerRpcClient.cs")
@@ -180,6 +182,19 @@ if ($schemaTest -notmatch 'StaticToolManifest\.All\.Count != 135' -or $schemaTes
   throw "Generated manifest regressions must verify count, policy metadata, required parameters, nested records, defaults, and absence of opaque contracts."
 }
 
+if ($hostOptions -notmatch 'ClientCredentialsFile' -or
+    $scopedCredentials -notmatch 'FixedTimeEquals' -or
+    $scopedCredentials -notmatch 'SHA256.HashData' -or
+    $scopedCredentials -notmatch 'File.ReadAllBytes' -or
+    $scopedCredentials -notmatch 'Client permission must be read-only or read-write' -or
+    $hostSource -notmatch 'credentialStore.Authenticate' -or
+    $hostSource -notmatch 'Status503ServiceUnavailable' -or
+    $hostSource -notmatch 'IsAuthorizedTool\(options, request.User' -or
+    $hostSource -notmatch 'entry.Impact, "ReadOnly"' -or
+    $privateRpcTest -notmatch 'VerifyScopedCredentialHttpAsync' -or
+    $scopedTests -notmatch 'ClientCredentialStore') {
+  throw "Scoped credential mode must authenticate SHA-256 bearer digests, reload revocations per request, strictly filter read-only discovery and execution, and fail closed on invalid configuration."
+}
 # Release-validation contract: modern stateless MCP is the primary live path;
 # legacy initialize is an explicit compatibility probe rather than the default.
 if ($liveVerifier -notmatch '2026-07-28' -or $liveVerifier -notmatch 'MCP-Protocol-Version' -or
