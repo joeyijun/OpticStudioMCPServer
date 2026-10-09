@@ -148,6 +148,12 @@ internal sealed class WorkerRpcServer
 
     internal static bool IsExplicitToolFailure(JsonElement result)
     {
+        // A nullable lookup that did not find a Job or other resource must
+        // never be exposed as a successful MCP call containing JSON null.
+        // Preserve existing, non-null legacy DTO shapes and the success:false
+        // convention without changing the public 138-tool manifest.
+        if (result.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return true;
         return result.ValueKind == JsonValueKind.Object &&
                result.TryGetProperty("success", out var success) &&
                success.ValueKind == JsonValueKind.False;
