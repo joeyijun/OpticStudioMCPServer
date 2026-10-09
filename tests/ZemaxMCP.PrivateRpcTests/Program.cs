@@ -782,7 +782,7 @@ internal static class Program
                     throw new InvalidOperationException("Write credential did not enforce modern Job-only access and authorized tools.");
             }
 
-            using (var run = await SendScopedAsync(client, endpoint, 104, "tools/call", "zemax_set_surface", writer, new { surfaceNumber = 1 }).ConfigureAwait(false))
+            using (var run = await SendScopedAsync(client, endpoint, 104, "tools/call", "zemax_connect", writer).ConfigureAwait(false))
             {
                 var body = await ReadFirstMcpPayloadAsync(run).ConfigureAwait(false);
                 if (!run.IsSuccessStatusCode || !body.Contains("echo-ok", StringComparison.Ordinal) ||
@@ -792,7 +792,7 @@ internal static class Program
 
             // Both clients deliberately advertise the same clientInfo and
             // instance ID. The authenticated token ID must own the lease.
-            using (var competing = await SendScopedAsync(client, endpoint, 105, "tools/call", "zemax_set_surface", otherWriter, new { surfaceNumber = 1 }).ConfigureAwait(false))
+            using (var competing = await SendScopedAsync(client, endpoint, 105, "tools/call", "zemax_connect", otherWriter).ConfigureAwait(false))
             {
                 var body = await ReadFirstMcpPayloadAsync(competing).ConfigureAwait(false);
                 if (body.Contains("echo-ok", StringComparison.Ordinal) ||
@@ -816,7 +816,7 @@ internal static class Program
                 if (!release.IsSuccessStatusCode || !body.Contains("success", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Scoped owner could not release its lease.");
             }
-            using (var handoff = await SendScopedAsync(client, endpoint, 107, "tools/call", "zemax_set_surface", otherWriter, new { surfaceNumber = 1 }).ConfigureAwait(false))
+            using (var handoff = await SendScopedAsync(client, endpoint, 107, "tools/call", "zemax_connect", otherWriter).ConfigureAwait(false))
             {
                 var body = await ReadFirstMcpPayloadAsync(handoff).ConfigureAwait(false);
                 if (!handoff.IsSuccessStatusCode || !body.Contains("echo-ok", StringComparison.Ordinal))
@@ -1312,7 +1312,7 @@ internal static class Program
                     return;
                 }
                 if (string.Equals(command, "zemax_get_system", StringComparison.Ordinal) ||
-                    string.Equals(command, "zemax_set_surface", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_connect", StringComparison.Ordinal) ||
                     string.Equals(command, "zemax_test_hold", StringComparison.Ordinal))
                 {
                     await SendAsync(writer, ZemaxRpcProtocol.Progress, string.Empty, operationId, new
