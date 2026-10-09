@@ -147,7 +147,8 @@ if ($hostSource -notmatch 'OpticStudioControlLease' -or $hostSource -notmatch 'R
   throw "Control ownership and Host/Origin boundaries must remain explicit and non-wildcarded."
 }
 if ($hostSource -notmatch '"zemax_disconnect"' -or $hostSource -notmatch 'ReleaseOwnership\(clientId\)' -or
-    $privateRpcTest -notmatch 'immediate handoff') {
+    $privateRpcTest -notmatch 'Authenticated second client could not acquire the lease after disconnect' -or
+    $privateRpcTest -notmatch 'Read-only Host tools/list exposed a HighImpact') {
   throw "A successful zemax_disconnect must release the owning client lease and the MCP E2E suite must verify immediate handoff."
 }
 if ($controlLeaseSource -notmatch '_execution.WaitAsync\(cancellationToken\)' -or
