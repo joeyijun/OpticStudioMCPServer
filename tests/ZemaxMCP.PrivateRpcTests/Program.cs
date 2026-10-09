@@ -831,9 +831,13 @@ internal static class Program
             {
                 var body = await scopedHealth.Content.ReadAsStringAsync().ConfigureAwait(false);
                 if (!scopedHealth.IsSuccessStatusCode || !body.Contains("scoped", StringComparison.Ordinal) ||
-                    body.Contains("fake-owned-job", StringComparison.Ordinal) ||
-                    body.Contains("eventJobs", StringComparison.Ordinal))
-                    throw new InvalidOperationException("Scoped /health leaked cross-client Jobs or Worker event state.");
+                    !body.Contains("zosApiConnected", StringComparison.Ordinal) ||
+                    !body.Contains("\"jobs\"", StringComparison.Ordinal) ||
+                    !body.Contains("\"tasks\"", StringComparison.Ordinal) ||
+                    body.Contains("private-job-result", StringComparison.Ordinal) ||
+                    body.Contains("eventJobs", StringComparison.Ordinal) ||
+                    body.Contains("C:\\\\Fake", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Scoped /health must expose safe owner-filtered status, not cross-client results or paths.");
             }
             using (var scopedActivity = await SendScopedGetAsync(client, new Uri(endpoint, endpoint.AbsolutePath.TrimEnd('/') + "/activity"), writer).ConfigureAwait(false))
             {
@@ -877,6 +881,24 @@ internal static class Program
                 taskId = json.RootElement.GetProperty("result").GetProperty("taskId").GetString()!;
                 if (string.IsNullOrWhiteSpace(taskId))
                     throw new InvalidOperationException("Official CreateTaskResult did not have a taskId.");
+            }
+
+            // Scoped diagnostics must show the owner's official Task handle
+            // while disclosing neither this Task nor Worker paths to a foreign token.
+            foreach (var (bearer, shouldSeeOwn) in new[] {
+                (otherWriter, true), (writer, false)
+            })
+            {
+                using var response = await SendScopedGetAsync(client,
+                    new Uri(endpoint, endpoint.AbsolutePath.TrimEnd('/') + "/health"), bearer).ConfigureAwait(false);
+                var payload = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode ||
+                    payload.Contains(taskId, StringComparison.Ordinal) != shouldSeeOwn ||
+                    payload.Contains("fake-task-job", StringComparison.Ordinal) != shouldSeeOwn ||
+                    payload.Contains("C:\\\\Fake", StringComparison.Ordinal) ||
+                    payload.Contains("private-task-final-result", StringComparison.Ordinal) ||
+                    payload.Contains("eventJobs", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Owner-scoped Task diagnostic listing is incorrect.");
             }
 
             foreach (var method in new[] { "tasks/get", "tasks/update", "tasks/cancel" })
