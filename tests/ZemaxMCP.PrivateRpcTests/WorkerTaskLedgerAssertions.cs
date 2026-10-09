@@ -139,8 +139,9 @@ internal static class WorkerTaskLedgerAssertions
             Assert(secondReservation != null && ledger.TryReserveAdmission() == null,
                 "Task reservations failed to enforce the active capacity limit.");
         }
-        Assert(ledger.TryReserveAdmission() != null,
-            "A released Task admission reservation was not available for reuse.");
+        using (var recoveredAdmission = ledger.TryReserveAdmission())
+            Assert(recoveredAdmission != null,
+                "A released Task admission reservation was not available for reuse.");
         Assert(ledger.TryRegister("scoped:a", "active-1", 11, out var first), "Register failed.");
         Assert(ledger.TryRegister("scoped:b", "active-2", 11, out var second), "Register failed.");
         Assert(ledger.TryReserveAdmission() == null,
