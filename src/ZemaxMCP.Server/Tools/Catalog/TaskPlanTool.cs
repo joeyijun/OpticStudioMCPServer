@@ -18,7 +18,7 @@ public sealed class TaskPlanTool
     public TaskPlanTool(IZemaxSession session) => _session = session;
 
     public sealed record PlanStep(int Order, string Tool, string Purpose,
-        bool VisibleInHostProfile, bool RequiresConfirmation);
+        bool VisibleInHostProfile, bool ModeApplicable, bool RequiresConfirmation);
     public sealed record PlanResult(bool Success, string? Error, string Task,
         string SystemMode, string? SystemFile, int? Surfaces, int? NscObjects,
         int? Wavelengths, int? Fields, bool ModeCompatible,
@@ -75,7 +75,6 @@ public sealed class TaskPlanTool
                         "1", StringComparison.Ordinal);
                     var playbook = ToolCatalog.GetPlaybooks(normalized,
                         name => StaticToolManifest.IsAllowed(profile, name, readOnly))[0];
-                    var allSteps = playbook.AvailableSteps.Concat(playbook.UnavailableSteps).ToHashSet(StringComparer.Ordinal);
                     var warnings = new List<string>();
                     var compatible = normalized switch
                     {
@@ -97,10 +96,15 @@ public sealed class TaskPlanTool
 
                     var definitions = ToolCatalog.GetPlaybooks(normalized, _ => true)[0];
                     var steps = definitions.AvailableSteps.Select((name, index) =>
-                        new PlanStep(index + 1, name,
+                    {
+                        var domain = ToolsetCatalog.GetDomain(name).Id;
+                        var applicable = compatible && (normalized != "energy" ||
+                            (isNsc ? domain == "non-sequential" : domain != "non-sequential"));
+                        return new PlanStep(index + 1, name,
                             index < Purposes[normalized].Length ? Purposes[normalized][index] : "Inspect or verify optical result",
-                            playbook.AvailableSteps.Contains(name),
-                            StaticToolManifest.GetRequired(name).Impact != "ReadOnly")).ToArray();
+                            playbook.AvailableSteps.Contains(name), applicable,
+                            StaticToolManifest.GetRequired(name).Impact != "ReadOnly");
+                    }).ToArray();
                     return new PlanResult(true, null, normalized,
                         isSequential ? "Sequential" : isNsc ? "NonSequential" : system.Mode.ToString(),
                         system.SystemFile, isSequential ? system.LDE.NumberOfSurfaces : null,
