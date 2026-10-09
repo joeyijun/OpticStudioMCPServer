@@ -332,9 +332,29 @@ internal static class Program
 
             app.MapGet(options.McpPath + "/health", async (HttpContext httpContext, CancellationToken cancellationToken) =>
             {
+                // A long STA operation or background Job must never make
+                // Launcher /health queue a second Worker status RPC that may
+                // hang behind COM and interfere with hard-recovery timers.
+                // Use the last contract-validated status from THIS generation;
+                // advertise staleness rather than misrepresenting it as live.
+                var workerBusy = worker.HasForegroundTool || controlLease.HasActiveBackgroundJobs;
+                var statusFresh = false;
                 WorkerStatus? status = null;
-                try { status = await worker.GetStatusAsync(cancellationToken).ConfigureAwait(false); }
-                catch (Exception ex) { Log.Warning(ex, "Worker health RPC failed"); }
+                if (workerBusy)
+                    worker.TryGetCachedStatus(out status);
+                else
+                {
+                    try
+                    {
+                        status = await worker.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+                        statusFresh = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning(ex, "Worker health RPC failed; using generation-bound cached status");
+                        worker.TryGetCachedStatus(out status);
+                    }
+                }
                 var profile = httpContext.User.FindFirst("zemax-mcp-auth-profile")?.Value;
                 if (credentialStore != null)
                 {
@@ -361,7 +381,10 @@ internal static class Program
                         permission = httpContext.User.FindFirst("zemax-mcp-permission")?.Value,
                         jobDiagnostics = "authenticated-owner-only",
                         hostVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown",
-                        mcpServerRunning = status != null,
+                        mcpServerRunning = worker.CurrentGeneration != 0,
+                        workerBusy,
+                        statusFresh,
+                        lastKnownStatus = status != null,
                         zosApiLoaded = status?.ZosApiLoaded ?? false,
                         zosApiConnected = status?.Connected ?? false,
                         licenseStatus = status?.CurrentLicenseStatus ?? status?.LastLicenseStatus ?? "Not validated",
@@ -384,7 +407,10 @@ internal static class Program
                 return Results.Json(new
                 {
                     bridgeRunning = true,
-                    mcpServerRunning = status != null,
+                    mcpServerRunning = worker.CurrentGeneration != 0,
+                        workerBusy,
+                        statusFresh,
+                        lastKnownStatus = status != null,
                     hostVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown",
                     workerVersion = status?.WorkerVersion,
                     zosApiAssemblyVersion = status?.ZosApiAssemblyVersion,
