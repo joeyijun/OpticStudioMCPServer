@@ -604,8 +604,22 @@ public partial class MainWindow : Window
 
     private static string RequestJobCancellation(string endpoint, string accessToken, string jobId)
     {
-        _ = RequestJobTool(endpoint, accessToken, jobId, "zemax_job_cancel");
-        return "accepted for " + jobId + "; final state will be confirmed by the next status poll.";
+        // Never turn a missing/finished Job into an optimistic "accepted".
+        // Preserve the actual Worker-confirmed state for the UI.
+        var response = RequestJobTool(endpoint, accessToken, jobId, "zemax_job_cancel");
+        var current = JObject.Parse(response);
+        var state = current["state"]?.ToString() ?? "Unknown";
+        return state switch
+        {
+            "Cancelling" or "Cancelled" =>
+                "Cancellation reported by Worker for " + jobId + ": " + state +
+                ". Refresh to confirm the final state.",
+            "Completed" or "Failed" =>
+                "Job " + jobId + " already reached terminal state " + state +
+                "; no new cancellation was performed.",
+            _ => "Worker Job " + jobId + " state after cancel attempt: " + state +
+                "; verify status before concluding cancellation."
+        };
     }
 
     private static string RequestJobTool(string endpoint, string accessToken, string jobId, string toolName)
@@ -655,8 +669,13 @@ public partial class MainWindow : Window
         var rpc = JObject.Parse(raw);
         if (rpc["error"] != null || rpc["result"]?["isError"]?.Value<bool>() == true)
             throw new InvalidOperationException("MCP rejected the request (not owner, stale generation, or cancellation error).");
-        return rpc["result"]?["content"]?.FirstOrDefault()?["text"]?.ToString() ??
-            rpc["result"]?.ToString(Newtonsoft.Json.Formatting.Indented) ?? "No Job result payload.";
+        var text = rpc["result"]?["content"]?.FirstOrDefault()?["text"]?.ToString();
+        if (string.IsNullOrWhiteSpace(text) || text == "null")
+            throw new InvalidOperationException("Worker returned no matching Job. It may be expired or owned by another client.");
+        var parsed = JObject.Parse(text);
+        if (!string.Equals(parsed["jobId"]?.ToString(), jobId, StringComparison.Ordinal))
+            throw new InvalidDataException("Job result ID does not match the requested Job.");
+        return parsed.ToString(Newtonsoft.Json.Formatting.None);
     }
 
     private async Task RefreshStatusAsync()
