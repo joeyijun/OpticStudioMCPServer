@@ -160,7 +160,14 @@ internal static class Program
                     // observe their own Jobs even while a foreign Job owns the
                     // optical system.
                     CallToolResult result;
-                    if (scoped && jobOperation)
+                    if (request.Params.Name is "zemax_status" or "zemax_tool_catalog")
+                    {
+                        // These two commands inspect connection metadata/static schemas only.
+                        // Keep authorization and Worker serialization, but never acquire or
+                        // renew optical ownership for Launcher diagnostics on either computer.
+                        result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
+                    }
+                    else if (scoped && jobOperation)
                     {
                         var requestedLimit = 50;
                         if (request.Params.Name == "zemax_job_list" &&
@@ -185,7 +192,20 @@ internal static class Program
                     }
                     else
                     {
-                        using (await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false))
+                        IDisposable ownership;
+                        try
+                        {
+                            ownership = await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false);
+                        }
+                        catch (ControlLeaseConflictException ex)
+                        {
+                            return new CallToolResult
+                            {
+                                Content = new List<ContentBlock> { new TextContentBlock { Text = ex.Message } },
+                                IsError = true
+                            };
+                        }
+                        using (ownership)
                         {
                             result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
                             if (TryGetStartedJobId(request.Params.Name, result, out var jobId))

@@ -33,4 +33,5 @@ public sealed class WorkerJobStatus
     public double? Fraction { get; set; }
     public int QueuePosition { get; set; }
     public string? Message { get; set; }
+    public double? ElapsedSeconds { get; set; }
 }

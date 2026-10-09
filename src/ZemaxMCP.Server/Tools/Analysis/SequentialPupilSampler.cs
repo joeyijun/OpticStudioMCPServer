@@ -66,7 +66,8 @@ internal static class SequentialPupilSampler
 
     internal static void ValidateField(double hx, double hy)
     {
-        if (!double.IsFinite(hx) || !double.IsFinite(hy) ||
+        if (double.IsNaN(hx) || double.IsInfinity(hx) ||
+            double.IsNaN(hy) || double.IsInfinity(hy) ||
             Math.Abs(hx) > 1 || Math.Abs(hy) > 1)
             throw new ArgumentOutOfRangeException(nameof(hx),
                 "Normalized field coordinates must be finite in [-1, 1].");

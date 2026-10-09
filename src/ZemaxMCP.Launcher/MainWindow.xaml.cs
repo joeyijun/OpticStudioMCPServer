@@ -20,6 +20,7 @@ namespace ZemaxMCP.Launcher;
 
 public partial class MainWindow : Window
 {
+    private static string ProductVersion => typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "unknown";
     private Process? _bridge;
     private int _bridgeRestartAttempts;
     private bool _exitRequested;
@@ -92,6 +93,13 @@ public partial class MainWindow : Window
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         LoadSettings();
+        try
+        {
+            ZemaxMCP.DesktopShared.DesktopShortcut.MigrateLegacy(
+                Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Start-Zemax-MCP.exe"));
+        }
+        catch (Exception ex) { Report("Desktop shortcut rename skipped: " + ex.Message); }
         var installs = ZemaxInstallation.FindAll();
         var savedRoot = ReadSetting("zemaxRoot");
         if (!string.IsNullOrWhiteSpace(savedRoot) && installs.All(x => !x.Root.Equals(savedRoot, StringComparison.OrdinalIgnoreCase)))
@@ -120,20 +128,14 @@ public partial class MainWindow : Window
         RefreshClientDashboard(null);
         OfferFirstRunClientSetup();
     }
-    private string SelectedMaterial => (MaterialChoice.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag?.ToString() ?? "mica";
-
     private void ApplyMaterial()
     {
-        MaterialChoice.ToolTip = WindowMaterial.Apply(this, SelectedMaterial) +
-            "\nMica: subtle wallpaper tint. Acrylic: frosted desktop blur. Solid: no transparency.";
+        // Fixed visual style; native composition retains its accessibility/OS fallback.
+        WindowMaterial.Apply(this, "mica");
     }
 
-    private void MaterialChoice_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
-    {
-        if (!_windowLoaded) return;
-        ApplyMaterial();
-        SaveSettings();
-    }
+    private void OpenTasks_Click(object sender, RoutedEventArgs e) => MainSections.SelectedIndex = 1;
+    private void OpenSettings_Click(object sender, RoutedEventArgs e) => MainSections.SelectedItem = SettingsSection;
 
     private void AppearancePreferenceChanged(object sender, UserPreferenceChangedEventArgs e) => QueueMaterialRefresh();
     private void AppearanceSessionChanged(object sender, SessionSwitchEventArgs e) => QueueMaterialRefresh();
@@ -390,6 +392,17 @@ public partial class MainWindow : Window
         public string Elapsed { get; set; } = "Not reported";
         public string Queue { get; set; } = "";
         public string Progress { get; set; } = "";
+        public double? ProgressFraction { get; set; }
+        public bool IsProgressIndeterminate => IsActive &&
+            (!ProgressFraction.HasValue || ProgressFraction.Value <= 0 || ProgressFraction.Value >= 1);
+        public string ProgressHint => IsProgressIndeterminate
+            ? (State.Equals("Queued", StringComparison.OrdinalIgnoreCase) ? "Queued" : "In progress") +
+                " · elapsed " + Elapsed + " · no intermediate estimate reported"
+            : ProgressFraction.HasValue ? Math.Round(ProgressFraction.Value * 100) + "% reported · elapsed " + Elapsed
+            : "No numeric progress reported.";
+        public string SelectionKey => IsOfficialTask ? "task:" + TaskId : "job:" + JobId;
+        public string ActivitySubtitle => (IsOfficialTask ? "MCP Task" : "Worker Job") + " · " + Elapsed +
+            (string.IsNullOrWhiteSpace(Progress) ? "" : Progress);
         public bool IsActive => State.Equals("Queued", StringComparison.OrdinalIgnoreCase) ||
             State.Equals("Running", StringComparison.OrdinalIgnoreCase) ||
             State.Equals("Working", StringComparison.OrdinalIgnoreCase) ||
@@ -400,7 +413,16 @@ public partial class MainWindow : Window
 
     private void RefreshTaskCenter(JArray? jobs, JObject? health = null)
     {
-        var selectedId = (TaskCenterJobs.SelectedItem as BackgroundJobView)?.JobId;
+        _taskHistory = BuildTaskHistory(jobs, health);
+        RefreshTasksPage();
+        var active = _taskHistory.Count(item => item.IsActive);
+        TaskCenterSummary.Text = _taskHistory.Count == 0
+            ? "No background tasks reported."
+            : active + " active · " + (_taskHistory.Count - active) + " recent";
+    }
+
+    private static List<BackgroundJobView> BuildTaskHistory(JArray? jobs, JObject? health)
+    {
         var items = (jobs ?? new JArray()).OfType<JObject>()
             .Where(job => !string.IsNullOrWhiteSpace(job["jobId"]?.ToString()))
             .Take(25)
@@ -410,8 +432,10 @@ public partial class MainWindow : Window
                 var state = job["state"]?.ToString() ?? "Unknown";
                 var tool = job["toolName"]?.ToString() ?? job["tool"]?.ToString() ?? "ZOS-API Job";
                 var progress = job["fraction"]?.Value<double?>() ?? job["progress"]?.Value<double?>();
+                var active = new BackgroundJobView { State = state }.IsActive;
                 var pct = progress.HasValue && !double.IsNaN(progress.Value) &&
-                    !double.IsInfinity(progress.Value) && progress.Value >= 0 && progress.Value <= 1
+                    !double.IsInfinity(progress.Value) && progress.Value >= 0 && progress.Value <= 1 &&
+                    (!active || (progress.Value > 0 && progress.Value < 1))
                     ? " · " + Math.Round(progress.Value * 100) + "%" : "";
                 var queue = job["queuePosition"]?.Value<int?>() is { } position && position > 0
                     ? " · queue " + position : "";
@@ -426,15 +450,19 @@ public partial class MainWindow : Window
                             "current control lease: " + health["controlLease"]?["owner"]?.ToString() +
                             " (may differ from Job creator)")),
                     WorkerGeneration = health?["worker"]?["workerGeneration"]?.ToString() ?? "Not reported",
-                    Elapsed = job["elapsedSeconds"]?.ToString() ?? job["elapsed"]?.ToString() ?? "Not reported",
+                    Elapsed = job["elapsedSeconds"]?.Value<double?>() is double seconds &&
+                        !double.IsNaN(seconds) && !double.IsInfinity(seconds) && seconds >= 0
+                        ? seconds.ToString("F0") + "s" : job["elapsed"]?.ToString() ?? "Not reported",
                     Queue = queue,
                     Progress = pct,
+                    ProgressFraction = progress.HasValue && !double.IsNaN(progress.Value) &&
+                        !double.IsInfinity(progress.Value) && progress.Value >= 0 && progress.Value <= 1
+                        ? progress : null,
                     State = state,
                     DisplayText = tool + " · " + state + pct + queue + " · " + id.Substring(0, Math.Min(id.Length, 8))
                 };
             }).ToList();
 
-        _taskHistory = items;
         if (health?["tasks"] is JArray ownerTasks)
         {
             foreach (var record in ownerTasks.OfType<JObject>().Take(25))
@@ -448,7 +476,7 @@ public partial class MainWindow : Window
                 var completedAt = DateTimeOffset.TryParse(record["updatedAt"]?.ToString(), out var updated)
                     ? updated : DateTimeOffset.UtcNow;
                 var elapsed = ((state == "working" ? DateTimeOffset.UtcNow : completedAt) - started).TotalSeconds;
-                _taskHistory.Add(new BackgroundJobView
+                items.Add(new BackgroundJobView
                 {
                     TaskId = taskId,
                     JobId = linkedJobId,
@@ -464,26 +492,7 @@ public partial class MainWindow : Window
                 });
             }
         }
-        RefreshTasksPage();
-        TaskCenterJobs.ItemsSource = items;
-        TaskCenterJobs.SelectedItem = items.FirstOrDefault(item => item.JobId == selectedId)
-            ?? items.FirstOrDefault(item => item.IsActive) ?? items.FirstOrDefault();
-        var active = items.Count(item => item.IsActive);
-        TaskCenterSummary.Text = items.Count == 0
-            ? "No background Jobs reported for this client."
-            : active + " active · " + (items.Count - active) + " recent · most recent 25";
-        TaskCenterCancel.IsEnabled = (TaskCenterJobs.SelectedItem as BackgroundJobView)?.IsActive == true;
-    }
-
-    private void TaskCenterJobs_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
-    {
-        TaskCenterCancel.IsEnabled = (TaskCenterJobs.SelectedItem as BackgroundJobView)?.IsActive == true;
-    }
-
-    private async void TaskCenterCancel_Click(object sender, RoutedEventArgs e)
-    {
-        if (TaskCenterJobs.SelectedItem is not BackgroundJobView selection || !selection.IsActive) return;
-        await RequestCancellationAsync(selection);
+        return items;
     }
 
     private async Task RequestCancellationAsync(BackgroundJobView selection)
@@ -495,7 +504,7 @@ public partial class MainWindow : Window
         if (decision != MessageBoxResult.Yes) return;
         var endpoint = McpUrl;
         var token = McpToken;
-        TaskCenterCancel.IsEnabled = false;
+        TasksPageCancel.IsEnabled = false;
         try
         {
             var result = await Task.Run(() => selection.IsOfficialTask
@@ -515,16 +524,21 @@ public partial class MainWindow : Window
     private void RefreshTasksPage()
     {
         if (TasksPageJobs == null) return;
-        var selected = (TasksPageJobs.SelectedItem as BackgroundJobView)?.JobId;
+        var selected = (TasksPageJobs.SelectedItem as BackgroundJobView)?.SelectionKey;
         var state = (TasksPageFilter?.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() ?? "All";
         var visible = _taskHistory.Where(item => state == "All" ||
-            (state == "Running" && item.State.Equals("Working", StringComparison.OrdinalIgnoreCase)) ||
+            (state == "Running" && (item.State.Equals("Working", StringComparison.OrdinalIgnoreCase) ||
+                item.State.Equals("Cancelling", StringComparison.OrdinalIgnoreCase))) ||
             string.Equals(item.State, state, StringComparison.OrdinalIgnoreCase)).ToList();
         TasksPageJobs.ItemsSource = visible;
-        TasksPageJobs.SelectedItem = visible.FirstOrDefault(item => item.JobId == selected) ??
-            visible.FirstOrDefault();
-        TasksPageSummary.Text = visible.Count + " shown · " + _taskHistory.Count +
-            " reported (max 25 Worker Jobs plus 25 owner-visible Tasks).";
+        TasksPageJobs.SelectedItem = visible.FirstOrDefault(item => item.SelectionKey == selected) ??
+            visible.FirstOrDefault(item => item.IsActive) ?? visible.FirstOrDefault();
+        var active = _taskHistory.Count(item => item.IsActive);
+        TasksPageSummary.Text = _taskHistory.Count == 0 ? "Background activity from your AI clients." :
+            active + " active · " + (_taskHistory.Count - active) + " recent";
+        TasksPageEmpty.Visibility = visible.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        TasksPageEmpty.Text = _taskHistory.Count == 0 ?
+            "No recent tasks. Start a background operation from your AI client." : "No tasks match this filter.";
     }
 
     private void TasksPageFilter_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -538,6 +552,15 @@ public partial class MainWindow : Window
         var selected = TasksPageJobs?.SelectedItem as BackgroundJobView;
         TasksPageCancel.IsEnabled = selected?.IsActive == true;
         TasksPageViewResult.IsEnabled = selected != null;
+        TasksPageTitle.Text = selected?.ToolName ?? "No task selected";
+        TasksPageState.Text = selected?.State ?? "Idle";
+        TasksPageMetadata.Text = selected == null ? "Tasks appear here when an AI starts a background operation." :
+            (selected.IsOfficialTask ? "Task " + selected.TaskId : "Job " + selected.JobId) +
+            " · " + selected.Owner + " · elapsed " + selected.Elapsed;
+        TasksPageProgress.IsIndeterminate = selected?.IsProgressIndeterminate == true;
+        TasksPageProgress.Value = (selected?.ProgressFraction ?? 0) * 100;
+        TasksPageProgressHint.Text = selected?.ProgressHint ?? "No numeric progress reported.";
+        TasksPageMessage.Text = selected?.Message ?? "";
         TasksPageDetail.Text = selected == null ? "Select a Job to inspect its details." :
             (selected.IsOfficialTask ? "Task ID: " + selected.TaskId + "\nLinked Job: " + selected.JobId :
                 "Job ID: " + selected.JobId) + "\nTool: " + selected.ToolName +
@@ -564,6 +587,7 @@ public partial class MainWindow : Window
         var endpoint = McpUrl;
         var token = McpToken;
         TasksPageViewResult.IsEnabled = false;
+        TasksPageDetailsSection.IsExpanded = true;
         try
         {
             var text = await Task.Run(() => job.IsOfficialTask
@@ -604,7 +628,7 @@ public partial class MainWindow : Window
                     ["io.modelcontextprotocol/clientInfo"] = new JObject
                     {
                         ["name"] = "zemax-launcher",
-                        ["version"] = "1.5.0"
+                        ["version"] = ProductVersion
                     }
                 }
             }
@@ -732,9 +756,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             _healthReachable = false;
-            TaskCenterCancel.IsEnabled = false;
             TaskCenterSummary.Text = "Service offline; Job information unavailable.";
-            TaskCenterJobs.ItemsSource = null;
             _taskHistory.Clear();
             RefreshTasksPage();
             ConnectionSummary.Text = "Offline — MCP endpoint is not reachable\n" + endpoint;
@@ -1014,23 +1036,26 @@ public partial class MainWindow : Window
         System.Windows.Clipboard.SetText(diagnostics);
         Report("Connection diagnostics copied to the clipboard.");
     }
-    private async void CheckConnection_Click(object sender, RoutedEventArgs e)
+    private async void TestConnection_Click(object sender, RoutedEventArgs e)
     {
+        if (!TestConnectionButton.IsEnabled) return;
         var endpoint = McpUrl;
         var token = McpToken;
-        Report("Checking Host/Worker/ZOS-API connection...");
-        try { Report(await Task.Run(() => CheckConnectionHealth(endpoint, token))); }
-        catch (Exception ex) { Report("Connection/authorization check failed: " + ex.Message); }
-        await RefreshStatusAsync();
-    }
-
-    private async void TestMcpTools_Click(object sender, RoutedEventArgs e)
-    {
-        var endpoint = McpUrl;
-        var token = McpToken;
-        Report("Testing MCP tools/list, read-only tool result and Tasks negotiation...");
-        try { Report(await Task.Run(() => TestMcpFunctionality(endpoint, token))); }
-        catch (Exception ex) { Report("MCP functionality check failed: " + ex.Message); }
+        TestConnectionButton.IsEnabled = false;
+        TestConnectionButton.Content = "Testing…";
+        Report("Testing connection, authentication and read-only MCP tools...");
+        try
+        {
+            var health = await Task.Run(() => CheckConnectionHealth(endpoint, token));
+            Report(health);
+            Report(await Task.Run(() => TestMcpFunctionality(endpoint, token)));
+        }
+        catch (Exception ex) { Report("Connection / MCP test failed: " + ex.Message); }
+        finally
+        {
+            TestConnectionButton.Content = "Test connection";
+            TestConnectionButton.IsEnabled = true;
+        }
         await RefreshStatusAsync();
     }
 
@@ -1070,7 +1095,7 @@ public partial class MainWindow : Window
             ["io.modelcontextprotocol/clientInfo"] = new JObject
             {
                 ["name"] = "zemax-launcher",
-                ["version"] = "1.5.0"
+                ["version"] = ProductVersion
             },
             ["io.modelcontextprotocol/clientCapabilities"] = new JObject
             {
@@ -1101,20 +1126,28 @@ public partial class MainWindow : Window
         var raw = reader.ReadToEnd();
         if (response.ContentType?.StartsWith("text/event-stream", StringComparison.OrdinalIgnoreCase) == true)
         {
-            // Choose the actual JSON data event; ignore SSE comments/keepalives.
-            var data = raw.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                .Where(line => line.StartsWith("data:", StringComparison.Ordinal))
-                .Select(line => line.Substring(5).Trim())
-                .FirstOrDefault(line => line.StartsWith("{", StringComparison.Ordinal));
-            if (string.IsNullOrWhiteSpace(data))
-                throw new InvalidDataException("MCP SSE response contained no JSON data event.");
-            raw = data;
+            raw = SelectMcpSseResponse(raw, message["id"]!).ToString(Newtonsoft.Json.Formatting.None);
         }
         var rpc = JObject.Parse(raw);
         if (rpc["error"] is JToken error)
             throw new InvalidOperationException("MCP " + method + ": " +
                 (error["message"]?.ToString() ?? "JSON-RPC error"));
         return rpc;
+    }
+
+    private static JObject SelectMcpSseResponse(string raw, JToken requestId)
+    {
+        foreach (var frame in raw.Replace("\r\n", "\n").Split(new[] { "\n\n" }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var data = string.Join("\n", frame.Split('\n')
+                .Where(line => line.StartsWith("data:", StringComparison.Ordinal))
+                .Select(line => line.Substring(5).TrimStart()));
+            if (string.IsNullOrWhiteSpace(data)) continue;
+            var candidate = JObject.Parse(data);
+            if (candidate["method"] == null && JToken.DeepEquals(candidate["id"], requestId) &&
+                (candidate["result"] != null || candidate["error"] != null)) return candidate;
+        }
+        throw new InvalidDataException("MCP SSE contained no response matching the request ID.");
     }
 
     private static string TestMcpFunctionality(string endpoint, string accessToken)
@@ -1130,27 +1163,19 @@ public partial class MainWindow : Window
             !(status["result"]?["content"] is JArray content) || content.Count == 0)
             throw new InvalidDataException("Actual MCP zemax_status call returned no successful tool result.");
 
-        // Negotiate extension explicitly. This does not create a long-running
-        // optical Task: result round-trip is exercised only with an owned Task ID.
-        var init = SendMcpJsonRpc(endpoint, accessToken, "initialize",
-            new JObject
-            {
-                ["protocolVersion"] = "2026-07-28",
-                ["capabilities"] = new JObject
-                {
-                    ["extensions"] = new JObject { ["io.modelcontextprotocol/tasks"] = new JObject() }
-                },
-                ["clientInfo"] = new JObject { ["name"] = "zemax-launcher", ["version"] = "1.5.0" }
-            });
-        var tasks = init["result"]?["capabilities"]?["extensions"]?["io.modelcontextprotocol/tasks"] != null;
+        // Modern discovery is stateless; initialize belongs to legacy protocols.
+        // No optical Task is started by this capability probe.
+        var discovery = SendMcpJsonRpc(endpoint, accessToken, "server/discover", new JObject());
+        var tasks = discovery["result"]?["capabilities"]?["extensions"]?["io.modelcontextprotocol/tasks"] != null;
         return "MCP functional test PASS — tools/list: " + tools.Count +
-            " tools; real read-only zemax_status: result returned; 2026-07-28 initialize: success; " +
+            " tools; real read-only zemax_status: result returned; 2026-07-28 server/discover: success; " +
             "official Tasks advertised: " + (tasks ? "yes" : "no") +
             ". A completed Task result requires an owned Task ID in the Tasks page; this test does not start an optical Job.";
     }
 
     private async void TasksPageGetTask_Click(object sender, RoutedEventArgs e)
     {
+        TasksPageDetailsSection.IsExpanded = true;
         var id = TasksPageTaskId.Text?.Trim() ?? "";
         if (id.Length == 0 || id.Length > 128)
         {
@@ -1335,9 +1360,6 @@ public partial class MainWindow : Window
             OfficialTasks.IsChecked = OfficialTasksSettings.IsEnabled(settings["enableOfficialTasks"]);
             SelectToolsetProfile(settings["toolsetProfile"]?.ToString());
             StartOnLogin.IsChecked = settings["startOnLogin"]?.Value<bool>() ?? false;
-            var material = settings["windowMaterial"]?.ToString() ?? "mica";
-            foreach (System.Windows.Controls.ComboBoxItem item in MaterialChoice.Items)
-                if (item.Tag?.ToString() == material) MaterialChoice.SelectedItem = item;
             _clientSetupPrompted = settings["clientSetupPrompted"]?.Value<bool>() ?? false;
             UpdateRemoteSetupStatus();
         }
@@ -1367,7 +1389,7 @@ public partial class MainWindow : Window
                 ["enableOfficialTasks"] = OfficialTasks.IsChecked == true,
                 ["toolsetProfile"] = SelectedToolsetProfile,
                 ["startOnLogin"] = StartOnLogin.IsChecked == true,
-                ["windowMaterial"] = SelectedMaterial,
+                ["windowMaterial"] = "mica",
                 ["clientSetupPrompted"] = _clientSetupPrompted
             });
         }

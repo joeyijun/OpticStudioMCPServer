@@ -126,7 +126,11 @@ macro.
 
 ## Launcher monitoring and smoke checks
 
-The Launcher now offers a separate **Tasks** page in addition to Overview.
+The Launcher separates **Overview**, **Tasks**, **Settings**, and **Diagnostics**.
+Overview contains service state and common actions. Installation, LAN sharing,
+and remote setup live in Settings; connection details and local logs are in
+Diagnostics. The window uses Mica with an accessibility/OS fallback, without
+a material selector.
 Jobs and, for scoped bearer owners, result-free official Task metadata are
 shown with state, generation, duration, a failure/message field and
 owner visibility. The displayed owner can be a **control-lease** holder and
@@ -134,10 +138,9 @@ must not be confused with the creator of a Job. Result/cancel operations
 always pass through the existing scoped MCP methods; a different credential
 cannot cancel or inspect another client's Tasks.
 
-- **Check connection:** Host authentication, Worker availability, ZOS-API
-  loading/connection and reported license status.
-- **Test MCP tools:** real stateless `tools/list`, real read-only
-  `zemax_status` tool result, and `initialize` Tasks capability negotiation.
+- **Test connection:** first checks Host authentication, Worker availability,
+  ZOS-API loading/connection and reported license status, then performs real stateless `tools/list`, real read-only
+  `zemax_status` tool result, and modern `server/discover` Tasks capability discovery.
   Does **not** start a destructive or long optical operation.
 - **Task result:** supply the exact Task ID in the Tasks page. Retrieval uses
   owner-authorized `tasks/get` and returns a terminal result if available.

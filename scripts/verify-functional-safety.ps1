@@ -142,6 +142,11 @@ foreach ($fanFile in @("RayFanTool.cs", "OpticalPathFanTool.cs", "PupilAberratio
 
 $throughput = Get-Content -LiteralPath (Join-Path $analysisRoot "ApertureThroughputTool.cs") -Raw
 $pupilSampler = Get-Content -LiteralPath (Join-Path $analysisRoot "SequentialPupilSampler.cs") -Raw
+if ($pupilSampler -match '\b(?:double|Double)\.IsFinite\s*\(' -or
+    $pupilSampler -notmatch 'double\.IsNaN\(hx\)' -or $pupilSampler -notmatch 'double\.IsInfinity\(hx\)' -or
+    $pupilSampler -notmatch 'double\.IsNaN\(hy\)' -or $pupilSampler -notmatch 'double\.IsInfinity\(hy\)') {
+    throw 'The net48 pupil sampler must reject non-finite field coordinates without using unsupported Double.IsFinite.'
+}
 if ($throughput -notmatch 'SuccessfulRays' -or
     $throughput -notmatch 'ClearFraction:\s*\(double\)clear / successful' -or
     $throughput -notmatch 'SequentialPupilSampler\.Trace' -or

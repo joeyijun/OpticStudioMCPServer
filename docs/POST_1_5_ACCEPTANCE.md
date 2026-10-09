@@ -1,8 +1,9 @@
 # Post-1.5.0 engineering acceptance
 
-Work continues **on the existing** `agent/official-tasks-adapter-20261008`
-branch, fast-forwarded to the released 1.5.0 main commit before editing.
-This is an unreleased draft, **not** a change to the signed v1.5.0 ZIP.
+The engineering work from `agent/official-tasks-adapter-20261008` is included
+in 1.5.1 together with the four-page dashboard and diagnostic fixes.
+The signed v1.5.0 ZIP remains unchanged. New engineering optical readings
+are available for evaluation, not claimed as numerically live-validated.
 
 ## Completed code paths / CI scope
 
@@ -10,8 +11,8 @@ This is an unreleased draft, **not** a change to the signed v1.5.0 ZIP.
 | --- | --- | --- |
 | Non-cooperative Worker recovery | Fake Worker never answers `zemax_test_hang`; verify soft/hard deadline, generation replacement and a subsequent functional call | `VerifyNonCooperativeToolHardRecoveryAsync`; deterministic transport/process simulation, **not COM** |
 | AI tool planning | `zemax_tool_catalog(task=...)` returns six ordered playbooks with available and unavailable steps for the current profile | Generated manifest, tool-schema checks, safety metadata |
-| Launcher Job center | Bounded 25-item current/recent Job view, progress/queue/ID; confirmation and cooperative cancellation through existing MCP `zemax_job_cancel` | Launcher WPF build and offline layout check; actual same-owner cancellation requires live multi-client validation |
-| Result conventions and coverage | Explicit scientific data, transport/domain-error and units rules; 136-tool coverage JSON inventory with *no invented live evidence* | `scripts/export-tool-coverage.ps1`; CI validates entire known catalog |
+| Launcher Tasks page | Bounded 25-item current/recent view, honest progress, elapsed time and queue; confirmation and cooperative cancellation through existing MCP commands | WPF render/model regression; live POP Tasks completed with one Running and another Queued; other-client cancellation is not overridden |
+| Result conventions and coverage | Explicit scientific data, transport/domain-error and units rules; 138-tool coverage JSON inventory with *no invented live evidence* | `scripts/export-tool-coverage.ps1`; CI validates entire known catalog |
 | NSC pixel data and energy budget | OpticStudio `GetDetectorData` native 1-based pixel API, 4096-cell bounded ROI and detector flux/hit totals; per-detector received/launched ratio only with an explicit denominator | Static ZOS-API compatibility build, bounded schema/safety checks; **licensed numeric acceptance still required** |
 
 ## Licensed validation for new optical readings
@@ -41,7 +42,7 @@ Here `pixel=0` is a total summary, `pixel=-3` is hits, and
 `pixel>=1` addresses a physical detector pixel.
 Source: https://developer.synopsys.com/docs/zos-api-interface-2024-r1/interface_z_o_s_a_p_i_1_1_editors_1_1_n_c_e_1_1_i_non_seq_editor.xhtml
 
-## Remaining release gates (do not claim PASS yet)
+## Remaining validation limits (do not claim PASS yet)
 
 1. **Actual ZOS-API COM call frozen inside the dedicated STA.** CI can
    deterministically hang a fake Worker and enforce its hard recovery; that
@@ -55,6 +56,6 @@ Source: https://developer.synopsys.com/docs/zos-api-interface-2024-r1/interface_
    It must fail closed on another client's Job; Launcher is **not** given an
    administrator override. A process-global forced kill is never part of
    normal Job-center cancellation.
-4. Only after real sample evidence, consider the new tools production ready.
-   Keep this PR Draft and publish a new signed version via normal release
-   validation rather than modifying the v1.5.0 artifacts.
+4. Only after real sample evidence, consider the new engineering optical
+   readings numerically production-validated. 1.5.1 is a new signed release;
+   it does not modify v1.5.0 artifacts or claim to close these limits.

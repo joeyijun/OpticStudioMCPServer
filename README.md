@@ -30,7 +30,7 @@ For a single computer, the AI client uses the local MCP address. For two compute
 
 ## Highlights
 
-- **Refined Windows interface (1.5.0)** — a smaller dashboard, slim rounded scrollbars, client-status setup dialogs, matching installer, and rounded Start / Stop / Exit tray menu. Choose **Mica**, **Acrylic**, or **Solid** from the dashboard's bottom toolbar. Native Mica and Acrylic require Windows 11 22H2 or later with transparency effects enabled; Remote Desktop, high contrast, and unsupported systems use a solid fallback. Hover over the material selector to see the actual mode or fallback reason. Mica provides a subtle wallpaper tint; Acrylic provides a frosted desktop backdrop.
+- **Refined Windows interface** — focused **Overview**, **Tasks**, **Settings**, and **Diagnostics** pages, icon-led status cards, slim rounded scrollbars, client-status setup dialogs, matching installer, and a rounded Start / Stop / Exit tray menu. **Test connection** combines connection/authentication checks with a read-only MCP tool test. The window uses **Mica** by default, without a material selector. Native Mica requires Windows 11 22H2 or later with transparency effects enabled; Remote Desktop, high contrast, and unsupported systems use a solid fallback.
 - **Upgrade-safe installation** — GUI and portable upgrades preserve connection settings, credentials, LAN sharing preferences and runtime data. The installer waits for old application processes, retries transient file locks, prevents overlapping updates, and uses versioned shortcut icon paths to avoid stale icon caches.
 - **Graphical install and update** — `Install.exe`, existing portable installs, and in-app updates converge on the same Updater replacement/rollback path for upgrades. Fresh installs copy only runtime payloads; package-only installer/update metadata is not left in the installed tree. Portable fallback is explicit when replacement cannot complete.
 - **Official .NET 10 MCP Host** — `ZemaxMCP.Host` uses stable `ModelContextProtocol.AspNetCore` 2.1 for Streamable HTTP, protocol negotiation, request IDs, SSE, cancellation, progress, and compatibility. The application does not maintain a hand-written MCP HTTP/JSON-RPC dispatcher.
@@ -49,6 +49,12 @@ For a single computer, the AI client uses the local MCP address. For two compute
 - **Safe public package** — the ZIP does not redistribute proprietary ZOS-API DLLs. It uses the licensed OpticStudio installation at runtime on the Zemax computer.
 
 ## Reliability and protocol guarantees
+
+### Desktop changes in 1.5.1
+
+The dashboard separates **Overview**, **Tasks**, **Settings**, and **Diagnostics**. **Test connection** checks health and MCP tools in one action. The window title and installed desktop shortcut are **Zemax MCP**; an existing shortcut for the same installation is renamed while preserving its arguments. Mica is the default material, with accessible OS fallbacks.
+
+Running tasks without an intermediate numeric estimate show an animated indicator and reported elapsed time, not a fabricated percentage. Actual intermediate values are displayed when the Worker supplies them; terminal completion may report 100%. Short analyses can complete between refreshes. Multiple Tasks can queue, but a single Worker/STA executes optical operations serially. Diagnostic status/catalog checks do not acquire another client's OpticStudio control lease.
 
 MCP `serverInfo.version` is reported by the public Host assembly. The Launcher, Host, Worker, and release `VERSION.txt` are built from the same product version. The structured Worker health RPC independently reports the private RPC version, tool-contract fingerprint, loaded ZOS-API assembly path, actual OpticStudio connection mode, license result, Data directory, snapshots, and job state.
 

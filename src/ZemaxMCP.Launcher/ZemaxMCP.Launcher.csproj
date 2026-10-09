@@ -9,6 +9,8 @@
     <ApplicationIcon>Assets\ZemaxMCP.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\ZemaxMCP.DesktopShared\DesktopShortcut.cs" Link="Shared\DesktopShortcut.cs" />
+    <Reference Include="Microsoft.CSharp" />
     <PackageReference Include="Newtonsoft.Json" />
     <Reference Include="System.IO.Compression.FileSystem" />
     <Reference Include="System.Security" />
