@@ -422,7 +422,9 @@ internal static class Program
         Environment.SetEnvironmentVariable("ZEMAX_MCP_FAKE_WORKER_MODE", null);
         await using var client = new WorkerRpcClient(CreateOptions(10, 20));
         var ready = await client.GetStatusAsync(CancellationToken.None).ConfigureAwait(false);
-        if (!ready.Connected) throw new InvalidOperationException("Initial fake Worker connection failed.");
+        if (!ready.Connected || !client.TryGetCachedStatus(out var cached) ||
+            !string.Equals(cached?.ManifestFingerprint, StaticToolManifest.ContractFingerprint, StringComparison.Ordinal))
+            throw new InvalidOperationException("Last verified Worker status was not cached for nonblocking diagnostics.");
         var before = client.CurrentGeneration;
         var timer = Stopwatch.StartNew();
         try
@@ -436,6 +438,8 @@ internal static class Program
         if (timer.Elapsed < TimeSpan.FromSeconds(10) || timer.Elapsed > TimeSpan.FromSeconds(26))
             throw new InvalidOperationException("Hard recovery did not respect its configured soft/hard timeout window.");
 
+        if (client.TryGetCachedStatus(out _))
+            throw new InvalidOperationException("Retired Worker generation leaked its cached license/connection state.");
         var result = await client.CallToolAsync(TestTool("zemax_test_echo"), CancellationToken.None).ConfigureAwait(false);
         if (result.IsError == true || client.CurrentGeneration <= before)
             throw new InvalidOperationException("A non-cooperative fake Worker was not replaced by a newer, responsive generation.");
