@@ -794,11 +794,22 @@ internal static class Program
                     // real exception can be fixed without weakening policy.
                     var log = Directory.GetFiles(testRoot, "http-host-*.log")
                         .OrderBy(value => value, StringComparer.Ordinal).LastOrDefault();
-                    var hostErrors = log == null ? "(no Host log)" :
-                        string.Join(" | ", File.ReadAllLines(log)
-                            .Where(line => line.Contains("[ERR]", StringComparison.Ordinal) ||
-                                           line.Contains("[FTL]", StringComparison.Ordinal))
-                            .TakeLast(6));
+                    var hostErrors = "(Host log unavailable)";
+                    if (log != null)
+                    {
+                        try
+                        {
+                            using var diagnosticStream = new FileStream(log, FileMode.Open, FileAccess.Read,
+                                FileShare.ReadWrite | FileShare.Delete);
+                            using var diagnosticReader = new StreamReader(diagnosticStream);
+                            hostErrors = string.Join(" | ", diagnosticReader.ReadToEnd()
+                                .Split(new[] { "\\r\\n", "\\n" }, StringSplitOptions.RemoveEmptyEntries)
+                                .Where(line => line.Contains("[ERR]", StringComparison.Ordinal) ||
+                                               line.Contains("[FTL]", StringComparison.Ordinal))
+                                .TakeLast(6));
+                        }
+                        catch (IOException) { hostErrors = "(Host log locked by active process)"; }
+                    }
                     throw new InvalidOperationException("Scoped writer did not reach the Worker: " +
                         body + " Host errors: " + hostErrors);
                 }
