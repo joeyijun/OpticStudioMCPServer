@@ -803,7 +803,7 @@ internal static class Program
                                 FileShare.ReadWrite | FileShare.Delete);
                             using var diagnosticReader = new StreamReader(diagnosticStream);
                             hostErrors = string.Join(" | ", diagnosticReader.ReadToEnd()
-                                .Split(new[] { "\\r\\n", "\\n" }, StringSplitOptions.RemoveEmptyEntries)
+                                .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
                                 .Where(line => line.Contains("[ERR]", StringComparison.Ordinal) ||
                                                line.Contains("[FTL]", StringComparison.Ordinal))
                                 .TakeLast(6));
