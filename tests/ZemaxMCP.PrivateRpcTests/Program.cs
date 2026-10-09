@@ -602,10 +602,13 @@ internal static class Program
                 using var activeHealthResponse = await client.SendAsync(activeHealthRequest).ConfigureAwait(false);
                 using var activeHealth = JsonDocument.Parse(await activeHealthResponse.Content.ReadAsStringAsync().ConfigureAwait(false));
                 var activeOperations = activeHealth.RootElement.GetProperty("activeOperations");
-                if (!activeHealthResponse.IsSuccessStatusCode || activeOperations.GetArrayLength() == 0 ||
-                    !activeOperations[0].GetProperty("client").GetString()!.Contains("client-a", StringComparison.Ordinal) ||
-                    activeOperations[0].GetProperty("tool").GetString() != "zemax_set_surface")
-                    throw new InvalidOperationException("Remote activity did not identify the AI client and tool during an active call.");
+                var hasWriter = activeOperations.EnumerateArray().Any(item =>
+                    item.GetProperty("client").GetString()?.Contains("client-a", StringComparison.Ordinal) == true &&
+                    item.GetProperty("tool").GetString() == "zemax_set_surface");
+                if (!activeHealthResponse.IsSuccessStatusCode || !hasWriter)
+                    throw new InvalidOperationException(
+                        "Remote activity did not identify the mutating AI client during the active call: " +
+                        activeHealth.RootElement.GetRawText());
             }
             // Same clientInfo and same IP, but a different explicit instance ID.
             using var rejectedLease = await Send2026ToolCallAsync(client, endpoint, 5, "zemax_set_surface", "client-a", "instance-b").ConfigureAwait(false);
