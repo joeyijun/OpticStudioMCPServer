@@ -576,6 +576,16 @@ internal static class Program
                 if (diagnosticHealth.RootElement.GetProperty("controlLease").GetProperty("owner").ValueKind != JsonValueKind.Null)
                     throw new InvalidOperationException("A Launcher status check claimed optical ownership.");
             }
+            // A non-owning observer may read a stable serialized model
+            // after an in-flight operation, without acquiring write control.
+            using (var observe = await Send2026ToolCallAsync(client, endpoint, 301,
+                       "zemax_get_system", "launcher-b", "instance-b").ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(observe).ConfigureAwait(false);
+                if (!observe.IsSuccessStatusCode || !body.Contains("echo-ok", StringComparison.Ordinal))
+                    throw new InvalidOperationException("A non-owner ReadOnly call could not observe the current model: " + body);
+            }
+
             foreach (var diagnostic in new[] { "zemax_status", "zemax_tool_catalog" })
             {
                 using var secondLauncher = await Send2026ToolCallAsync(client, endpoint, 301, diagnostic, "launcher-b", "instance-b").ConfigureAwait(false);
@@ -599,7 +609,7 @@ internal static class Program
                     throw new InvalidOperationException("Remote activity did not identify the AI client and tool during an active call.");
             }
             // Same clientInfo and same IP, but a different explicit instance ID.
-            using var rejectedLease = await Send2026ToolCallAsync(client, endpoint, 5, "zemax_get_system", "client-a", "instance-b").ConfigureAwait(false);
+            using var rejectedLease = await Send2026ToolCallAsync(client, endpoint, 5, "zemax_set_surface", "client-a", "instance-b").ConfigureAwait(false);
             var rejectedLeaseBody = await ReadFirstMcpPayloadAsync(rejectedLease).ConfigureAwait(false);
             if (!rejectedLeaseBody.Contains("currently leased", StringComparison.OrdinalIgnoreCase) &&
                 !rejectedLeaseBody.Contains("isError", StringComparison.OrdinalIgnoreCase))
@@ -740,13 +750,22 @@ internal static class Program
 
             // Both clients deliberately advertise the same clientInfo and
             // instance ID. The authenticated token ID must own the lease.
-            using (var competing = await SendScopedAsync(client, endpoint, 105, "tools/call", "zemax_get_system", otherWriter).ConfigureAwait(false))
+            using (var competing = await SendScopedAsync(client, endpoint, 105, "tools/call", "zemax_set_surface", otherWriter).ConfigureAwait(false))
             {
                 var body = await ReadFirstMcpPayloadAsync(competing).ConfigureAwait(false);
                 if (body.Contains("echo-ok", StringComparison.Ordinal) ||
                     (!body.Contains("currently leased", StringComparison.OrdinalIgnoreCase) &&
                      !body.Contains("isError", StringComparison.OrdinalIgnoreCase)))
                     throw new InvalidOperationException("Two distinct authenticated tokens shared one control lease: " + body);
+            }
+
+            using (var readerObservation = await SendScopedAsync(client, endpoint, 1051,
+                       "tools/call", "zemax_get_system", reader).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(readerObservation).ConfigureAwait(false);
+                if (!readerObservation.IsSuccessStatusCode ||
+                    !body.Contains("echo-ok", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Read-only credential cannot inspect model owned by another token: " + body);
             }
 
             using (var release = await SendScopedAsync(client, endpoint, 106, "tools/call", "zemax_disconnect", writer).ConfigureAwait(false))
