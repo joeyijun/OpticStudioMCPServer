@@ -77,6 +77,16 @@ internal sealed class OfficialTasksAdapter
         // All old clients, down-level clients and non-eligible tools keep their
         // ordinary tools/call result. Authorization happens inside _execute.
         var eligible = EligibleTools.Contains(request.Params.Name) && IsTaskNegotiated(request.JsonRpcRequest);
+        using var admission = eligible ? _ledger.TryReserveAdmission() : null;
+        if (eligible && admission == null)
+            return new ResultOrAlternate<CallToolResult>(new CallToolResult
+            {
+                IsError = true,
+                Content = new List<ContentBlock>
+                {
+                    new TextContentBlock { Text = "Official Tasks are at capacity. No Worker Job was started; retry after an active Task finishes." }
+                }
+            });
         var result = await _execute(request, cancellationToken).ConfigureAwait(false);
         if (!eligible || !Program.TryGetStartedJobId(request.Params.Name, result, out var jobId))
             return new ResultOrAlternate<CallToolResult>(result);
@@ -84,7 +94,17 @@ internal sealed class OfficialTasksAdapter
         var owner = _getOwner(request.JsonRpcRequest);
         var generation = _worker.CurrentGeneration;
         if (!_ledger.TryRegister(owner, jobId, generation, out var snapshot) || snapshot == null)
-            return new ResultOrAlternate<CallToolResult>(result); // full ledger: preserve legacy Job handle
+            return new ResultOrAlternate<CallToolResult>(new CallToolResult
+            {
+                IsError = true,
+                Content = new List<ContentBlock>
+                {
+                    new TextContentBlock
+                    {
+                        Text = "Worker Job " + jobId + " started, but official Task registration failed. Use zemax_job_status with this Job ID; no Task ID was created."
+                    }
+                }
+            });
 
         // A terminal Worker event may have arrived before registration.
         if (_worker.TryGetJobStatus(generation, jobId, out var current) && current != null)
