@@ -195,7 +195,9 @@ internal static class Program
                         IDisposable ownership;
                         try
                         {
-                            ownership = await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false);
+                            ownership = string.Equals(requestedTool.Impact, "ReadOnly", StringComparison.Ordinal)
+                                ? await controlLease.AcquireObservationAsync(clientId, cancellationToken).ConfigureAwait(false)
+                                : await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false);
                         }
                         catch (ControlLeaseConflictException ex)
                         {
