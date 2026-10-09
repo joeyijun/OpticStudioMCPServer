@@ -2,6 +2,12 @@ using ZemaxMCP.Rpc;
 
 namespace ZemaxMCP.HttpBridge.ModernHost;
 
+internal sealed class ControlLeaseConflictException : InvalidOperationException
+{
+    public ControlLeaseConflictException()
+        : base("OpticStudio control is currently leased to another MCP client. Diagnostic status checks do not require control; wait for the current optical operation or owner to release control.") { }
+}
+
 /// <summary>
 /// Exclusive ownership of the stateful OpticStudio instance. This is separate
 /// from the MCP transport: modern MCP requests may be stateless while a lens
@@ -35,7 +41,7 @@ internal sealed class OpticStudioControlLease
             if (!IsExpiredLocked() &&
                 _ownerClientId != null &&
                 !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
-                throw new InvalidOperationException("OpticStudio control is currently leased to another MCP client.");
+                throw new ControlLeaseConflictException();
         }
 
         await _execution.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -49,7 +55,7 @@ internal sealed class OpticStudioControlLease
                 if (IsExpiredLocked()) _ownerClientId = null;
                 if (_ownerClientId != null &&
                     !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
-                    throw new InvalidOperationException("OpticStudio control is currently leased to another MCP client.");
+                    throw new ControlLeaseConflictException();
 
                 _ownerClientId = clientId;
                 _activeOperation = operation;

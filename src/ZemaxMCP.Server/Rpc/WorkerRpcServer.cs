@@ -193,7 +193,8 @@ internal sealed class WorkerRpcServer
         State = job.State.ToString(),
         Fraction = job.Progress,
         QueuePosition = job.QueuePosition,
-        Message = job.Message
+        Message = job.Message,
+        ElapsedSeconds = job.Elapsed?.TotalSeconds
     };
 
     private void EnqueueProgress(WorkerJobStatus job)

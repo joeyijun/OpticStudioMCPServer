@@ -85,6 +85,33 @@ internal sealed class WorkerTaskLedger
     }
 
     /// <summary>
+    /// Bounded, payload-free diagnostic view for the authenticated owner.
+    /// Never expose raw Task results or another credential's Task IDs.
+    /// </summary>
+    internal IReadOnlyList<object> ListOwnedMetadata(string owner, int limit = 25)
+    {
+        if (string.IsNullOrWhiteSpace(owner)) return Array.Empty<object>();
+        limit = Math.Max(1, Math.Min(limit, 25));
+        lock (_gate)
+            return _tasks.Values
+                .Where(entry => string.Equals(entry.Owner, owner, StringComparison.Ordinal))
+                .OrderByDescending(entry => entry.Sequence)
+                .Take(limit)
+                .Select(entry => (object)new
+                {
+                    taskId = entry.TaskId,
+                    jobId = entry.JobId,
+                    generation = entry.Generation,
+                    state = entry.State,
+                    message = entry.Message,
+                    createdAt = entry.CreatedAt,
+                    updatedAt = entry.UpdatedAt,
+                    cancelRequested = entry.CancelRequested,
+                    resultExpired = entry.ResultExpired
+                }).ToArray();
+    }
+
+    /// <summary>
     /// Return the underlying Job ID for the existing owner-authorized cancel
     /// tool. Do not claim the Task is cancelled until the Worker confirms it.
     /// </summary>

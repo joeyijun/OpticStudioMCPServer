@@ -114,4 +114,6 @@ try {
     }
 } finally { $window.Close() }
 Write-Output 'Launcher material and rounded menu smoke tests passed.'
+& (Join-Path $PSScriptRoot 'test-launcher-task-presentation.ps1') -Configuration $Configuration
+& (Join-Path $PSScriptRoot 'test-desktop-shortcuts.ps1') -Configuration $Configuration
 & (Join-Path $PSScriptRoot 'test-launcher-layout.ps1')

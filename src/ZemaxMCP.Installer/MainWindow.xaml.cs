@@ -125,13 +125,14 @@ public partial class MainWindow : Window
     {
         dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));
         var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-        dynamic shortcut = shell.CreateShortcut(Path.Combine(desktop, "Start Zemax MCP.lnk"));
+        DesktopShortcut.MigrateLegacy(desktop, target);
+        dynamic shortcut = shell.CreateShortcut(Path.Combine(desktop, "Zemax MCP.lnk"));
         shortcut.TargetPath = target;
         shortcut.WorkingDirectory = Path.GetDirectoryName(target);
-        shortcut.Description = "Start Zemax MCP HTTP bridge";
+        shortcut.Description = "Zemax MCP";
         shortcut.IconLocation = CreateShortcutIcon(Path.GetDirectoryName(target)!) + ",0";
         shortcut.Save();
-        SHChangeNotify(0x00002000, 0x0005, Path.Combine(desktop, "Start Zemax MCP.lnk"), IntPtr.Zero);
+        SHChangeNotify(0x00002000, 0x0005, Path.Combine(desktop, "Zemax MCP.lnk"), IntPtr.Zero);
         SHChangeNotify(0x08000000, 0, null, IntPtr.Zero);
     }
     internal static string CreateShortcutIcon(string install)

@@ -9,6 +9,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\ZemaxMCP.DesktopShared\InstallRuntimeData.cs" Link="Shared\InstallRuntimeData.cs" />
+    <Compile Include="..\ZemaxMCP.DesktopShared\DesktopShortcut.cs" Link="Shared\DesktopShortcut.cs" />
     <Reference Include="Microsoft.CSharp" />
     <Resource Include="..\ZemaxMCP.Launcher\Assets\ZemaxMCP.ico" Link="Assets\ZemaxMCP.ico" />
   </ItemGroup>

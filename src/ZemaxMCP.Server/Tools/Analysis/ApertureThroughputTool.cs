@@ -64,68 +64,46 @@ public class ApertureThroughputTool
                 if (target < 1 || target > imageSurface)
                     throw new ArgumentOutOfRangeException(nameof(surface), $"Destination surface must be 1..{imageSurface}, or 0 for image surface.");
 
-                int total = 0;
+                // Use exactly the same normalized-pupil sampling core as
+                // zemax_energy_budget and zemax_ray_footprint. This preserves
+                // historical counts/normalization while preventing divergence
+                // between three independent ray-loop implementations.
+                var pupil = SequentialPupilSampler.CircularGrid(gridSize);
+                var rayTrace = system.Tools.OpenBatchRayTrace()
+                    ?? throw new InvalidOperationException("OpticStudio could not open the batch ray-trace tool.");
+                SequentialPupilSampler.RaySample[] rays;
+                try
+                {
+                    rays = SequentialPupilSampler.Trace(rayTrace, target, wavelength, hx, hy, pupil, cancellationToken);
+                }
+                finally { rayTrace.Close(); }
+
+                int total = rays.Length;
                 int clear = 0;
                 int vignetted = 0;
                 int errors = 0;
                 double clearIntensity = 0;
                 double tracedIntensity = 0;
                 var vignetteCounts = new Dictionary<int, int>();
-
-                var rayTrace = system.Tools.OpenBatchRayTrace()
-                    ?? throw new InvalidOperationException("OpticStudio could not open the batch ray-trace tool.");
-                try
+                foreach (var ray in rays)
                 {
-                    for (int iy = 0; iy < gridSize; iy++)
+                    if (!ray.Valid)
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        double py = -1d + 2d * iy / (gridSize - 1d);
-                        for (int ix = 0; ix < gridSize; ix++)
-                        {
-                            if ((ix & 15) == 0) cancellationToken.ThrowIfCancellationRequested();
-                            double px = -1d + 2d * ix / (gridSize - 1d);
-                            if (px * px + py * py > 1d + 1e-12) continue;
-
-                            total++;
-                            bool ok = rayTrace.SingleRayNormUnpol(
-                                RaysType.Real,
-                                target,
-                                wavelength,
-                                hx,
-                                hy,
-                                px,
-                                py,
-                                false,
-                                out var error,
-                                out var vignette,
-                                out _, out _, out _, out _, out _, out _, out _, out _, out _, out _,
-                                out var intensity);
-
-                            if (!ok || error != 0)
-                            {
-                                errors++;
-                                continue;
-                            }
-                            if (double.IsNaN(intensity) || double.IsInfinity(intensity) || intensity < 0)
-                                throw new InvalidOperationException("Batch ray trace returned an invalid ray intensity.");
-
-                            tracedIntensity += intensity;
-                            if (vignette == 0)
-                            {
-                                clear++;
-                                clearIntensity += intensity;
-                            }
-                            else
-                            {
-                                vignetted++;
-                                vignetteCounts[vignette] = vignetteCounts.TryGetValue(vignette, out int count) ? count + 1 : 1;
-                            }
-                        }
+                        errors++;
+                        continue;
                     }
-                }
-                finally
-                {
-                    rayTrace.Close();
+                    tracedIntensity += ray.Intensity;
+                    if (ray.VignetteCode == 0)
+                    {
+                        clear++;
+                        clearIntensity += ray.Intensity;
+                    }
+                    else
+                    {
+                        vignetted++;
+                        vignetteCounts[ray.VignetteCode] =
+                            vignetteCounts.TryGetValue(ray.VignetteCode, out var count) ? count + 1 : 1;
+                    }
                 }
 
                 int successful = clear + vignetted;

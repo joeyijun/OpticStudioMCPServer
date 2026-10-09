@@ -32,7 +32,16 @@ function Render($window, [string]$name) {
 try {
  Render $owner 'dashboard.png'
  if ($owner.Width -ne 960 -or $owner.Height -ne 740) { throw 'Compact default window size regressed.' }
- $scroll = $owner.Content
+ $tabs = $owner.Content
+ if ($tabs -isnot [System.Windows.Controls.TabControl] -or $tabs.Items.Count -ne 4) { throw 'Launcher must expose four focused pages.' }
+ if (($tabs.Items | ForEach-Object {$_.Header}) -join ',' -ne 'Overview,Tasks,Settings,Diagnostics') { throw 'Page order regressed.' }
+ if ($null -ne $owner.FindName('MaterialChoice')) { throw 'Material selection must not be exposed.' }
+ if ($owner.FindName('TestConnectionButton').Content -ne 'Test connection') { throw 'Unified connection/tool test button missing.' }
+ $tabs.SelectedIndex = 2
+ Render $owner 'settings-page.png'
+ $owner.Width = 860; $owner.Height = 620
+ Render $owner 'settings-compact.png'
+ $scroll = $tabs.Items[2].Content
  if ($scroll.ScrollableHeight -le 0) { throw 'Compact window must allow scrolling to lower content.' }
  $bar = $scroll.Template.FindName('PART_VerticalScrollBar', $scroll)
  if ($bar.Width -ne 12) { throw 'Slim scrollbar hit-target width regressed.' }
@@ -41,6 +50,59 @@ try {
  $scroll.ScrollToVerticalOffset(70)
  $scroll.UpdateLayout()
  if ($scroll.VerticalOffset -le 0) { throw 'Slim scrollbar cannot scroll content.' }
+ $owner.Width = 960; $owner.Height = 740
+ $tabs.SelectedIndex = 3
+ Render $owner 'diagnostics-page.png'
+ $tabs.SelectedIndex = 1
+ $tabs.UpdateLayout()
+ Render $owner 'tasks-page.png'
+ if ($tabs.Items[1].Header -ne 'Tasks') { throw 'Independent Tasks tab not present.' }
+ $taskScroll = $tabs.Items[1].Content
+ if ($taskScroll -isnot [System.Windows.Controls.ScrollViewer]) { throw 'Tasks must remain scrollable in compact windows.' }
+ if ($owner.FindName('TasksPageDetailsSection').IsExpanded) { throw 'Raw task details must be collapsed initially.' }
+ if ($owner.FindName('TasksPageProgress').IsIndeterminate) { throw 'Idle tasks must not display animated progress.' }
+ if ($owner.FindName('TasksPageCancel').IsEnabled) { throw 'Idle task cancellation must be disabled.' }
+ $owner.FindName('TasksPageTitle').Text = 'NSC Ray Trace'
+ $owner.FindName('TasksPageState').Text = 'Running'
+ $owner.FindName('TasksPageMetadata').Text = 'Job demo-42 | client-a@1.0 | elapsed 35s'
+ $owner.FindName('TasksPageProgress').Value = 62
+ $owner.FindName('TasksPageProgressHint').Text = '62% reported'
+ $owner.FindName('TasksPageMessage').Text = 'Tracing rays on the OpticStudio computer.'
+ $owner.FindName('TasksPageCancel').IsEnabled = $true
+ $owner.FindName('TasksPageViewResult').IsEnabled = $true
+ $owner.FindName('TasksPageEmpty').Visibility = 'Collapsed'
+ $owner.FindName('TasksPageSummary').Text = '1 active | 2 recent'
+ $owner.FindName('TasksPageJobs').ItemsSource = @(
+  [pscustomobject]@{ToolName='NSC Ray Trace';ActivitySubtitle='Worker Job | 35s | 62%';State='Running'},
+  [pscustomobject]@{ToolName='FFT MTF';ActivitySubtitle='Worker Job | 4s';State='Completed'},
+  [pscustomobject]@{ToolName='Official MCP Task';ActivitySubtitle='MCP Task | 12s';State='Cancelled'}
+ )
+ $owner.FindName('TasksPageJobs').SelectedIndex = 0
+ Render $owner 'tasks-running.png'
+ $owner.Width = 860; $owner.Height = 620
+ Render $owner 'tasks-compact.png'
+ foreach ($name in @('TasksPageCancel','TasksPageViewResult','TasksPageFilter')) {
+  $control = $owner.FindName($name)
+  if ($control.ActualWidth -lt 60 -or $control.ActualHeight -lt 30) { throw "Task control clipped: $name" }
+ }
+ $owner.FindName('TasksPageProgress').IsIndeterminate = $true
+ $owner.FindName('TasksPageProgressHint').Text = 'In progress | elapsed 35s | no intermediate estimate reported'
+ $progress = $owner.FindName('TasksPageProgress')
+ $progress.ApplyTemplate()
+ $moving = $progress.Template.FindName('MovingIndicator',$progress)
+ if ($moving.Visibility -ne 'Visible' -or $progress.Template.FindName('PART_Indicator',$progress).Visibility -ne 'Collapsed') { throw 'Indeterminate progress must show a moving segment, not a full percentage bar.' }
+ Render $owner 'tasks-indeterminate.png'
+ $owner.Width = 960; $owner.Height = 740
+ $tabs.SelectedIndex = 0
+ $tabs.UpdateLayout()
+ $owner.Width = 860; $owner.Height = 620
+ Render $owner 'overview-compact.png'
+ foreach ($name in @('TestConnectionButton','AiConfigButton')) {
+  $control = $owner.FindName($name)
+  $point = $control.TranslatePoint([Windows.Point]::new(0,0),$owner.Content)
+  if ($point.X -lt 0 -or $point.X + $control.ActualWidth -gt $owner.Width) { throw "Overview control exceeds window width: $name" }
+ }
+ $owner.Width = 960; $owner.Height = 740
  [void]([Windows.Interop.WindowInteropHelper]::new($owner)).EnsureHandle()
  $flags = [Reflection.BindingFlags]'Instance,NonPublic'
  $constructor = $assembly.GetType('ZemaxMCP.Launcher.LauncherDialog').GetConstructors($flags)[0]

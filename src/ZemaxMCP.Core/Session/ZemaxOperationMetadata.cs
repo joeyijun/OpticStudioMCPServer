@@ -37,24 +37,24 @@ public static class ZemaxOperationMetadata
         {
             new OperationPolicy(ZemaxOperationImpact.ReadOnly, new[]
             {
-                "ApertureThroughput", "CardinalPoints", "ChromaticFocalShift", "DiffractionEncircledEnergy", "FftMtfVsField", "FftPsf",
+                "ApertureThroughput", "SequentialEnergyBudget", "RayFootprint", "CardinalPoints", "ChromaticFocalShift", "DiffractionEncircledEnergy", "FftMtfVsField", "FftPsf",
                 "FieldCurvatureDistortion", "GeometricEncircledEnergy", "GeometricImageAnalysis", "GeometricMTF", "GeometricMtfVsField",
                 "GetAdvancedSystemSettings", "GetAfocalMode", "GetApertureSettings", "GetApodization", "GetAsphericSurface", "GetConfiguration",
                 "GetConfigurationOperands", "GetExtraData", "GetFieldSettings", "GetFirstOrderData", "GetGlobalMatrix", "GetMaterialCatalogSettings",
-                "GetMeritFunction", "GetMtfUnits", "GetNonSequentialSystemSettings", "GetNscDetector", "GetNscObjectParameters", "GetNscObjects", "NscSceneSummary",
+                "GetMeritFunction", "GetMtfUnits", "GetNonSequentialSystemSettings", "NscEnergyBudget", "GetNscDetector", "GetNscObjectParameters", "GetNscObjects", "NscSceneSummary",
                 "GetRayAiming", "GetRayAimingSettings", "GetSurface", "GetSurfaceAperture", "GetSurfaceParameter", "GetSurfaceSolves", "GetSystem", "GetSystemFiles",
                 "GetSystemMetadata", "GetTolerances", "ToleranceSummary", "GetUnits", "GetVariables", "GetWavelengthSettings", "HuygensPsf", "LateralColor",
                 "LongitudinalAberration", "MTF", "OpdFan", "PupilAberrationFan", "RayFan", "RayTrace", "RayTraceDiagnostics", "RayTraceExtended", "read",
                 "RelativeIllumination", "RmsSpot", "SeidelCoefficients", "SnapshotDiff", "SpotDiagram"
             }, new[]
             {
-            "zemax_aperture_throughput", "zemax_cardinal_points", "zemax_chromatic_focal_shift", "zemax_diffraction_encircled_energy", "zemax_fft_mtf", "zemax_fft_mtf_vs_field",
+            "zemax_aperture_throughput", "zemax_energy_budget", "zemax_ray_footprint", "zemax_cardinal_points", "zemax_chromatic_focal_shift", "zemax_diffraction_encircled_energy", "zemax_fft_mtf", "zemax_fft_mtf_vs_field",
             "zemax_fft_psf", "zemax_field_curvature_distortion", "zemax_filter_glasses", "zemax_geometric_encircled_energy", "zemax_geometric_image_analysis",
             "zemax_geometric_mtf", "zemax_geometric_mtf_vs_field", "zemax_get_advanced_system_settings", "zemax_get_afocal_mode", "zemax_get_aperture_settings",
             "zemax_get_apodization", "zemax_get_aspheric_surface", "zemax_get_clear_semi_diameter_margin", "zemax_get_configuration",
             "zemax_get_configuration_operands", "zemax_get_environment", "zemax_get_extra_data", "zemax_get_field_settings", "zemax_get_first_order_data",
             "zemax_get_glass_catalogs", "zemax_get_glasses", "zemax_get_global_matrix", "zemax_get_material_catalog_settings", "zemax_get_merit_function",
-            "zemax_get_mtf_units", "zemax_get_nonsequential_system_settings", "zemax_get_nsc_detector", "zemax_get_nsc_object_parameters", "zemax_get_nsc_objects", "zemax_nsc_scene_summary",
+            "zemax_get_mtf_units", "zemax_get_nonsequential_system_settings", "zemax_get_nsc_detector", "zemax_get_nsc_object_parameters", "zemax_get_nsc_objects", "zemax_nsc_scene_summary", "zemax_nsc_energy_budget",
             "zemax_get_polarization", "zemax_get_ray_aiming", "zemax_get_ray_aiming_settings", "zemax_get_stop_surface", "zemax_get_surface",
             "zemax_get_surface_aperture", "zemax_get_surface_solves", "zemax_get_system", "zemax_get_system_files", "zemax_get_system_metadata",
             "zemax_get_tolerances", "zemax_tolerance_summary", "zemax_get_units", "zemax_get_variables", "zemax_get_vignetting", "zemax_get_wavelength_settings", "zemax_huygens_psf",

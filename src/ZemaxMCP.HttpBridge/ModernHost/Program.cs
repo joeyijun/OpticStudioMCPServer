@@ -87,9 +87,10 @@ internal static class Program
 
                 ;
 
+            WorkerTaskLedger? taskLedger = null;
             if (options.EnableOfficialTasks)
             {
-                var taskLedger = new WorkerTaskLedger();
+                taskLedger = new WorkerTaskLedger();
                 workerClient.JobStateChanged += taskLedger.ObserveJob;
                 workerClient.GenerationEnded += taskLedger.ReleaseGeneration;
                 var adapter = new OfficialTasksAdapter(taskLedger, workerClient, jobOwners,
@@ -159,7 +160,14 @@ internal static class Program
                     // observe their own Jobs even while a foreign Job owns the
                     // optical system.
                     CallToolResult result;
-                    if (scoped && jobOperation)
+                    if (request.Params.Name is "zemax_status" or "zemax_tool_catalog")
+                    {
+                        // These two commands inspect connection metadata/static schemas only.
+                        // Keep authorization and Worker serialization, but never acquire or
+                        // renew optical ownership for Launcher diagnostics on either computer.
+                        result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
+                    }
+                    else if (scoped && jobOperation)
                     {
                         var requestedLimit = 50;
                         if (request.Params.Name == "zemax_job_list" &&
@@ -184,7 +192,20 @@ internal static class Program
                     }
                     else
                     {
-                        using (await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false))
+                        IDisposable ownership;
+                        try
+                        {
+                            ownership = await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false);
+                        }
+                        catch (ControlLeaseConflictException ex)
+                        {
+                            return new CallToolResult
+                            {
+                                Content = new List<ContentBlock> { new TextContentBlock { Text = ex.Message } },
+                                IsError = true
+                            };
+                        }
+                        using (ownership)
                         {
                             result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
                             if (TryGetStartedJobId(request.Params.Name, result, out var jobId))
@@ -296,14 +317,23 @@ internal static class Program
 
             // Activity must remain observable even when a ZOS-API call delays
             // the Worker's GetStatus RPC.
-            app.MapGet(options.McpPath + "/activity", () => Results.Json(activity.GetHealth()));
+            app.MapGet(options.McpPath + "/activity", (HttpContext http) =>
+            {
+                var profile = http.User.FindFirst("zemax-mcp-auth-profile")?.Value;
+                return Results.Json(credentialStore == null ? activity.GetHealth()
+                    : activity.GetForClient(profile != null && profile.StartsWith("scoped:", StringComparison.Ordinal)
+                        ? "token:" + profile : ""));
+            });
 
-            app.MapGet(options.McpPath + "/health", async (CancellationToken cancellationToken) =>
+            app.MapGet(options.McpPath + "/health", async (HttpContext httpContext, CancellationToken cancellationToken) =>
             {
                 WorkerStatus? status = null;
                 try { status = await worker.GetStatusAsync(cancellationToken).ConfigureAwait(false); }
                 catch (Exception ex) { Log.Warning(ex, "Worker health RPC failed"); }
-                var activityHealth = activity.GetHealth();
+                var profile = httpContext.User.FindFirst("zemax-mcp-auth-profile")?.Value;
+                var activityHealth = credentialStore == null ? activity.GetHealth()
+                    : activity.GetForClient(profile != null && profile.StartsWith("scoped:", StringComparison.Ordinal)
+                        ? "token:" + profile : "");
                 return Results.Json(new
                 {
                     bridgeRunning = true,
@@ -329,7 +359,23 @@ internal static class Program
                     readOnly = options.ReadOnly,
                     snapshotDirectory = status?.SnapshotDirectory ?? options.SnapshotDirectory,
                     lastSnapshotPath = status?.LastSnapshotPath,
-                    jobs = status?.Jobs ?? Array.Empty<WorkerJobStatus>(),
+                    jobs = credentialStore == null
+                        ? status?.Jobs ?? Array.Empty<WorkerJobStatus>()
+                        : (status?.Jobs ?? Array.Empty<WorkerJobStatus>())
+                            .Where(job => {
+                                var profile = httpContext.User.FindFirst("zemax-mcp-auth-profile")?.Value;
+                                return profile != null && profile.StartsWith("scoped:", StringComparison.Ordinal) &&
+                                    jobOwners.IsOwned("token:" + profile, job.JobId, worker.CurrentGeneration);
+                            }).ToArray(),
+                    // Diagnostics expose Task IDs only to scoped bearer owners.
+                    // Shared/local clients use MCP tasks/get with their exact
+                    // client identity instead of a globally readable task list.
+                    tasks = taskLedger == null || credentialStore == null
+                        ? Array.Empty<object>()
+                        : taskLedger.ListOwnedMetadata(
+                            httpContext.User.FindFirst("zemax-mcp-auth-profile")?.Value is { } taskProfile &&
+                            taskProfile.StartsWith("scoped:", StringComparison.Ordinal)
+                            ? "token:" + taskProfile : "", 25),
                     requestTimeoutSeconds = options.RequestTimeoutSeconds,
                     requestWriteTimeoutSeconds = options.RequestWriteTimeoutSeconds,
                     hardRecoveryTimeoutSeconds = options.HardRecoveryTimeoutSeconds,
@@ -347,8 +393,12 @@ internal static class Program
                         elapsedSeconds = Math.Max(0, (long)(DateTimeOffset.UtcNow - operation.StartedAt).TotalSeconds)
                     }),
                     clients = activityHealth.LastRequestAt == null ? Array.Empty<object>() : new[] { new { name = activityHealth.LastClient, lastRequestAt = activityHealth.LastRequestAt, lastMethod = activityHealth.LastTool } },
-                    worker = worker.GetHealth(),
-                    controlLease = controlLease.GetHealth(),
+                    worker = credentialStore == null ? (object)worker.GetHealth() : new
+                    {
+                        workerGeneration = worker.CurrentGeneration,
+                        detailsRestricted = true
+                    },
+                    controlLease = credentialStore == null ? (object)controlLease.GetHealth() : new { ownershipRestricted = true },
                     activity = activityHealth
                 });
             });

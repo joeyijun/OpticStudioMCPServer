@@ -30,6 +30,23 @@ internal sealed class McpActivityMonitor
                 _activeOperations.Values.OrderBy(operation => operation.StartedAt).ToArray());
     }
 
+    // Scoped credentials must not discover another client's tool names or
+    // activity timestamps through /activity or /health diagnostics.
+    public McpActivitySnapshot GetForClient(string clientId)
+    {
+        lock (_sync)
+        {
+            var mine = _activeOperations.Values
+                .Where(operation => string.Equals(operation.Client, clientId, StringComparison.Ordinal))
+                .OrderBy(operation => operation.StartedAt).ToArray();
+            var ownsLast = string.Equals(_lastClient, clientId, StringComparison.Ordinal);
+            return new McpActivitySnapshot(
+                ownsLast ? _lastClient : "None yet",
+                ownsLast ? _lastTool : null,
+                ownsLast ? _lastRequestAt : null, mine);
+        }
+    }
+
     private void End(long operationId)
     {
         lock (_sync)
