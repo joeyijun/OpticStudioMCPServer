@@ -216,10 +216,12 @@ if ($jobOwners -notmatch 'MaximumRecords = 256' -or
     $hostSource -notmatch 'JobOwnerRegistry.FilterList' -or
     $hostSource -notmatch 'jobOwners.ReleaseGeneration' -or
     $hostSource -notmatch 'zemax_multistart_status' -or
-    $hostSource -notmatch 'jobDiagnostics = "per-client job tools only"' -or
+    $hostSource -notmatch 'jobDiagnostics = "authenticated-owner-only"' -or
+    $hostSource -notmatch 'taskLedger\?\.ListOwnedMetadata\(scopedOwner, 25\)' -or
     $privateRpcTest -notmatch 'VerifyJobOwnershipRegistry' -or
     $privateRpcTest -notmatch 'Foreign writer could cancel another client' -or
-    $privateRpcTest -notmatch 'Scoped /health leaked') {
+    $privateRpcTest -notmatch 'Scoped /health must expose' -or
+    $privateRpcTest -notmatch 'Owner-scoped Task diagnostic listing is incorrect') {
   throw "Scoped Jobs must bind owner+generation, deny unowned status/cancel, filter list results, redact health, block legacy global multistart state and be covered by E2E tests."
 }
 # Release-validation contract: modern stateless MCP is the primary live path;
