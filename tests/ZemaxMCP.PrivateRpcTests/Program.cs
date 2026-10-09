@@ -231,10 +231,19 @@ internal static class Program
     {
         var lease = new OpticStudioControlLease(TimeSpan.FromMilliseconds(50));
         using (await lease.AcquireAsync("client-a", "zemax_global_search", CancellationToken.None).ConfigureAwait(false)) { }
+        using (await lease.AcquireObservationAsync("client-b", CancellationToken.None).ConfigureAwait(false)) { }
+        if (!JsonSerializer.Serialize(lease.GetHealth()).Contains("client-a", StringComparison.Ordinal))
+            throw new InvalidOperationException("Foreign observation stole or cleared the persistent write owner.");
         if (!lease.RetainForJob("client-a", "job-1", generation: 7))
             throw new InvalidOperationException("The owning client could not retain control for its background job.");
 
         await Task.Delay(80).ConfigureAwait(false);
+        try
+        {
+            using var _ = await lease.AcquireObservationAsync("client-b", CancellationToken.None).ConfigureAwait(false);
+            throw new InvalidOperationException("Foreign observation entered during an active optical Job.");
+        }
+        catch (ControlLeaseConflictException) { }
         try
         {
             using var _ = await lease.AcquireAsync("client-b", "zemax_status", CancellationToken.None).ConfigureAwait(false);
