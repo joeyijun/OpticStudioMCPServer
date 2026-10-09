@@ -6,6 +6,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Repeated engineering commits on one PR should not queue dozens of costly
+# overlapping Windows builds. Keep push/main and separate PRs independent.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   package:
     runs-on: windows-latest
