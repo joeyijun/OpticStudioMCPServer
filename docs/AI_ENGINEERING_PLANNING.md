@@ -80,6 +80,15 @@ for manual follow-up.
   global lease holder, raw trace/result payloads and optical file paths.
   Scoped `/activity` stays a liveness-only response to avoid cross-owner
   event disclosure.
+- **Busy health**: `workerBusy: true`, `statusFresh: false` and
+  `lastKnownStatus` make it explicit that ZOS-API and license metadata
+  may come from the **last successful GetStatus on this Worker generation**.
+  Health does not queue a new status RPC behind an active foreground
+  COM call or retained optical Job. A first-ever busy request without any
+  verified status returns unknown values rather than inventing a disconnection.
+  The Launcher labels the state "busy/last known" instead of "offline".
+  A new Worker generation invalidates the cache; late status replies from
+  retired generations are never accepted.
 - **Worker tool result**: an explicit JSON `null` lookup is
   `isError: true`; Launcher validates returned Job IDs and terminal states
   before saying cancellation was accepted.
