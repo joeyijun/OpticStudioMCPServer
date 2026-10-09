@@ -23,7 +23,8 @@ the serialized Worker STA. It returns:
 - `modeCompatible`: whether the selected task is meaningful in this mode.
   An incompatible plan never silently converts the lens.
 - Ordered steps with reason, availability in the selected Host profile,
-  and a separate approval flag for non-read-only operations.
+  **applicability to the current sequential/NSC mode**, and a separate
+  approval flag for non-read-only operations.
 - `preflightWarnings`: unit/normalization risks, absent optical geometry,
   confirmation/snapshot needs, model mode and permission caveats.
 
