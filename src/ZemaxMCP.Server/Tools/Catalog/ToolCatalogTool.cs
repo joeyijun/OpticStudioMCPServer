@@ -27,7 +27,7 @@ public sealed class ToolCatalogTool
         IReadOnlyList<TaskPlaybook> Playbooks);
 
     [ZemaxTool(Name = "zemax_tool_catalog")]
-    [Description("Find a small, ordered tool playbook for common optical jobs. Set task to clipping, imaging, straylight, energy, optimize, tolerance or safe-edit; omit it for the full catalog. Playbooks are planning hints, not automatic execution or safety authorization.")]
+    [Description("Find a small, ordered tool playbook for common optical jobs. Set task to clipping, imaging, straylight, energy, optimize, tolerance or safe-edit; omit it for the full catalog. Playbooks are planning hints, not automatic execution or safety authorization. Call zemax_task_plan(task) to validate the actual connected model, physical preconditions and required confirmations.")]
     public CatalogResult Execute(
         [Description("When true, return only high-impact operations that deserve an explicit confirmation.")] bool highImpactOnly = false,
         [Description("Optional task playbook: clipping, imaging, straylight, energy, optimize, tolerance or safe-edit. Empty returns the full catalog.")] string? task = null)
@@ -48,7 +48,7 @@ public sealed class ToolCatalogTool
         var highImpact = entries.Count(entry => entry.Risk == ToolCatalog.HighImpactRisk);
 
         return new CatalogResult(
-            "Inspect the current system first, edit only the required data, run an analysis to verify the change, then save or export deliberately. For high-impact tools, confirm the target system and intended change before running.",
+            "Use zemax_task_plan(task) to check the connected model and required confirmations. Inspect the current system first, edit only the required data, independently verify any change, then save or export deliberately. Tool availability does not override per-token authorization.",
             entries.Length,
             highImpact,
             groups,
