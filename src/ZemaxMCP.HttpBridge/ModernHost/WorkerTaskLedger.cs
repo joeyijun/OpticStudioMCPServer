@@ -19,6 +19,35 @@ internal sealed class WorkerTaskLedger
     private readonly int _maxRecords;
     private readonly int _maxRetainedResults;
     private long _sequence;
+    private int _reservedAdmissions;
+
+    /// <summary>
+    /// Reserve capacity BEFORE a negotiated Task starts its underlying Worker
+    /// job. A saturated ledger must reject explicitly, not silently switch
+    /// an opted-in Task call to the legacy Job-ID response.
+    /// </summary>
+    internal IDisposable? TryReserveAdmission()
+    {
+        lock (_gate)
+        {
+            var active = _tasks.Values.Count(entry => !IsTerminal(entry.State));
+            if (active + _reservedAdmissions >= _maxRecords) return null;
+            _reservedAdmissions++;
+            return new AdmissionReservation(this);
+        }
+    }
+
+    private sealed class AdmissionReservation : IDisposable
+    {
+        private WorkerTaskLedger? _owner;
+        internal AdmissionReservation(WorkerTaskLedger owner) => _owner = owner;
+        public void Dispose()
+        {
+            var owner = Interlocked.Exchange(ref _owner, null);
+            if (owner == null) return;
+            lock (owner._gate) owner._reservedAdmissions--;
+        }
+    }
 
     internal WorkerTaskLedger(
         int maxRecords = DefaultMaxRecords,
