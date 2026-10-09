@@ -116,7 +116,7 @@ public partial class MainWindow : Window
             : hasRemoteEndpoint
             ? "Using the saved remote MCP endpoint. Local service startup is skipped."
             : installs.Count == 0
-            ? "No local OpticStudio found. Paste secure setup from the OpticStudio computer, then select Test MCP and Configure clients."
+            ? "No local OpticStudio found. Paste secure setup from the OpticStudio computer, then select Check connection and Configure clients."
             : "Starting local MCP endpoint automatically…");
         RefreshEndpoint();
         _windowLoaded = true;
@@ -1043,20 +1043,32 @@ public partial class MainWindow : Window
         var token = McpToken;
         TestConnectionButton.IsEnabled = false;
         TestConnectionButton.Content = "Testing…";
-        Report("Testing connection, authentication and read-only MCP tools...");
-        try
-        {
-            var health = await Task.Run(() => CheckConnectionHealth(endpoint, token));
-            Report(health);
-            Report(await Task.Run(() => TestMcpFunctionality(endpoint, token)));
-        }
-        catch (Exception ex) { Report("Connection / MCP test failed: " + ex.Message); }
+        Report("Checking Host, authentication, Worker, OpticStudio and license status...");
+        try { Report(await Task.Run(() => CheckConnectionHealth(endpoint, token))); }
+        catch (Exception ex) { Report("Connection check failed: " + ex.Message); }
         finally
         {
-            TestConnectionButton.Content = "Test connection";
+            TestConnectionButton.Content = "Check connection";
             TestConnectionButton.IsEnabled = true;
         }
         await RefreshStatusAsync();
+    }
+
+    private async void TestMcpTools_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TestMcpToolsButton.IsEnabled) return;
+        var endpoint = McpUrl;
+        var token = McpToken;
+        TestMcpToolsButton.IsEnabled = false;
+        TestMcpToolsButton.Content = "Testing…";
+        Report("Testing actual MCP tools/list, a read-only tool call and official Tasks discovery...");
+        try { Report(await Task.Run(() => TestMcpFunctionality(endpoint, token))); }
+        catch (Exception ex) { Report("MCP functional test failed: " + ex.Message); }
+        finally
+        {
+            TestMcpToolsButton.Content = "Test MCP tools";
+            TestMcpToolsButton.IsEnabled = true;
+        }
     }
 
     private static string CheckConnectionHealth(string endpoint, string accessToken)
