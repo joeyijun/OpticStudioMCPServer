@@ -274,12 +274,12 @@ internal static class Program
                 }
 
                 if (credentialStore != null &&
-                    (string.Equals(context.Request.Path.Value, options.McpPath + "/health", StringComparison.OrdinalIgnoreCase) ||
-                     string.Equals(context.Request.Path.Value, options.McpPath + "/activity", StringComparison.OrdinalIgnoreCase)))
+                    string.Equals(context.Request.Path.Value, options.McpPath + "/activity", StringComparison.OrdinalIgnoreCase))
                 {
-                    // These legacy diagnostic endpoints carry all clients' Jobs,
-                    // progress and lease identities. Never expose their full
-                    // payload in scoped mode; return a safe liveness response.
+                    // Activity remains a liveness-only response in scoped mode.
+                    // /health instead constructs owner-filtered structured
+                    // diagnostics below without revealing foreign jobs or
+                    // global connection paths.
                     context.Response.StatusCode = StatusCodes.Status200OK;
                     await context.Response.WriteAsJsonAsync(new
                     {
@@ -331,6 +331,49 @@ internal static class Program
                 try { status = await worker.GetStatusAsync(cancellationToken).ConfigureAwait(false); }
                 catch (Exception ex) { Log.Warning(ex, "Worker health RPC failed"); }
                 var profile = httpContext.User.FindFirst("zemax-mcp-auth-profile")?.Value;
+                if (credentialStore != null)
+                {
+                    // Return useful Launcher diagnostics to this credential, not
+                    // the global Worker status, paths, lease owner, or another
+                    // client's jobs/results. Authenticate on every request above.
+                    var scopedOwner = profile != null &&
+                        profile.StartsWith("scoped:", StringComparison.Ordinal)
+                        ? "token:" + profile : "";
+                    var ownedJobs = (status?.Jobs ?? Array.Empty<WorkerJobStatus>())
+                        .Where(job => jobOwners.IsOwned(scopedOwner, job.JobId, worker.CurrentGeneration))
+                        .Select(job => new
+                        {
+                            job.JobId, job.ToolName, job.State, job.Fraction,
+                            job.QueuePosition, job.Message, job.ElapsedSeconds,
+                            job.QueuedAt, job.StartedAt, job.CompletedAt
+                            // Worker status snapshots do not contain results.
+                        }).ToArray();
+                    var ownedTasks = taskLedger?.ListOwnedMetadata(scopedOwner, 25) ?? Array.Empty<object>();
+                    var ownedActivity = activity.GetForClient(scopedOwner);
+                    return Results.Json(new
+                    {
+                        bridgeRunning = true,
+                        authenticationMode = "scoped",
+                        permission = httpContext.User.FindFirst("zemax-mcp-permission")?.Value,
+                        jobDiagnostics = "authenticated-owner-only",
+                        hostVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown",
+                        mcpServerRunning = status != null,
+                        zosApiLoaded = status?.ZosApiLoaded ?? false,
+                        zosApiConnected = status?.Connected ?? false,
+                        licenseStatus = status?.CurrentLicenseStatus ?? status?.LastLicenseStatus ?? "Not validated",
+                        licenseValidForApi = status?.LicenseValidForApi,
+                        toolset = options.Toolset,
+                        readOnly = options.ReadOnly,
+                        jobs = ownedJobs,
+                        tasks = ownedTasks,
+                        worker = new { workerGeneration = worker.CurrentGeneration, detailsRestricted = true },
+                        controlLease = new { ownershipRestricted = true },
+                        lastClient = ownedActivity.LastClient,
+                        lastTool = ownedActivity.LastTool,
+                        lastRequestAt = ownedActivity.LastRequestAt,
+                        activeRequests = ownedActivity.ActiveRequests
+                    });
+                }
                 var activityHealth = credentialStore == null ? activity.GetHealth()
                     : activity.GetForClient(profile != null && profile.StartsWith("scoped:", StringComparison.Ordinal)
                         ? "token:" + profile : "");
