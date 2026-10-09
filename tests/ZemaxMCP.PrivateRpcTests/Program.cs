@@ -787,7 +787,21 @@ internal static class Program
                 var body = await ReadFirstMcpPayloadAsync(run).ConfigureAwait(false);
                 if (!run.IsSuccessStatusCode || !body.Contains("echo-ok", StringComparison.Ordinal) ||
                     !File.Exists(workerLog))
-                    throw new InvalidOperationException("Scoped writer did not reach the Worker: " + body);
+                {
+                    // The MCP SDK deliberately returns a generic external
+                    // invocation error. Surface only ERROR-level local Host
+                    // diagnostics in this headless fake-Worker CI test so the
+                    // real exception can be fixed without weakening policy.
+                    var log = Directory.GetFiles(testRoot, "http-host-*.log")
+                        .OrderBy(value => value, StringComparer.Ordinal).LastOrDefault();
+                    var hostErrors = log == null ? "(no Host log)" :
+                        string.Join(" | ", File.ReadAllLines(log)
+                            .Where(line => line.Contains("[ERR]", StringComparison.Ordinal) ||
+                                           line.Contains("[FTL]", StringComparison.Ordinal))
+                            .TakeLast(6));
+                    throw new InvalidOperationException("Scoped writer did not reach the Worker: " +
+                        body + " Host errors: " + hostErrors);
+                }
             }
 
             // Both clients deliberately advertise the same clientInfo and
