@@ -169,6 +169,11 @@ internal sealed class OpticStudioControlLease
         string.Equals(state, "Cancelled", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(state, "Failed", StringComparison.OrdinalIgnoreCase);
 
+    public bool HasActiveBackgroundJobs
+    {
+        get { lock (_sync) return _jobHolds.Count != 0; }
+    }
+
     public object GetHealth()
     {
         lock (_sync) return new
