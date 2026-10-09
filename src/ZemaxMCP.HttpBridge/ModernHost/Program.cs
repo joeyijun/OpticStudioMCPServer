@@ -344,8 +344,7 @@ internal static class Program
                         .Select(job => new
                         {
                             job.JobId, job.ToolName, job.State, job.Fraction,
-                            job.QueuePosition, job.Message, job.ElapsedSeconds,
-                            job.QueuedAt, job.StartedAt, job.CompletedAt
+                            job.QueuePosition, job.Message, job.ElapsedSeconds
                             // Worker status snapshots do not contain results.
                         }).ToArray();
                     var ownedTasks = taskLedger?.ListOwnedMetadata(scopedOwner, 25) ?? Array.Empty<object>();
