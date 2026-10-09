@@ -230,7 +230,14 @@ internal static class Program
     private static async Task VerifyBackgroundJobLeaseRetentionAsync()
     {
         var lease = new OpticStudioControlLease(TimeSpan.FromMilliseconds(50));
-        using (await lease.AcquireAsync("client-a", "zemax_global_search", CancellationToken.None).ConfigureAwait(false)) { }
+        Task<IDisposable> waitingObservation;
+        using (await lease.AcquireAsync("client-a", "zemax_global_search", CancellationToken.None).ConfigureAwait(false))
+        {
+            waitingObservation = lease.AcquireObservationAsync("client-b", CancellationToken.None);
+            Assert(!waitingObservation.IsCompleted,
+                "An observation interleaved with an in-flight mutation instead of waiting for the shared gate.");
+        }
+        using (await waitingObservation.ConfigureAwait(false)) { }
         using (await lease.AcquireObservationAsync("client-b", CancellationToken.None).ConfigureAwait(false)) { }
         if (!JsonSerializer.Serialize(lease.GetHealth()).Contains("client-a", StringComparison.Ordinal))
             throw new InvalidOperationException("Foreign observation stole or cleared the persistent write owner.");
