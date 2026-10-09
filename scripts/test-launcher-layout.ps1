@@ -36,7 +36,8 @@ try {
  if ($tabs -isnot [System.Windows.Controls.TabControl] -or $tabs.Items.Count -ne 4) { throw 'Launcher must expose four focused pages.' }
  if (($tabs.Items | ForEach-Object {$_.Header}) -join ',' -ne 'Overview,Tasks,Settings,Diagnostics') { throw 'Page order regressed.' }
  if ($null -ne $owner.FindName('MaterialChoice')) { throw 'Material selection must not be exposed.' }
- if ($owner.FindName('TestConnectionButton').Content -ne 'Test connection') { throw 'Unified connection/tool test button missing.' }
+ if ($owner.FindName('TestConnectionButton').Content -ne 'Check connection') { throw 'Independent connectivity check is missing.' }
+  if ($owner.FindName('TestMcpToolsButton').Content -ne 'Test MCP tools') { throw 'Deliberate MCP functional test button is missing.' }
  $tabs.SelectedIndex = 2
  Render $owner 'settings-page.png'
  $owner.Width = 860; $owner.Height = 620
