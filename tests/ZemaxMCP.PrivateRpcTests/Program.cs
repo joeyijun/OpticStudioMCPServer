@@ -626,8 +626,14 @@ internal static class Program
                         item.GetProperty("tool").GetString() == "zemax_quick_focus");
             }
             if (!sawActiveWriter)
+            {
+                var reason = heldResponseTask.IsCompleted
+                    ? " Early MCP response: " + await ReadFirstMcpPayloadAsync(
+                        await heldResponseTask.ConfigureAwait(false)).ConfigureAwait(false)
+                    : " MCP request was still pending.";
                 throw new InvalidOperationException(
-                    "Remote activity did not report the in-flight writer: " + observedActivity);
+                    "Remote activity did not report the in-flight writer: " + observedActivity + reason);
+            }
             using var heldResponse = await heldResponseTask.ConfigureAwait(false);
             if (!heldResponse.IsSuccessStatusCode)
                 throw new InvalidOperationException("The mutating client did not get a successful HTTP response.");
