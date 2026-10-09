@@ -132,8 +132,19 @@ internal static class WorkerTaskLedgerAssertions
     private static void VerifyBoundedAdmission()
     {
         var ledger = new WorkerTaskLedger(maxRecords: 2, maxRetainedResults: 1);
+        using (var admission = ledger.TryReserveAdmission())
+        {
+            Assert(admission != null, "An empty Task ledger did not reserve admission.");
+            using var secondReservation = ledger.TryReserveAdmission();
+            Assert(secondReservation != null && ledger.TryReserveAdmission() == null,
+                "Task reservations failed to enforce the active capacity limit.");
+        }
+        Assert(ledger.TryReserveAdmission() != null,
+            "A released Task admission reservation was not available for reuse.");
         Assert(ledger.TryRegister("scoped:a", "active-1", 11, out var first), "Register failed.");
         Assert(ledger.TryRegister("scoped:b", "active-2", 11, out var second), "Register failed.");
+        Assert(ledger.TryReserveAdmission() == null,
+            "A saturated active Task ledger must reject admission before starting a Worker Job.");
         Assert(!ledger.TryRegister("scoped:c", "active-3", 11, out var denied) && denied == null,
             "A full ledger must reject admission rather than evict active Tasks.");
         ledger.ObserveJob(11, new WorkerJobStatus { JobId = "active-1", State = "Cancelled" });
