@@ -9,8 +9,8 @@ internal static class StaticToolManifestAssertions
     [ModuleInitializer]
     internal static void VerifyStaticToolManifestContract()
     {
-        if (StaticToolManifest.All.Count != 138)
-            throw new InvalidOperationException("Static Host tool manifest must contain all 138 Worker commands.");
+        if (StaticToolManifest.All.Count != 139)
+            throw new InvalidOperationException("Static Host tool manifest must contain all 139 Worker commands.");
         if (StaticToolManifest.ContractFingerprint.Length != 64 ||
             StaticToolManifest.ContractFingerprint.Any(character => !Uri.IsHexDigit(character)))
             throw new InvalidOperationException("Static tool contract fingerprint must be a SHA-256 hex digest.");
@@ -37,11 +37,11 @@ internal static class StaticToolManifestAssertions
 
         var expectedProfileCounts = new Dictionary<string, int>(StringComparer.Ordinal)
         {
-            ["basic-viewing"] = 36,
-            ["sequential-design"] = 81,
-            ["nonsequential-stray-light"] = 25,
-            ["optimization-tolerance"] = 68,
-            ["full-expert"] = 138
+            ["basic-viewing"] = 37,
+            ["sequential-design"] = 82,
+            ["nonsequential-stray-light"] = 26,
+            ["optimization-tolerance"] = 69,
+            ["full-expert"] = 139
         };
         foreach (var pair in expectedProfileCounts)
         {
