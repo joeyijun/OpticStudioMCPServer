@@ -585,16 +585,6 @@ internal static class Program
                 if (diagnosticHealth.RootElement.GetProperty("controlLease").GetProperty("owner").ValueKind != JsonValueKind.Null)
                     throw new InvalidOperationException("A Launcher status check claimed optical ownership.");
             }
-            // A non-owning observer may read a stable serialized model
-            // after an in-flight operation, without acquiring write control.
-            using (var observe = await Send2026ToolCallAsync(client, endpoint, 301,
-                       "zemax_get_system", "launcher-b", "instance-b").ConfigureAwait(false))
-            {
-                var body = await ReadFirstMcpPayloadAsync(observe).ConfigureAwait(false);
-                if (!observe.IsSuccessStatusCode || !body.Contains("echo-ok", StringComparison.Ordinal))
-                    throw new InvalidOperationException("A non-owner ReadOnly call could not observe the current model: " + body);
-            }
-
             foreach (var diagnostic in new[] { "zemax_status", "zemax_tool_catalog" })
             {
                 using var secondLauncher = await Send2026ToolCallAsync(client, endpoint, 301, diagnostic, "launcher-b", "instance-b").ConfigureAwait(false);
@@ -603,7 +593,7 @@ internal static class Program
                     throw new InvalidOperationException("Two Launcher metadata probes could not coexist: " + body);
             }
 
-            using var heldResponse = await Send2026ToolCallAsync(client, endpoint, 4, "zemax_get_system", "client-a", "instance-a").ConfigureAwait(false);
+            using var heldResponse = await Send2026ToolCallAsync(client, endpoint, 4, "zemax_set_surface", "client-a", "instance-a").ConfigureAwait(false);
             if (!heldResponse.IsSuccessStatusCode) throw new InvalidOperationException("The first client could not retain the control lease across tool names.");
             await Task.Delay(150).ConfigureAwait(false);
             using (var activeHealthRequest = new HttpRequestMessage(HttpMethod.Get, endpoint + "/activity"))
@@ -628,6 +618,18 @@ internal static class Program
             if (!heldBody.Contains("echo-ok", StringComparison.Ordinal))
                 throw new InvalidOperationException("The held control-lease request did not complete normally.");
 
+            // A non-owning observer may read a stable serialized model
+            // after an in-flight operation, without acquiring write control.
+            using (var observe = await Send2026ToolCallAsync(client, endpoint, 301,
+                       "zemax_get_system", "launcher-b", "instance-b").ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(observe).ConfigureAwait(false);
+                if (!observe.IsSuccessStatusCode || !body.Contains("echo-ok", StringComparison.Ordinal))
+                    throw new InvalidOperationException("A non-owner ReadOnly call could not observe the current model: " + body);
+            }
+
+
+
             foreach (var diagnostic in new[] { "zemax_status", "zemax_tool_catalog" })
             {
                 using var probe = await Send2026ToolCallAsync(client, endpoint, 302, diagnostic, "launcher-b", "instance-b").ConfigureAwait(false);
@@ -649,7 +651,7 @@ internal static class Program
             if (!disconnect.IsSuccessStatusCode || !disconnectBody.Contains("success", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("The lease owner could not disconnect cleanly: " + disconnectBody);
 
-            using var handedOff = await Send2026ToolCallAsync(client, endpoint, 7, "zemax_get_system", "client-a", "instance-b").ConfigureAwait(false);
+            using var handedOff = await Send2026ToolCallAsync(client, endpoint, 7, "zemax_set_surface", "client-a", "instance-b").ConfigureAwait(false);
             var handedOffBody = await ReadFirstMcpPayloadAsync(handedOff).ConfigureAwait(false);
             if (!handedOff.IsSuccessStatusCode || !handedOffBody.Contains("echo-ok", StringComparison.Ordinal))
                 throw new InvalidOperationException("A successful zemax_disconnect did not release control ownership for immediate handoff: " + handedOffBody);
@@ -749,7 +751,7 @@ internal static class Program
                     throw new InvalidOperationException("Write credential did not enforce modern Job-only access and authorized tools.");
             }
 
-            using (var run = await SendScopedAsync(client, endpoint, 104, "tools/call", "zemax_get_system", writer).ConfigureAwait(false))
+            using (var run = await SendScopedAsync(client, endpoint, 104, "tools/call", "zemax_set_surface", writer).ConfigureAwait(false))
             {
                 var body = await ReadFirstMcpPayloadAsync(run).ConfigureAwait(false);
                 if (!run.IsSuccessStatusCode || !body.Contains("echo-ok", StringComparison.Ordinal) ||
@@ -783,7 +785,7 @@ internal static class Program
                 if (!release.IsSuccessStatusCode || !body.Contains("success", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Scoped owner could not release its lease.");
             }
-            using (var handoff = await SendScopedAsync(client, endpoint, 107, "tools/call", "zemax_get_system", otherWriter).ConfigureAwait(false))
+            using (var handoff = await SendScopedAsync(client, endpoint, 107, "tools/call", "zemax_set_surface", otherWriter).ConfigureAwait(false))
             {
                 var body = await ReadFirstMcpPayloadAsync(handoff).ConfigureAwait(false);
                 if (!handoff.IsSuccessStatusCode || !body.Contains("echo-ok", StringComparison.Ordinal))
@@ -1276,7 +1278,9 @@ internal static class Program
                     await Task.Delay(Timeout.InfiniteTimeSpan).ConfigureAwait(false);
                     return;
                 }
-                if (string.Equals(command, "zemax_get_system", StringComparison.Ordinal) || string.Equals(command, "zemax_test_hold", StringComparison.Ordinal))
+                if (string.Equals(command, "zemax_get_system", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_set_surface", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_test_hold", StringComparison.Ordinal))
                 {
                     await SendAsync(writer, ZemaxRpcProtocol.Progress, string.Empty, operationId, new
                     {
