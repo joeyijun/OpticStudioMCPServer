@@ -600,23 +600,37 @@ internal static class Program
                     throw new InvalidOperationException("Two Launcher metadata probes could not coexist: " + body);
             }
 
-            using var heldResponse = await Send2026ToolCallAsync(client, endpoint, 4, "zemax_quick_focus", "client-a", "instance-a").ConfigureAwait(false);
-            if (!heldResponse.IsSuccessStatusCode) throw new InvalidOperationException("The first client could not retain the control lease across tool names.");
-            await Task.Delay(150).ConfigureAwait(false);
-            using (var activeHealthRequest = new HttpRequestMessage(HttpMethod.Get, endpoint + "/activity"))
+            // Do not await HTTP response headers before observing activity.
+            // With a buffered JSON response, SendAsync can complete only AFTER
+            // the Worker finishes; this would turn a genuine concurrent check
+            // into a post-completion status query and always return zero active.
+            var heldResponseTask = Send2026ToolCallAsync(client, endpoint, 4,
+                "zemax_quick_focus", "client-a", "instance-a");
+            var sawActiveWriter = false;
+            var observedActivity = "";
+            for (var attempt = 0; attempt < 8 && !sawActiveWriter; attempt++)
             {
-                activeHealthRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
+                await Task.Delay(125).ConfigureAwait(false);
+                using var activeHealthRequest = new HttpRequestMessage(HttpMethod.Get, endpoint + "/activity");
+                activeHealthRequest.Headers.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
                 using var activeHealthResponse = await client.SendAsync(activeHealthRequest).ConfigureAwait(false);
-                using var activeHealth = JsonDocument.Parse(await activeHealthResponse.Content.ReadAsStringAsync().ConfigureAwait(false));
-                var activeOperations = activeHealth.RootElement.GetProperty("activeOperations");
-                var hasWriter = activeOperations.EnumerateArray().Any(item =>
-                    item.GetProperty("client").GetString()?.Contains("client-a", StringComparison.Ordinal) == true &&
-                    item.GetProperty("tool").GetString() == "zemax_quick_focus");
-                if (!activeHealthResponse.IsSuccessStatusCode || !hasWriter)
-                    throw new InvalidOperationException(
-                        "Remote activity did not identify the mutating AI client during the active call: " +
-                        activeHealth.RootElement.GetRawText());
+                using var activeHealth = JsonDocument.Parse(
+                    await activeHealthResponse.Content.ReadAsStringAsync().ConfigureAwait(false));
+                observedActivity = activeHealth.RootElement.GetRawText();
+                if (!activeHealthResponse.IsSuccessStatusCode)
+                    throw new InvalidOperationException("Activity endpoint did not return HTTP success.");
+                sawActiveWriter = activeHealth.RootElement.GetProperty("activeOperations")
+                    .EnumerateArray().Any(item =>
+                        item.GetProperty("client").GetString()?.Contains("client-a", StringComparison.Ordinal) == true &&
+                        item.GetProperty("tool").GetString() == "zemax_quick_focus");
             }
+            if (!sawActiveWriter)
+                throw new InvalidOperationException(
+                    "Remote activity did not report the in-flight writer: " + observedActivity);
+            using var heldResponse = await heldResponseTask.ConfigureAwait(false);
+            if (!heldResponse.IsSuccessStatusCode)
+                throw new InvalidOperationException("The mutating client did not get a successful HTTP response.");
             // Same clientInfo and same IP, but a different explicit instance ID.
             using var rejectedLease = await Send2026ToolCallAsync(client, endpoint, 5, "zemax_quick_focus", "client-a", "instance-b").ConfigureAwait(false);
             var rejectedLeaseBody = await ReadFirstMcpPayloadAsync(rejectedLease).ConfigureAwait(false);
