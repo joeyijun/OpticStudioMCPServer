@@ -28,12 +28,14 @@ internal sealed class OfficialTasksAdapter
     private readonly JobOwnerRegistry _owners;
     private readonly bool _scoped;
     private readonly Func<JsonRpcRequest, string> _getOwner;
+    private readonly Func<RequestContext<CallToolRequestParams>, bool> _isAuthorized;
     private readonly Func<RequestContext<CallToolRequestParams>, CancellationToken, Task<CallToolResult>> _execute;
     private const string ExtensionId = "io.modelcontextprotocol/tasks";
 
     internal OfficialTasksAdapter(
         WorkerTaskLedger ledger, WorkerRpcClient worker, JobOwnerRegistry owners,
         bool scoped, Func<JsonRpcRequest, string> getOwner,
+        Func<RequestContext<CallToolRequestParams>, bool> isAuthorized,
         Func<RequestContext<CallToolRequestParams>, CancellationToken, Task<CallToolResult>> execute)
     {
         _ledger = ledger;
@@ -41,6 +43,7 @@ internal sealed class OfficialTasksAdapter
         _owners = owners;
         _scoped = scoped;
         _getOwner = getOwner;
+        _isAuthorized = isAuthorized;
         _execute = execute;
     }
 
@@ -77,6 +80,12 @@ internal sealed class OfficialTasksAdapter
         // All old clients, down-level clients and non-eligible tools keep their
         // ordinary tools/call result. Authorization happens inside _execute.
         var eligible = EligibleTools.Contains(request.Params.Name) && IsTaskNegotiated(request.JsonRpcRequest);
+        // A full ledger must not reveal live workload/capacity to a credential
+        // that is not permitted to invoke the tool. Run the ordinary Host
+        // denial before checking shared Task capacity.
+        if (eligible && !_isAuthorized(request))
+            return new ResultOrAlternate<CallToolResult>(
+                await _execute(request, cancellationToken).ConfigureAwait(false));
         using var admission = eligible ? _ledger.TryReserveAdmission() : null;
         if (eligible && admission == null)
             return new ResultOrAlternate<CallToolResult>(new CallToolResult
