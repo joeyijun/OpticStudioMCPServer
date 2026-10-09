@@ -604,7 +604,7 @@ internal static class Program
                 var activeOperations = activeHealth.RootElement.GetProperty("activeOperations");
                 if (!activeHealthResponse.IsSuccessStatusCode || activeOperations.GetArrayLength() == 0 ||
                     !activeOperations[0].GetProperty("client").GetString()!.Contains("client-a", StringComparison.Ordinal) ||
-                    activeOperations[0].GetProperty("tool").GetString() != "zemax_get_system")
+                    activeOperations[0].GetProperty("tool").GetString() != "zemax_set_surface")
                     throw new InvalidOperationException("Remote activity did not identify the AI client and tool during an active call.");
             }
             // Same clientInfo and same IP, but a different explicit instance ID.
