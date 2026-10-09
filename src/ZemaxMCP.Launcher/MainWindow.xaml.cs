@@ -699,6 +699,9 @@ public partial class MainWindow : Window
             var licenseStatus = health["licenseStatus"]?.ToString() ?? "Not checked";
             var bridgeRunning = health["bridgeRunning"]?.Value<bool>() == true;
             var serverRunning = health["mcpServerRunning"]?.Value<bool>() == true;
+            var workerBusy = health["workerBusy"]?.Value<bool>() == true;
+            var statusFresh = health["statusFresh"]?.Value<bool>() ?? true;
+            var lastKnownStatus = health["lastKnownStatus"]?.Value<bool>() ?? true;
             var activeRequests = health["activeRequests"]?.Value<int>() ?? 0;
             var activeOperations = health["activeOperations"] as JArray;
             var activeOperation = activeOperations?.FirstOrDefault();
@@ -745,8 +748,9 @@ public partial class MainWindow : Window
                 "; uptime: " + uptime + "; restarts: " + restartCount + "; hard recoveries: " + hardRecoveryCount + "\n" +
                 "ZOS-API files: " + (apiFiles ? "found" : root == null ? "remote endpoint" : "missing") +
                 "; loaded: " + (apiLoaded ? "yes" : "not yet") +
-                "; OpticStudio connected: " + (apiConnected ? "yes" : "not yet") +
-                "; license: " + licenseStatus + "\n" +
+                "; OpticStudio connected: " + (apiConnected ? "yes" : (workerBusy && !lastKnownStatus ? "unknown while busy" : "not yet")) +
+                "; license: " + licenseStatus +
+                "; status: " + (statusFresh ? "fresh" : workerBusy ? "cached while Worker is busy" : "last known / unavailable") + "\n" +
                 "Security: " + (authenticationRequired ? "Bearer token required" : "no token") +
                 "; Origin validation: " + (originValidationEnabled ? "enabled" : "not reported") +
                 "; lens access: " + (readOnly ? "read-only" : "read/write with pre-change snapshots") + "\n" +
@@ -759,12 +763,18 @@ public partial class MainWindow : Window
                 (string.IsNullOrWhiteSpace(lastServerError) ? "" : "\nLast MCP server error: " + lastServerError) +
                 (localBridge ? "\nLocal launcher bridge process: running" : "");
             var ready = bridgeRunning && serverRunning && apiConnected;
-            ConnectionSummary.Text = (ready ? "Ready" : "Needs attention — check the status cards above") + " · " +
+            ConnectionSummary.Text = (workerBusy
+                ? "OpticStudio busy — " + (lastKnownStatus ? "last verified status shown" : "live license check deferred")
+                : ready ? "Ready" : "Needs attention — check the status cards above") + " · " +
                 (authenticationRequired ? "Token protected" : "No access token required") + " · " +
                 (readOnly ? "Read-only access" : "Lens changes allowed");
             if (bridgeRunning && serverRunning) SetIndicator(McpStateDot, McpState, "Online · accepting connections", System.Windows.Media.Brushes.SeaGreen);
             else SetIndicator(McpStateDot, McpState, "Endpoint reachable, but a service is not running", System.Windows.Media.Brushes.DarkOrange);
-            if (apiConnected) SetIndicator(ZosStateDot, ZosState, "Connected to OpticStudio", System.Windows.Media.Brushes.SeaGreen);
+            if (workerBusy && !lastKnownStatus)
+                SetIndicator(ZosStateDot, ZosState, "OpticStudio busy — connection status pending", System.Windows.Media.Brushes.DarkOrange);
+            else if (apiConnected) SetIndicator(ZosStateDot, ZosState, workerBusy
+                ? "OpticStudio busy — previously connected" : "Connected to OpticStudio",
+                System.Windows.Media.Brushes.SeaGreen);
             else if (apiLoaded) SetIndicator(ZosStateDot, ZosState, "ZOS-API loaded — waiting for OpticStudio", System.Windows.Media.Brushes.DarkOrange);
             else if (root == null) SetIndicator(ZosStateDot, ZosState, "Checked on the remote Zemax computer", System.Windows.Media.Brushes.SlateGray);
             else if (apiFiles) SetIndicator(ZosStateDot, ZosState, "Files found — not loaded yet", System.Windows.Media.Brushes.DarkOrange);
@@ -1106,6 +1116,8 @@ public partial class MainWindow : Window
         var zos = result["zosApiConnected"]?.Value<bool>() == true;
         var loaded = result["zosApiLoaded"]?.Value<bool>() == true;
         var licensed = result["licenseValidForApi"]?.Value<bool?>();
+        var busy = result["workerBusy"]?.Value<bool>() == true;
+        var fresh = result["statusFresh"]?.Value<bool>() ?? true;
         if (!bridge) throw new InvalidOperationException("Host is reachable but reports bridgeRunning=false.");
         return "Connection check — Host: reachable; authentication: accepted; Worker: " +
             (worker ? "running" : "unavailable") + "; ZOS-API: " +
@@ -1113,6 +1125,8 @@ public partial class MainWindow : Window
             (zos ? "connected" : "disconnected") + "; license: " +
             (result["licenseStatus"]?.ToString() ?? "not reported") +
             "; API license valid: " + (licensed.HasValue ? licensed.Value.ToString() : "not reported") +
+            (busy ? "; Worker busy (status " + (fresh ? "fresh" : "last known") + ")" :
+                (fresh ? "" : "; Worker status unavailable")) +
             ". This is a health check, not a tool execution test.";
     }
 
