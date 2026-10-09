@@ -600,91 +600,67 @@ internal static class Program
                     throw new InvalidOperationException("Two Launcher metadata probes could not coexist: " + body);
             }
 
-            // Do not await HTTP response headers before observing activity.
-            // With a buffered JSON response, SendAsync can complete only AFTER
-            // the Worker finishes; this would turn a genuine concurrent check
-            // into a post-completion status query and always return zero active.
+            // The shared-token Host is explicitly --read-only true.
+            // Keep this fixture read-only; the scoped read-write fixture
+            // below exercises distinct same-name same-IP writer identities,
+            // exclusive modification and post-disconnect handoff.
+            // Start the slow Worker read without awaiting the HTTP headers,
+            // then observe the real in-flight activity before completion.
             var heldResponseTask = Send2026ToolCallAsync(client, endpoint, 4,
-                "zemax_quick_focus", "client-a", "instance-a");
-            var sawActiveWriter = false;
+                "zemax_get_system", "client-a", "instance-a");
+            var sawActiveRead = false;
             var observedActivity = "";
-            for (var attempt = 0; attempt < 8 && !sawActiveWriter; attempt++)
+            for (var attempt = 0; attempt < 16 && !sawActiveRead; attempt++)
             {
                 await Task.Delay(125).ConfigureAwait(false);
-                using var activeHealthRequest = new HttpRequestMessage(HttpMethod.Get, endpoint + "/activity");
-                activeHealthRequest.Headers.Authorization =
+                using var activityRequest = new HttpRequestMessage(HttpMethod.Get, endpoint + "/activity");
+                activityRequest.Headers.Authorization =
                     new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
-                using var activeHealthResponse = await client.SendAsync(activeHealthRequest).ConfigureAwait(false);
-                using var activeHealth = JsonDocument.Parse(
-                    await activeHealthResponse.Content.ReadAsStringAsync().ConfigureAwait(false));
-                observedActivity = activeHealth.RootElement.GetRawText();
-                if (!activeHealthResponse.IsSuccessStatusCode)
-                    throw new InvalidOperationException("Activity endpoint did not return HTTP success.");
-                sawActiveWriter = activeHealth.RootElement.GetProperty("activeOperations")
+                using var activityResponse = await client.SendAsync(activityRequest).ConfigureAwait(false);
+                using var activityJson = JsonDocument.Parse(
+                    await activityResponse.Content.ReadAsStringAsync().ConfigureAwait(false));
+                observedActivity = activityJson.RootElement.GetRawText();
+                if (!activityResponse.IsSuccessStatusCode)
+                    throw new InvalidOperationException("Activity endpoint was not reachable during read.");
+                sawActiveRead = activityJson.RootElement.GetProperty("activeOperations")
                     .EnumerateArray().Any(item =>
                         item.GetProperty("client").GetString()?.Contains("client-a", StringComparison.Ordinal) == true &&
-                        item.GetProperty("tool").GetString() == "zemax_quick_focus");
+                        item.GetProperty("tool").GetString() == "zemax_get_system");
             }
-            if (!sawActiveWriter)
+            if (!sawActiveRead)
             {
-                var reason = heldResponseTask.IsCompleted
+                var responseText = heldResponseTask.IsCompleted
                     ? " Early MCP response: " + await ReadFirstMcpPayloadAsync(
                         await heldResponseTask.ConfigureAwait(false)).ConfigureAwait(false)
-                    : " MCP request was still pending.";
+                    : " Worker request is still pending.";
                 throw new InvalidOperationException(
-                    "Remote activity did not report the in-flight writer: " + observedActivity + reason);
+                    "In-flight read was not observable on /activity: " + observedActivity + responseText);
             }
-            using var heldResponse = await heldResponseTask.ConfigureAwait(false);
-            if (!heldResponse.IsSuccessStatusCode)
-                throw new InvalidOperationException("The mutating client did not get a successful HTTP response.");
-            // Same clientInfo and same IP, but a different explicit instance ID.
-            using var rejectedLease = await Send2026ToolCallAsync(client, endpoint, 5, "zemax_quick_focus", "client-a", "instance-b").ConfigureAwait(false);
-            var rejectedLeaseBody = await ReadFirstMcpPayloadAsync(rejectedLease).ConfigureAwait(false);
-            if (!rejectedLeaseBody.Contains("currently leased", StringComparison.OrdinalIgnoreCase) &&
-                !rejectedLeaseBody.Contains("isError", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("Two same-name same-IP MCP client instances collapsed into one control identity: " + rejectedLeaseBody);
-
-            var heldBody = await ReadFirstMcpPayloadAsync(heldResponse).ConfigureAwait(false);
-            if (!heldBody.Contains("echo-ok", StringComparison.Ordinal))
-                throw new InvalidOperationException("The held control-lease request did not complete normally.");
-
-            // A non-owning observer may read a stable serialized model
-            // after an in-flight operation, without acquiring write control.
-            using (var observe = await Send2026ToolCallAsync(client, endpoint, 301,
-                       "zemax_get_system", "launcher-b", "instance-b").ConfigureAwait(false))
+            using (var heldResponse = await heldResponseTask.ConfigureAwait(false))
             {
-                var body = await ReadFirstMcpPayloadAsync(observe).ConfigureAwait(false);
-                if (!observe.IsSuccessStatusCode || !body.Contains("echo-ok", StringComparison.Ordinal))
-                    throw new InvalidOperationException("A non-owner ReadOnly call could not observe the current model: " + body);
+                var heldBody = await ReadFirstMcpPayloadAsync(heldResponse).ConfigureAwait(false);
+                if (!heldResponse.IsSuccessStatusCode || !heldBody.Contains("echo-ok", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Read-only Worker request failed: " + heldBody);
             }
 
-
-
-            foreach (var diagnostic in new[] { "zemax_status", "zemax_tool_catalog" })
+            using (var foreignRead = await Send2026ToolCallAsync(client, endpoint, 5,
+                       "zemax_get_system", "client-a", "instance-b").ConfigureAwait(false))
             {
-                using var probe = await Send2026ToolCallAsync(client, endpoint, 302, diagnostic, "launcher-b", "instance-b").ConfigureAwait(false);
-                var body = await ReadFirstMcpPayloadAsync(probe).ConfigureAwait(false);
-                if (!body.Contains("echo-ok", StringComparison.Ordinal))
-                    throw new InvalidOperationException("A foreign lease blocked non-owning diagnostics: " + body);
+                var body = await ReadFirstMcpPayloadAsync(foreignRead).ConfigureAwait(false);
+                if (!foreignRead.IsSuccessStatusCode || !body.Contains("echo-ok", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Separate read-only instances could not inspect one model: " + body);
             }
-            using (var ownerRequest = new HttpRequestMessage(HttpMethod.Get, endpoint + "/health"))
+            using (var healthCheck = new HttpRequestMessage(HttpMethod.Get, endpoint + "/health"))
             {
-                ownerRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
-                using var ownerResponse = await client.SendAsync(ownerRequest).ConfigureAwait(false);
-                using var json = JsonDocument.Parse(await ownerResponse.Content.ReadAsStringAsync().ConfigureAwait(false));
-                if (!json.RootElement.GetProperty("controlLease").GetProperty("owner").GetString()!.Contains("instance-a", StringComparison.Ordinal))
-                    throw new InvalidOperationException("Metadata diagnostics replaced the existing optical owner.");
+                healthCheck.Headers.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
+                using var healthResult = await client.SendAsync(healthCheck).ConfigureAwait(false);
+                using var snapshot = JsonDocument.Parse(
+                    await healthResult.Content.ReadAsStringAsync().ConfigureAwait(false));
+                if (!healthResult.IsSuccessStatusCode ||
+                    snapshot.RootElement.GetProperty("controlLease").GetProperty("owner").ValueKind != JsonValueKind.Null)
+                    throw new InvalidOperationException("Non-mutating reads must not acquire a persistent writer lease.");
             }
-
-            using var disconnect = await Send2026ToolCallAsync(client, endpoint, 6, "zemax_disconnect", "client-a", "instance-a").ConfigureAwait(false);
-            var disconnectBody = await ReadFirstMcpPayloadAsync(disconnect).ConfigureAwait(false);
-            if (!disconnect.IsSuccessStatusCode || !disconnectBody.Contains("success", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("The lease owner could not disconnect cleanly: " + disconnectBody);
-
-            using var handedOff = await Send2026ToolCallAsync(client, endpoint, 7, "zemax_quick_focus", "client-a", "instance-b").ConfigureAwait(false);
-            var handedOffBody = await ReadFirstMcpPayloadAsync(handedOff).ConfigureAwait(false);
-            if (!handedOff.IsSuccessStatusCode || !handedOffBody.Contains("echo-ok", StringComparison.Ordinal))
-                throw new InvalidOperationException("A successful zemax_disconnect did not release control ownership for immediate handoff: " + handedOffBody);
 
             using var spoofed = new HttpRequestMessage(HttpMethod.Get, endpoint + "/health");
             spoofed.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
