@@ -50,6 +50,22 @@ to live ownership, authorization and user approval.
 For real radiometry, this remains a **geometric and scalar-ray approximation**;
 see `docs/ENGINEERING_OPTICS.md`.
 
+## Observation and control lease semantics
+
+A genuinely ReadOnly tool uses the same serialized Host gate but **does not
+acquire or renew** another client's persistent write lease. The model is still
+stateful: a read reflects the moment of execution and is not an atomic
+multi-step design snapshot. A foreign read is rejected while an optical
+background Job holds the system, preventing a misleading model read during a
+long or non-cooperative COM operation. Lens mutations, optimization and
+long-running Jobs retain exclusive owner/generation semantics.
+
+Official Tasks capacity is reserved before a Job begins. If all active Task
+slots are occupied, an explicit tool error is returned and no Job starts; a
+Tasks-capable client is not silently handed a legacy Job ID. A surprise
+registration failure after starting a Job returns a clear Job ID in an error
+for manual follow-up.
+
 ## New diagnostics semantics
 
 - **Check connection** (Overview): Host authentication, Worker, ZOS-API and
