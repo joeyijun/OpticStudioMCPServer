@@ -83,6 +83,16 @@ internal static class StaticToolManifestAssertions
                 throw new InvalidOperationException("Engineering analysis tool schema/permission contract regressed: " + pair.Name);
         }
 
+        var aiPlanner = StaticToolManifest.GetRequired("zemax_task_plan");
+        if (aiPlanner.DomainId != "system" || aiPlanner.Impact != "ReadOnly" ||
+            !StaticToolManifest.IsAllowed("basic-viewing", aiPlanner.Name, readOnly: true) ||
+            !StaticToolManifest.IsAllowed("nonsequential-stray-light", aiPlanner.Name, readOnly: true) ||
+            !StaticToolManifest.IsAllowed("optimization-tolerance", aiPlanner.Name, readOnly: true))
+            throw new InvalidOperationException("Engineering task planner must remain read-only and discoverable in all focused profiles.");
+        if (!aiPlanner.InputSchema.GetProperty("required").EnumerateArray()
+            .Any(field => field.GetString() == "task"))
+            throw new InvalidOperationException("Engineering task planner must require an explicit task intent.");
+
         var snapshotList = StaticToolManifest.GetRequired("zemax_snapshot_list").InputSchema.GetProperty("properties");
         if (snapshotList.GetProperty("limit").GetProperty("default").GetInt32() != 25)
             throw new InvalidOperationException("Snapshot listing must preserve its bounded newest-first default.");
