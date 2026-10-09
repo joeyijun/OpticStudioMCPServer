@@ -70,6 +70,32 @@ internal sealed class OpticStudioControlLease
         }
     }
 
+    /// <summary>
+    /// Permit read-only inspection by any authorized client without taking or
+    /// renewing the persistent mutating-owner lease. Physical operations are
+    /// still serialized behind the same execution gate. Foreign observers are
+    /// not admitted while an owner holds an active background optical Job,
+    /// since the STA may be blocked or the model may be mid-operation.
+    /// </summary>
+    public async Task<IDisposable> AcquireObservationAsync(string clientId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(clientId)) clientId = "anonymous";
+        await _execution.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_sync)
+                if (_jobHolds.Values.Any(job => !string.Equals(job.ClientId, clientId, StringComparison.Ordinal)))
+                    throw new ControlLeaseConflictException();
+            return new ObservationReleaser(this);
+        }
+        catch
+        {
+            _execution.Release();
+            throw;
+        }
+    }
+
     private bool IsExpiredLocked() =>
         _ownerClientId != null &&
         DateTimeOffset.UtcNow - _lastActivity > _idleTimeout &&
@@ -170,6 +196,13 @@ internal sealed class OpticStudioControlLease
     }
 
     private sealed record JobHold(string ClientId, long Generation);
+
+    private sealed class ObservationReleaser : IDisposable
+    {
+        private OpticStudioControlLease? _lease;
+        public ObservationReleaser(OpticStudioControlLease lease) => _lease = lease;
+        public void Dispose() => Interlocked.Exchange(ref _lease, null)?._execution.Release();
+    }
 
     private sealed class Releaser : IDisposable
     {
