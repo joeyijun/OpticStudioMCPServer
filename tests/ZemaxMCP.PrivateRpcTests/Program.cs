@@ -636,6 +636,27 @@ internal static class Program
                 throw new InvalidOperationException(
                     "In-flight read was not observable on /activity: " + observedActivity + responseText);
             }
+            // A health check during a long optical read must return promptly
+            // from the last validated Worker status instead of entering the
+            // same blocked STA/RPC queue, which could exhaust the long-job
+            // timeout or make the Launcher appear frozen.
+            using (var busyHealth = new HttpRequestMessage(HttpMethod.Get, endpoint + "/health"))
+            {
+                busyHealth.Headers.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
+                using var busyDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+                using var busyResponse = await client.SendAsync(busyHealth, busyDeadline.Token).ConfigureAwait(false);
+                using var snapshot = JsonDocument.Parse(
+                    await busyResponse.Content.ReadAsStringAsync(busyDeadline.Token).ConfigureAwait(false));
+                if (!busyResponse.IsSuccessStatusCode ||
+                    snapshot.RootElement.GetProperty("workerBusy").GetBoolean() != true ||
+                    snapshot.RootElement.GetProperty("statusFresh").GetBoolean() != false ||
+                    snapshot.RootElement.GetProperty("licenseStatus").GetString() != "fake-license")
+                    throw new InvalidOperationException(
+                        "Busy Worker health did not report accurate cached/stale status promptly: " +
+                        snapshot.RootElement.GetRawText());
+            }
+
             using (var heldResponse = await heldResponseTask.ConfigureAwait(false))
             {
                 var heldBody = await ReadFirstMcpPayloadAsync(heldResponse).ConfigureAwait(false);
