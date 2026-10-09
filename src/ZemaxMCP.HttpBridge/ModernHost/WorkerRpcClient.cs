@@ -46,6 +46,8 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     private bool _disposed;
     private Task? _cancelledOperationRecovery;
     private OperationProgress? _lastProgress;
+    private WorkerStatus? _cachedWorkerStatus;
+    private long _cachedWorkerStatusGeneration;
     private string? _lastSnapshotPath;
 
     public WorkerRpcClient(HostOptions options)
@@ -149,6 +151,19 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         }
     }
 
+    /// <summary>Read-only, non-blocking diagnostic status from this Worker generation.</summary>
+    public bool TryGetCachedStatus(out WorkerStatus? status)
+    {
+        lock (_connectionGate)
+        {
+            status = _activeGeneration != 0 && _activeGeneration == _cachedWorkerStatusGeneration
+                ? _cachedWorkerStatus : null;
+            return status != null;
+        }
+    }
+
+    public bool HasForegroundTool => _executionGate.CurrentCount == 0;
+
     public async Task<WorkerStatus> GetStatusAsync(CancellationToken cancellationToken)
     {
         await StartAsync(cancellationToken).ConfigureAwait(false);
@@ -156,6 +171,14 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         if (status.RpcVersion != ZemaxRpcProtocol.Version ||
             !string.Equals(status.ManifestFingerprint, StaticToolManifest.ContractFingerprint, StringComparison.Ordinal))
             throw new InvalidDataException("Worker status reported a different RPC/tool contract than the authenticated Host generation.");
+        lock (_connectionGate)
+        {
+            if (_activeGeneration != 0)
+            {
+                _cachedWorkerStatus = status;
+                _cachedWorkerStatusGeneration = _activeGeneration;
+            }
+        }
         return status;
     }
 
@@ -550,6 +573,8 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
             _worker = null;
             _startedAt = null;
             _activeGeneration = 0;
+            _cachedWorkerStatus = null;
+            _cachedWorkerStatusGeneration = 0;
         }
 
         if (generation != 0)
