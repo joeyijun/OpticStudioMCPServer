@@ -94,7 +94,10 @@ internal static class Program
                 workerClient.JobStateChanged += taskLedger.ObserveJob;
                 workerClient.GenerationEnded += taskLedger.ReleaseGeneration;
                 var adapter = new OfficialTasksAdapter(taskLedger, workerClient, jobOwners,
-                    credentialStore != null, ResolveTaskIdentity, HandleToolCallAsync);
+                    credentialStore != null, ResolveTaskIdentity,
+                    request => StaticToolManifest.TryGet(request.Params.Name, out var candidate) &&
+                        IsAuthorizedTool(options, request.User, candidate),
+                    HandleToolCallAsync);
                 builder.Services.Configure<ModelContextProtocol.Server.McpServerOptions>(adapter.Configure);
             }
             else
