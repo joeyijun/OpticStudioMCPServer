@@ -167,16 +167,18 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     public async Task<WorkerStatus> GetStatusAsync(CancellationToken cancellationToken)
     {
         await StartAsync(cancellationToken).ConfigureAwait(false);
+        var requestedGeneration = CurrentGeneration;
         var status = await SendAsync<WorkerStatus>(ZemaxRpcProtocol.GetStatus, new { }, Guid.NewGuid().ToString("N"), cancellationToken).ConfigureAwait(false);
         if (status.RpcVersion != ZemaxRpcProtocol.Version ||
             !string.Equals(status.ManifestFingerprint, StaticToolManifest.ContractFingerprint, StringComparison.Ordinal))
             throw new InvalidDataException("Worker status reported a different RPC/tool contract than the authenticated Host generation.");
         lock (_connectionGate)
         {
-            if (_activeGeneration != 0)
+            // Never publish a late status from a retired Worker generation.
+            if (requestedGeneration != 0 && _activeGeneration == requestedGeneration)
             {
                 _cachedWorkerStatus = status;
-                _cachedWorkerStatusGeneration = _activeGeneration;
+                _cachedWorkerStatusGeneration = requestedGeneration;
             }
         }
         return status;
