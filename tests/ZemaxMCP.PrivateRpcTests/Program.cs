@@ -802,11 +802,15 @@ internal static class Program
                             using var diagnosticStream = new FileStream(log, FileMode.Open, FileAccess.Read,
                                 FileShare.ReadWrite | FileShare.Delete);
                             using var diagnosticReader = new StreamReader(diagnosticStream);
-                            hostErrors = string.Join(" | ", diagnosticReader.ReadToEnd()
-                                .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
-                                .Where(line => line.Contains("[ERR]", StringComparison.Ordinal) ||
-                                               line.Contains("[FTL]", StringComparison.Ordinal))
-                                .TakeLast(6));
+                            var diagnosticLines = diagnosticReader.ReadToEnd()
+                                .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+                            var lastError = Array.FindLastIndex(diagnosticLines, line =>
+                                line.Contains("[ERR]", StringComparison.Ordinal) ||
+                                line.Contains("[FTL]", StringComparison.Ordinal));
+                            hostErrors = lastError < 0 ? "(no error lines)" :
+                                string.Join(" | ", diagnosticLines.Skip(lastError).Take(14))
+                                    .Substring(0, Math.Min(3800, string.Join(" | ",
+                                        diagnosticLines.Skip(lastError).Take(14)).Length));
                         }
                         catch (IOException) { hostErrors = "(Host log locked by active process)"; }
                     }
