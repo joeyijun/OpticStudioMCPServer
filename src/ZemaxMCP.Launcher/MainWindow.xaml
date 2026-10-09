@@ -386,8 +386,8 @@
                   ToolTip="Stop the local MCP service" Click="Stop_Click"/>
           <Button Content="Refresh" Style="{StaticResource ActionButton}" MinWidth="74" Height="34" Padding="10,5" Margin="0,0,7,0"
                   ToolTip="Refresh live service status" Click="RefreshStatus_Click"/>
-          <Button x:Name="TestConnectionButton" Content="Test connection" Style="{StaticResource ActionButton}" MinWidth="120" Height="34" Padding="9,5" Margin="0,0,9,0"
-                  ToolTip="Check connection, authentication and ZOS-API, then run tools/list and read-only zemax_status. No lens changes." Click="TestConnection_Click"/>
+          <Button x:Name="TestConnectionButton" Content="Check connection" Style="{StaticResource ActionButton}" MinWidth="125" Height="34" Padding="9,5" Margin="0,0,9,0"
+                  ToolTip="Check Host, authentication, Worker, OpticStudio ZOS-API and license status without exercising optical tools." Click="TestConnection_Click"/>
           <Button Content="Exit service" Style="{StaticResource ExitButton}" VerticalAlignment="Center"
                   ToolTip="Stop the MCP service and close the launcher" Click="Exit_Click"/>
         </StackPanel>
@@ -719,6 +719,8 @@
             <StackPanel Grid.Column="1" Orientation="Horizontal">
               <Button Content="Logs" Style="{StaticResource SmallButton}" Margin="0,0,7,0" Click="OpenLogs_Click"/>
               <Button Content="Updates" Style="{StaticResource SmallButton}" Margin="0,0,7,0" Click="Update_Click"/>
+              <Button x:Name="TestMcpToolsButton" Content="Test MCP tools" Style="{StaticResource SmallButton}" Margin="0,0,7,0" Click="TestMcpTools_Click"
+                      ToolTip="Actually call tools/list and read-only zemax_status, and negotiate official Tasks; never starts an optical Job."/>
               <Button Content="Copy diagnostics" Style="{StaticResource SmallButton}" Click="CopyDiagnostics_Click"/>
             </StackPanel>
           </Grid>
