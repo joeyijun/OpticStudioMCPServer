@@ -90,7 +90,13 @@ internal static class Program
             WorkerTaskLedger? taskLedger = null;
             if (options.EnableOfficialTasks)
             {
-                taskLedger = new WorkerTaskLedger();
+                // Reuse journal across Host restarts on this local listener
+                // without merging unrelated ports' owners or Worker histories.
+                // Persist only bounded Task metadata; raw results never hit disk.
+                var journalPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "ZemaxMCP", "task-journals", "listener-" + options.Port + ".json");
+                taskLedger = new WorkerTaskLedger(journalPath: journalPath);
                 workerClient.JobStateChanged += taskLedger.ObserveJob;
                 workerClient.GenerationEnded += taskLedger.ReleaseGeneration;
                 var adapter = new OfficialTasksAdapter(taskLedger, workerClient, jobOwners,
