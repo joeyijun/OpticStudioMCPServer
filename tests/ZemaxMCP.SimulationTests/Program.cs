@@ -16,6 +16,7 @@ internal static class Program
             VerifyStructuredMtf();
             VerifySequentialEnergyWindows();
             VerifySpectralWeights();
+            VerifyMechanicalFootprint();
             VerifyGlassCatalogSafety();
             await VerifyStaDispatcherAsync();
             await VerifyJobManagerAsync();
@@ -29,6 +30,31 @@ internal static class Program
             Console.Error.WriteLine(exception);
             return 1;
         }
+    }
+
+    private static void VerifyMechanicalFootprint()
+    {
+        var rect = MechanicalFootprintBoundary.Rectangle(new[] {-2d,-1d,2d,1d});
+        Assert(Math.Abs(MechanicalFootprintBoundary.SignedClearance(rect,0,0)-1)<1e-12,
+            "Inside margin wrong.");
+        Assert(Math.Abs(MechanicalFootprintBoundary.SignedClearance(rect,3,0)+1)<1e-12,
+            "Outside margin must be negative.");
+        Assert(MechanicalFootprintBoundary.SignedClearance(rect,2,0)==0,"Boundary point must have zero clearance.");
+        var concave=new[] { new[] {0d,0d}, new[] {4d,0d}, new[] {4d,1d},
+            new[] {1d,1d}, new[] {1d,4d}, new[] {0d,4d} };
+        MechanicalFootprintBoundary.Validate(concave);
+        Assert(MechanicalFootprintBoundary.SignedClearance(concave,0.5,3)>0 &&
+            MechanicalFootprintBoundary.SignedClearance(concave,3,3)<0,
+            "Concave boundary classification failed.");
+        var result=MechanicalFootprintBoundary.Assess(rect,
+            new (double X,double Y)[]{(0,0),(3,0),(2,0)},"user-rectangle");
+        Assert(result.Outside==1 && Math.Abs(result.OutsideFractionOfSurvivors!.Value-1d/3)<1e-12,
+            "Outside-sample fraction wrong.");
+        AssertThrows<ArgumentException>(()=>MechanicalFootprintBoundary.Rectangle(new[]{1d,0d,0d,1d}),
+            "Reversed rectangle accepted.");
+        AssertThrows<ArgumentException>(()=>MechanicalFootprintBoundary.Validate(new[]{
+            new[]{0d,0d},new[]{2d,2d},new[]{0d,2d},new[]{2d,0d}}),
+            "Self-crossing outline accepted.");
     }
 
     private static void VerifySpectralWeights()

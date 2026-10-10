@@ -23,7 +23,8 @@ public sealed class RayFootprintTool
         double? CentroidX, double? CentroidY, double? MinX, double? MaxX,
         double? MinY, double? MaxY, double? RmsRadius,
         double? MinimumOuterApertureClearance,
-        IReadOnlyList<FootprintPoint> Points, bool PointsTruncated);
+        IReadOnlyList<FootprintPoint> Points, bool PointsTruncated,
+        MechanicalFootprintBoundary.Assessment? UserMechanicalBoundary = null);
     public sealed record Result(bool Success, string? Error,
         int Wavelength, double Hx, double Hy, int GridSize, string PositionUnit,
         IReadOnlyList<SurfaceFootprint> Surfaces,
@@ -38,13 +39,23 @@ public sealed class RayFootprintTool
         [Description("1-based wavelength number.")] int wavelength = 1,
         [Description("Circular normalized-pupil grid dimension, 5..51.")] int gridSize = 21,
         [Description("Include up to 128 representative clear ray intercepts per surface; 0 returns envelopes only.")] int maxPointsPerSurface = 0,
+        [Description("Optional real mechanical rectangle [minX,minY,maxX,maxY] in selected surface LOCAL lens units.")] double[]? mechanicalRectangle = null,
+        [Description("Optional mechanical polygon [[x,y],...], 3..64 vertices in selected surface LOCAL lens units.")] double[][]? mechanicalPolygon = null,
+        [Description("Surface with supplied mechanical boundary; 0 only if one target surface is selected.")] int mechanicalSurface = 0,
         CancellationToken cancellationToken = default)
     {
-        const string note = "Local LDE coordinates vary across coordinate breaks and folded systems. Explicit circular apertures are geometry; semi-diameter alone does not cut rays. VignetteCode identifies the reported blocking surface; ray-trace errors are not geometric clipping. Clear-ray centroid/RMS exclude blocked and invalid rays.";
+        const string note = "User mechanical outlines are assessed only against surviving clear rays, not entrance-pupil throughput. User vertices and intercepts must share the same target LOCAL coordinate frame; this does not edit apertures or transform global CAD. Local LDE coordinates vary across coordinate breaks and folded systems. Explicit circular apertures are geometry; semi-diameter alone does not cut rays. VignetteCode identifies the reported blocking surface; ray-trace errors are not geometric clipping. Clear-ray centroid/RMS exclude blocked and invalid rays.";
         var empty = Array.Empty<SurfaceFootprint>();
         try
         {
             SequentialPupilSampler.ValidateField(hx, hy);
+            if (mechanicalRectangle != null && mechanicalPolygon != null)
+                throw new ArgumentException("Choose mechanicalRectangle OR mechanicalPolygon.");
+            var mechanical = mechanicalRectangle != null ?
+                MechanicalFootprintBoundary.Rectangle(mechanicalRectangle) : mechanicalPolygon;
+            if (mechanical != null) MechanicalFootprintBoundary.Validate(mechanical);
+            if (mechanical == null && mechanicalSurface != 0)
+                throw new ArgumentException("mechanicalSurface requires an outline.");
             if (wavelength < 1 || gridSize is < 5 or > 51 ||
                 maxPointsPerSurface is < 0 or > 128 ||
                 (surfaces != null && (surfaces.Length > 24 || surfaces.Distinct().Count() != surfaces.Length)))
@@ -53,7 +64,9 @@ public sealed class RayFootprintTool
             return await _session.ExecuteAsync("RayFootprint",
                 new Dictionary<string, object?> {
                     ["surfaces"] = surfaces, ["hx"] = hx, ["hy"] = hy, ["wavelength"] = wavelength,
-                    ["gridSize"] = gridSize, ["maxPointsPerSurface"] = maxPointsPerSurface
+                    ["gridSize"] = gridSize, ["maxPointsPerSurface"] = maxPointsPerSurface,
+                    ["mechanicalSurface"] = mechanicalSurface,
+                    ["mechanicalRectangle"] = mechanicalRectangle, ["mechanicalPolygon"] = mechanicalPolygon
                 }, system =>
                 {
                     if (system.Mode != SystemType.Sequential)
@@ -67,6 +80,11 @@ public sealed class RayFootprintTool
                     if (targets.Length is < 1 or > 24 ||
                         targets.Any(x => x < 1 || x > last))
                         throw new ArgumentException("Choose between 1 and 24 valid LDE surface numbers.");
+                    var comparisonSurface = mechanicalSurface == 0 && targets.Length == 1 ?
+                        targets[0] : mechanicalSurface;
+                    if (mechanical != null &&
+                        (comparisonSurface < 1 || !targets.Contains(comparisonSurface)))
+                        throw new ArgumentException("mechanicalSurface must match an inspected LDE target surface.");
                     var pupil = SequentialPupilSampler.CircularGrid(gridSize);
                     if ((long)pupil.Length * targets.Length > 45000)
                         throw new ArgumentException("Ray sampling request exceeds 45000 bounded ray/surface traces.");
@@ -117,12 +135,17 @@ public sealed class RayFootprintTool
                             var points = clear.Take(maxPointsPerSurface)
                                 .Select(x => new FootprintPoint(x.Pupil.Px, x.Pupil.Py, x.X, x.Y, x.Intensity))
                                 .ToArray();
+                            var mechanicalResult = mechanical != null && target == comparisonSurface
+                                ? MechanicalFootprintBoundary.Assess(
+                                    mechanical, clear.Select(ray => (ray.X,ray.Y)).ToArray(),
+                                    mechanicalRectangle != null ? "user-rectangle" : "user-polygon")
+                                : null;
                             output.Add(new SurfaceFootprint(target, row.Comment, row.Type.ToString(),
                                 apertureType.ToString(), reference, inner, outer, dx, dy, pupil.Length,
                                 clear.Length, blocked, rays.Length - valid.Length,
                                 rays.Count(x => x.Valid && x.VignetteCode == target),
                                 centerX, centerY, minX, maxX, minY, maxY, rms, clearance,
-                                points, clear.Length > points.Length));
+                                points, clear.Length > points.Length, mechanicalResult));
                         }
                     }
                     finally { trace.Close(); }
