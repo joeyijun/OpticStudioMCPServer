@@ -92,7 +92,8 @@ internal static class StaticToolManifestAssertions
             throw new InvalidOperationException("Native coating RTA must be a bounded read-only sequential analysis.");
 
         var footprintInputs = StaticToolManifest.GetRequired("zemax_ray_footprint").InputSchema.GetProperty("properties");
-        if (!footprintInputs.TryGetProperty("mechanicalGlobalPolygon",out _) ||
+        if (!footprintInputs.TryGetProperty("globalMechanicalMode",out _) ||
+            !footprintInputs.TryGetProperty("mechanicalGlobalPolygon",out _) ||
             !footprintInputs.TryGetProperty("mechanicalPlaneTolerance",out _) ||
             !footprintInputs.TryGetProperty("includeGlobalCoordinates",out _) ||
             !footprintInputs.TryGetProperty("mechanicalRectangle", out _) ||

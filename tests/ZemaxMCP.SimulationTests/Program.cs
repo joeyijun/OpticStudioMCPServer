@@ -22,6 +22,7 @@ internal static class Program
             VerifyMechanicalFootprint();
             VerifyGlobalFootprint();
             VerifyGlobalMechanicalPolygon();
+            VerifyFiniteRaySegmentBoundary();
             VerifyUserCoatingRta();
             VerifyNativeCoatingReflection();
             VerifyNativeDetectorTiles();
@@ -238,6 +239,53 @@ internal static class Program
         AssertThrows<ArgumentException>(()=>CoatingRtaAudit.Evaluate(1,
             new[]{new[]{double.NaN,0.5,0.2}},new[]{false}),
             "Non-finite coating accepted.");
+    }
+
+    private static void VerifyFiniteRaySegmentBoundary()
+    {
+        var polygon=new[]{new[]{-2d,-1d,5d},new[]{2d,-1d,5d},
+            new[]{2d,1d,5d},new[]{-2d,1d,5d}};
+        static GlobalRaySegmentBoundary.Segment Line(double x,double z1,double z2)=>
+            new(new GlobalFootprintProjection.Point3(x,0,z1),
+                new GlobalFootprintProjection.Point3(x,0,z2));
+        var segments=new [] {
+            Line(0,0,10), // through plane, inside aperture
+            Line(3,0,10), // through plane but outside aperture
+            Line(0,6,10), // both endpoints beyond plane -> no crossing
+            Line(0,5,5.001), // within tolerance at both endpoints: coplanar ambiguous
+            Line(0,5,5), // degenerate
+            new GlobalRaySegmentBoundary.Segment(
+                new GlobalFootprintProjection.Point3(0,0,6),
+                new GlobalFootprintProjection.Point3(1,0,6))
+        };
+        var result=GlobalRaySegmentBoundary.Assess(polygon,segments,0.01);
+        Assert(result.InputSegments==6 && result.IntersectedPlane==2 &&
+               result.ApertureInside==1 && result.ApertureOutside==1 &&
+               result.NoPlaneIntersection==2 && result.CoplanarAmbiguous==1 &&
+               result.DegenerateSegments==1 &&
+               Math.Abs(result.MinimumSignedApertureClearance!.Value+1)<1e-12 &&
+               Math.Abs(result.OutsideFractionOfPlaneIntersections!.Value-0.5)<1e-12,
+            "Finite 3D stop crossing counts or signed aperture clearance are wrong.");
+        var reverse=GlobalRaySegmentBoundary.Assess(polygon,
+            new[]{Line(3,10,0)},0.01);
+        Assert(reverse.IntersectedPlane==1 && reverse.ApertureOutside==1,
+            "Reverse optical propagation must not change mechanical ray-plane intersection.");
+        var none=GlobalRaySegmentBoundary.Assess(polygon,
+            new[]{Line(0,8,9)},0.01);
+        Assert(none.IntersectedPlane==0 &&
+               none.OutsideFractionOfPlaneIntersections==null,
+            "A stop outside the finite segment was incorrectly called a cut.");
+        var empty=GlobalRaySegmentBoundary.Assess(polygon,
+            Array.Empty<GlobalRaySegmentBoundary.Segment>(),0.01);
+        Assert(empty.InputSegments==0 && empty.OutsideFractionOfValidSegments==null,
+            "Empty valid optical segments must not produce fabricated throughput.");
+        AssertThrows<InvalidDataException>(()=>GlobalRaySegmentBoundary.Assess(
+            polygon,new[]{Line(double.NaN,0,10)},0.01),
+            "Nonfinite global ray coordinates were accepted.");
+        AssertThrows<ArgumentException>(()=>GlobalRaySegmentBoundary.Assess(
+            new[]{new[]{0d,0d,0d},new[]{1d,0d,0d},new[]{1d,1d,0d},
+                new[]{0d,1d,2d}},segments,0.01),
+            "Nonplanar CAD outline was flattened before a ray-plane intersection.");
     }
 
     private static void VerifyGlobalMechanicalPolygon()

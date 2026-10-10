@@ -26,7 +26,8 @@ public sealed class RayFootprintTool
         IReadOnlyList<FootprintPoint> Points, bool PointsTruncated,
         MechanicalFootprintBoundary.Assessment? UserMechanicalBoundary = null,
         GlobalFootprintProjection.Result? GlobalCoordinates = null,
-        GlobalPlanarMechanicalBoundary.Assessment? GlobalMechanicalBoundary = null);
+        GlobalPlanarMechanicalBoundary.Assessment? GlobalMechanicalBoundary = null,
+        GlobalRaySegmentBoundary.Assessment? GlobalSegmentBoundary = null);
     public sealed record Result(bool Success, string? Error,
         int Wavelength, double Hx, double Hy, int GridSize, string PositionUnit,
         IReadOnlyList<SurfaceFootprint> Surfaces,
@@ -47,9 +48,10 @@ public sealed class RayFootprintTool
         [Description("Also return real 3D global-coordinate envelope/centroid and up to maxPointsPerSurface transformed clear rays. Uses actual traced local Z (surface sag) and official LDE GetGlobalMatrix; not a tangent-plane approximation.")] bool includeGlobalCoordinates = false,
         [Description("Optional measured PLANAR 3D global XYZ mechanical polygon [[x,y,z],...], 3..64 coplanar vertices. Exclusive with local rectangle/polygon; compared only with rays coincident with this LDE surface, not a separate plane intersection.")] double[][]? mechanicalGlobalPolygon = null,
         [Description("Maximum absolute separation of a surviving global XYZ ray intercept from the global mechanical polygon plane, in lens units. Default 0.01; rays farther away are UNKNOWN, not cut.")] double mechanicalPlaneTolerance = 0.01,
+        [Description("For mechanicalGlobalPolygon, choose surface (default: classify intercepts already on the same CAD plane) or preceding-segment (intersect finite global rays from the immediately PRECEDING LDE surface to the selected surface, using actual transformed XYZ endpoints). This analyzes a separate stop BETWEEN the two surfaces, without extrapolation. Requires mechanicalSurface >=2.")] string globalMechanicalMode = "surface",
         CancellationToken cancellationToken = default)
     {
-        const string note = "User mechanical outlines are assessed only against surviving clear rays, not entrance-pupil throughput. Local user vertices and intercepts must share the same target LOCAL coordinate frame. Optional user GLOBAL planar polygon vertices are evaluated with actual traced local Z, official LDE GetGlobalMatrix and explicit plane separation tolerance. Ray samples that do not coincide with the measured global plane are UNKNOWN, not obstructed; this is not a ray-plane intersection or a solid CAD collision analysis. No aperture changes. Optional global intercepts use traced local Z and OpticStudio's LDE GetGlobalMatrix. Local LDE coordinates vary across coordinate breaks and folded systems. Explicit circular apertures are geometry; semi-diameter alone does not cut rays. VignetteCode identifies the reported blocking surface; ray-trace errors are not geometric clipping. Clear-ray centroid/RMS exclude blocked and invalid rays.";
+        const string note = "User mechanical outlines are assessed only against surviving clear rays, not entrance-pupil throughput. Local user vertices and intercepts must share the same target LOCAL coordinate frame. Optional user GLOBAL planar polygon vertices are evaluated with actual traced local Z, official LDE GetGlobalMatrix and explicit plane separation tolerance. Ray samples that do not coincide with the measured global plane are UNKNOWN, not obstructed; globalMechanicalMode=surface is coincident-intercept-only; preceding-segment intersects the exact finite ray chord between immediately adjacent traced LDE surfaces with a user planar stop in 3D. This is NOT full arbitrary solid CAD tracing or a physical transmitted-power measurement. No aperture changes. Optional global intercepts use traced local Z and OpticStudio's LDE GetGlobalMatrix. Local LDE coordinates vary across coordinate breaks and folded systems. Explicit circular apertures are geometry; semi-diameter alone does not cut rays. VignetteCode identifies the reported blocking surface; ray-trace errors are not geometric clipping. Clear-ray centroid/RMS exclude blocked and invalid rays.";
         var empty = Array.Empty<SurfaceFootprint>();
         try
         {
@@ -58,6 +60,10 @@ public sealed class RayFootprintTool
                 (mechanicalGlobalPolygon==null?0:1);
             if (outlineCount > 1)
                 throw new ArgumentException("Specify only one of mechanicalRectangle, mechanicalPolygon or mechanicalGlobalPolygon.");
+            if (globalMechanicalMode is not ("surface" or "preceding-segment"))
+                throw new ArgumentException("globalMechanicalMode must be surface or preceding-segment.");
+            if (globalMechanicalMode=="preceding-segment" && mechanicalGlobalPolygon==null)
+                throw new ArgumentException("preceding-segment mode requires mechanicalGlobalPolygon.");
             if (!double.IsFinite(mechanicalPlaneTolerance) ||
                 mechanicalPlaneTolerance<=0 || mechanicalPlaneTolerance>1e6)
                 throw new ArgumentException("mechanicalPlaneTolerance must be finite and in (0,1000000].");
@@ -79,7 +85,8 @@ public sealed class RayFootprintTool
                     ["mechanicalRectangle"] = mechanicalRectangle, ["mechanicalPolygon"] = mechanicalPolygon,
                     ["includeGlobalCoordinates"] = includeGlobalCoordinates,
                     ["mechanicalGlobalPolygon"] = mechanicalGlobalPolygon,
-                    ["mechanicalPlaneTolerance"] = mechanicalPlaneTolerance
+                    ["mechanicalPlaneTolerance"] = mechanicalPlaneTolerance,
+                    ["globalMechanicalMode"] = globalMechanicalMode
                 }, system =>
                 {
                     if (system.Mode != SystemType.Sequential)
@@ -98,8 +105,11 @@ public sealed class RayFootprintTool
                     if (outlineCount > 0 &&
                         (comparisonSurface < 1 || !targets.Contains(comparisonSurface)))
                         throw new ArgumentException("mechanicalSurface must match an inspected LDE target surface.");
+                    if (globalMechanicalMode=="preceding-segment" && comparisonSurface<2)
+                        throw new ArgumentException("A finite preceding LDE segment requires mechanicalSurface >=2 (target and immediately previous physical LDE surface).");
                     var pupil = SequentialPupilSampler.CircularGrid(gridSize);
-                    if ((long)pupil.Length * targets.Length > 45000)
+                    if ((long)pupil.Length * (targets.Length +
+                        (globalMechanicalMode=="preceding-segment"?1:0)) > 45000)
                         throw new ArgumentException("Ray sampling request exceeds 45000 bounded ray/surface traces.");
                     var trace = system.Tools.OpenBatchRayTrace()
                         ?? throw new InvalidOperationException("Batch ray trace is unavailable.");
@@ -155,6 +165,7 @@ public sealed class RayFootprintTool
                                 : null;
                             GlobalFootprintProjection.Result? global = null;
                             GlobalPlanarMechanicalBoundary.Assessment? globalMechanical = null;
+                            GlobalRaySegmentBoundary.Assessment? globalSegment = null;
                             if (includeGlobalCoordinates ||
                                 (mechanicalGlobalPolygon != null && target == comparisonSurface))
                             {
@@ -172,9 +183,39 @@ public sealed class RayFootprintTool
                                     global = GlobalFootprintProjection.Project(rotation, origin,
                                         localHits, maxPointsPerSurface);
                                 if (mechanicalGlobalPolygon != null && target == comparisonSurface)
-                                    globalMechanical = GlobalPlanarMechanicalBoundary.Assess(
-                                        mechanicalGlobalPolygon,rotation,origin,localHits,
-                                        mechanicalPlaneTolerance);
+                                {
+                                    if (globalMechanicalMode=="surface")
+                                        globalMechanical = GlobalPlanarMechanicalBoundary.Assess(
+                                            mechanicalGlobalPolygon,rotation,origin,localHits,
+                                            mechanicalPlaneTolerance);
+                                    else
+                                    {
+                                        var previousSurface=target-1;
+                                        var before=SequentialPupilSampler.Trace(
+                                            trace,previousSurface,wavelength,hx,hy,pupil,cancellationToken);
+                                        if(!system.LDE.GetGlobalMatrix(previousSurface,
+                                            out var p11,out var p12,out var p13,
+                                            out var p21,out var p22,out var p23,
+                                            out var p31,out var p32,out var p33,
+                                            out var pox,out var poy,out var poz))
+                                            throw new InvalidOperationException("Official LDE GetGlobalMatrix failed for preceding surface "+previousSurface+".");
+                                        var prevRot=new[]{new[]{p11,p12,p13},new[]{p21,p22,p23},new[]{p31,p32,p33}};
+                                        var prevOrigin=new[]{pox,poy,poz};
+                                        var segments=new List<GlobalRaySegmentBoundary.Segment>();
+                                        for(var i=0;i<rays.Length;i++)
+                                        {
+                                            if((i&31)==0)cancellationToken.ThrowIfCancellationRequested();
+                                            if(!rays[i].Clear || !before[i].Clear)continue;
+                                            segments.Add(new GlobalRaySegmentBoundary.Segment(
+                                                GlobalFootprintProjection.Transform(prevRot,prevOrigin,
+                                                    before[i].X,before[i].Y,before[i].Z),
+                                                GlobalFootprintProjection.Transform(rotation,origin,
+                                                    rays[i].X,rays[i].Y,rays[i].Z)));
+                                        }
+                                        globalSegment=GlobalRaySegmentBoundary.Assess(
+                                            mechanicalGlobalPolygon,segments,mechanicalPlaneTolerance);
+                                    }
+                                }
                             }
                             output.Add(new SurfaceFootprint(target, row.Comment, row.Type.ToString(),
                                 apertureType.ToString(), reference, inner, outer, dx, dy, pupil.Length,
@@ -182,7 +223,7 @@ public sealed class RayFootprintTool
                                 rays.Count(x => x.Valid && x.VignetteCode == target),
                                 centerX, centerY, minX, maxX, minY, maxY, rms, clearance,
                                 points, clear.Length > points.Length, mechanicalResult, global,
-                                globalMechanical));
+                                globalMechanical, globalSegment));
                         }
                     }
                     finally { trace.Close(); }

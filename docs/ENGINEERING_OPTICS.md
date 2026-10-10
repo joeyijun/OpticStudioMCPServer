@@ -393,3 +393,32 @@ cross-version validation are pending.
 
 Official API references: 
 https://developer.synopsys.com/docs/zemax-opticstudio-zos-api-2026-r1/reference/interface_z_o_s_a_p_i_1_1_editors_1_1_l_d_e_1_1_i_coating_performance_data.md
+
+### Finite 3D ray segment vs independent planar mechanical stop
+
+`zemax_ray_footprint` accepts
+`mechanicalGlobalPolygon:[[x,y,z],...]` and
+`globalMechanicalMode:"preceding-segment"` with
+`mechanicalSurface>=2`. This mode traces the **same normalized-pupil
+rays** to the chosen LDE surface **and the immediately preceding LDE
+surface**, independently transforms their actual local XYZ/sag into
+global coordinates with `LDE.GetGlobalMatrix`, and intersects the
+finite STRAIGHT segment connecting each surviving pair with the
+user-supplied global planar aperture. No infinite-line extrapolation
+outside the segment is permitted. It reports counts of plane
+intersections falling inside/outside the allowed aperture, no
+intersection, coplanar ambiguity, degenerate segments, and signed edge
+clearance. `OutsideFractionOfPlaneIntersections` uses only rays
+that reach the plane; `OutsideFractionOfValidSegments` uses surviving,
+nondegenerate, nonambiguous endpoint pairs. Rays already rejected
+by the sequential optical model are excluded; neither value is a
+source-normalized optical throughput or measured detector power.
+
+The stop polygon is an **allowed clear opening**: an intersection
+outside is potential extra CAD clipping if everything outside the
+polygon is physically opaque. The stop must lie between the two
+physical neighboring surfaces; a different LDE location, multiple
+intermediate optical interactions, or a solid-body CAD model still
+needs an explicit multi-segment/solid intersection analysis.
+`globalMechanicalMode:"surface"` retains the original strict
+plane-coincidence assessment. The analysis makes NO model edits.

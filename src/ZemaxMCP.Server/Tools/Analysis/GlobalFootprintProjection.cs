@@ -10,6 +10,21 @@ public static class GlobalFootprintProjection
         IReadOnlyList<Point3> SamplePoints, bool PointsTruncated,
         string CoordinateFrame);
 
+    internal static Point3 Transform(double[][] r,double[] o,double x,double y,double z)
+    {
+        if(r is not {Length:3} || r.Any(row=>row is not {Length:3} ||
+            row.Any(v=>!double.IsFinite(v))) ||
+            o is not {Length:3} || o.Any(v=>!double.IsFinite(v)) ||
+            !double.IsFinite(x)||!double.IsFinite(y)||!double.IsFinite(z))
+            throw new InvalidDataException("Invalid global coordinate transform or ray sag.");
+        var px=o[0]+r[0][0]*x+r[0][1]*y+r[0][2]*z;
+        var py=o[1]+r[1][0]*x+r[1][1]*y+r[1][2]*z;
+        var pz=o[2]+r[2][0]*x+r[2][1]*y+r[2][2]*z;
+        if(!double.IsFinite(px)||!double.IsFinite(py)||!double.IsFinite(pz))
+            throw new InvalidDataException("Global ray intercept overflowed finite coordinates.");
+        return new Point3(px,py,pz);
+    }
+
     internal static Result Project(double[][] rotation, double[] origin,
         IReadOnlyList<(double X,double Y,double Z)> localIntersections, int sampleLimit)
     {
