@@ -48,6 +48,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     private OperationProgress? _lastProgress;
     private WorkerStatus? _cachedWorkerStatus;
     private long _cachedWorkerStatusGeneration;
+    private DateTimeOffset? _cachedWorkerStatusAt;
     private string? _lastSnapshotPath;
 
     public WorkerRpcClient(HostOptions options)
@@ -162,6 +163,20 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Validation timestamp of the status belonging to the current Worker
+    /// generation, not a heartbeat for an ongoing COM call.
+    /// </summary>
+    public DateTimeOffset? LastValidatedStatusAt
+    {
+        get
+        {
+            lock (_connectionGate)
+                return _activeGeneration != 0 && _cachedWorkerStatusGeneration == _activeGeneration
+                    ? _cachedWorkerStatusAt : null;
+        }
+    }
+
     public bool HasForegroundTool => _executionGate.CurrentCount == 0;
 
     public async Task<WorkerStatus> GetStatusAsync(CancellationToken cancellationToken)
@@ -179,6 +194,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
             {
                 _cachedWorkerStatus = status;
                 _cachedWorkerStatusGeneration = requestedGeneration;
+                _cachedWorkerStatusAt = DateTimeOffset.UtcNow;
             }
         }
         return status;
@@ -577,6 +593,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
             _activeGeneration = 0;
             _cachedWorkerStatus = null;
             _cachedWorkerStatusGeneration = 0;
+            _cachedWorkerStatusAt = null;
         }
 
         if (generation != 0)
