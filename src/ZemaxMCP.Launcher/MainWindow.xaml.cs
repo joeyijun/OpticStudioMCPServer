@@ -29,15 +29,13 @@ public partial class MainWindow : Window
     private bool _refreshingActivity;
     private bool _refreshingJobsDelta;
     private bool _jobsDeltaSupported = true;
-    private string _jobsDeltaCursor = "";
-    private string _jobsDeltaEndpoint = "";
+    private readonly ScopedDeltaCursor _jobsDelta = new ScopedDeltaCursor();
     private DateTimeOffset _jobsDeltaRetryAfter;
     private bool _healthReachable;
     private bool _activityEndpointSupported = true;
     private bool _activityDeltaSupported = true;
-    private string _activityCursor = "";
+    private readonly ScopedDeltaCursor _activityDelta = new ScopedDeltaCursor();
     private DateTimeOffset _activityEndpointRetryAfter;
-    private string _observedActivityEndpoint = "";
     private bool _windowLoaded;
     private bool _settingsLoadFailed;
     private string _localAccessToken = "";
@@ -403,16 +401,14 @@ public partial class MainWindow : Window
     {
         if (_refreshingActivity || !_healthReachable) return;
         var endpoint = McpUrl;
-        if (!string.Equals(endpoint, _observedActivityEndpoint, StringComparison.OrdinalIgnoreCase))
+        var accessToken = McpToken; // WPF PasswordBox must remain on Dispatcher thread.
+        if (_activityDelta.Bind(endpoint,accessToken))
         {
-            _observedActivityEndpoint = endpoint;
             _activityEndpointSupported = true;
             _activityDeltaSupported = true;
-            _activityCursor = "";
         }
         if (!_activityEndpointSupported && DateTimeOffset.UtcNow < _activityEndpointRetryAfter) return;
         _refreshingActivity = true;
-        var accessToken = McpToken;
         try
         {
             JObject activity;
@@ -421,8 +417,9 @@ public partial class MainWindow : Window
                 try
                 {
                     var delta = await Task.Run(() => GetEndpointJson(endpoint, accessToken,
-                        "/activity-delta?cursor=" + Uri.EscapeDataString(_activityCursor), 2000));
-                    _activityCursor = delta["cursor"]?.ToString() ?? "";
+                        _activityDelta.UrlSuffix("/activity-delta"), 2000));
+                    if (!_activityDelta.Matches(McpUrl,McpToken)) return; // Token changed during request.
+                    _activityDelta.Update(delta["cursor"]?.ToString() ?? "");
                     if (delta["changed"]?.Value<bool>() != true) return;
                     activity = delta["activity"] as JObject ?? new JObject();
                 }
@@ -434,7 +431,7 @@ public partial class MainWindow : Window
             }
             else activity = await Task.Run(() => GetEndpointJson(endpoint, accessToken, "/activity", 2000));
             _activityEndpointSupported = true;
-            if (_healthReachable && string.Equals(endpoint, McpUrl, StringComparison.OrdinalIgnoreCase))
+            if (_healthReachable && _activityDelta.Matches(McpUrl,McpToken))
                 RefreshClientDashboard(activity, refreshSetup: false);
         }
         catch (WebException ex) when ((ex.Response as HttpWebResponse)?.StatusCode == HttpStatusCode.NotFound)
@@ -450,23 +447,18 @@ public partial class MainWindow : Window
     {
         if (!_healthReachable || _refreshingJobsDelta || _refreshingStatus) return;
         var endpoint=McpUrl;
-        if (!string.Equals(endpoint,_jobsDeltaEndpoint,StringComparison.OrdinalIgnoreCase))
-        {
-            _jobsDeltaEndpoint=endpoint;
-            _jobsDeltaCursor="";
+        var token=McpToken; // PasswordBox must be read ONLY on the WPF thread.
+        if(_jobsDelta.Bind(endpoint,token))
             _jobsDeltaSupported=true;
-        }
         if (!_jobsDeltaSupported && DateTimeOffset.UtcNow<_jobsDeltaRetryAfter) return;
         _refreshingJobsDelta=true;
-        // PasswordBox must be read ONLY on the WPF thread.
-        var token=McpToken;
         try
         {
             JObject response;
             try
             {
                 response=await Task.Run(()=>GetEndpointJson(endpoint,token,
-                    "/jobs-delta?cursor="+Uri.EscapeDataString(_jobsDeltaCursor),2500));
+                    _jobsDelta.UrlSuffix("/jobs-delta"),2500));
             }
             catch(WebException error) when((error.Response as HttpWebResponse)?.StatusCode==HttpStatusCode.NotFound)
             {
@@ -475,10 +467,8 @@ public partial class MainWindow : Window
                 _jobsDeltaRetryAfter=DateTimeOffset.UtcNow.AddMinutes(1);
                 return;
             }
-            if(!string.Equals(endpoint,McpUrl,StringComparison.OrdinalIgnoreCase)) return;
-            if(response["cursor"]?.ToString() is not { Length:64 } nextCursor)
-                throw new InvalidDataException("Host returned an invalid Jobs delta cursor.");
-            _jobsDeltaCursor=nextCursor;
+            if(!_jobsDelta.Matches(McpUrl,McpToken)) return; // No stale cross-credential update.
+            _jobsDelta.Update(response["cursor"]?.ToString() ?? "");
             _jobsDeltaSupported=true;
             if(response["changed"]?.Value<bool>()!=true) return;
             var snapshot=response["snapshot"] as JObject ??
@@ -497,7 +487,7 @@ public partial class MainWindow : Window
         }
         catch(Exception)
         {
-            _jobsDeltaCursor=""; // Re-fetch a complete owner-scoped snapshot.
+            _jobsDelta.ForceFullRefresh(); // Re-fetch a complete owner-scoped snapshot.
         }
         finally { _refreshingJobsDelta=false; }
     }

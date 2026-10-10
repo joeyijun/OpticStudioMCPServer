@@ -8,6 +8,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Protocol;
 using ZemaxMCP.HttpBridge.ModernHost;
+using ZemaxMCP.Launcher;
 using ZemaxMCP.Rpc;
 using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Server.Tools.Catalog;
@@ -31,6 +32,7 @@ internal static class Program
         {
             VerifyActivityOwnership();
             VerifyJobsDeltaOwnership();
+            VerifyLauncherDeltaCredentialScope();
             VerifyStructuredToolOutcomes();
             VerifyOfficialTasksDefaults();
             VerifyTlsOptions();
@@ -369,6 +371,36 @@ internal static class Program
             "Shared/local Job state must not expose official Task IDs.");
         AssertThrows<InvalidOperationException>(()=>monitor.GetDelta("",true,null,17,false,true,
             jobs,Array.Empty<object>(),_=>false),"A scoped missing identity was not denied.");
+    }
+
+    private static void VerifyLauncherDeltaCredentialScope()
+    {
+        var tracker=new ScopedDeltaCursor();
+        Assert(tracker.Bind("http://127.0.0.1:5000/mcp","writer-a") &&
+               tracker.UrlSuffix("/jobs-delta")=="/jobs-delta?cursor=",
+            "Initial scoped status poll must be a full snapshot.");
+        var cursor=new string('a',64);
+        tracker.Update(cursor);
+        Assert(!tracker.Bind("http://127.0.0.1:5000/mcp","writer-a") &&
+               tracker.Cursor==cursor &&
+               tracker.Matches("http://127.0.0.1:5000/mcp","writer-a"),
+            "Same endpoint and credential must retain its cursor.");
+        Assert(tracker.Bind("http://127.0.0.1:5000/mcp","writer-b") &&
+               tracker.Cursor.Length==0 &&
+               !tracker.Matches("http://127.0.0.1:5000/mcp","writer-a"),
+            "Bearer swap must invalidate the old client's cached cursor.");
+        tracker.Update(cursor);
+        Assert(tracker.Bind("https://127.0.0.1:5000/mcp","writer-b") &&
+               tracker.Cursor.Length==0,
+            "Endpoint/transport switch must invalidate a stale cursor.");
+        AssertThrows<ArgumentException>(()=>tracker.Update("bad"),
+            "Malformed opaque cursor accepted by the Launcher.");
+        AssertThrows<ArgumentException>(()=>tracker.Update(new string('x',64)),
+            "Nonhex cursor accepted by the Launcher.");
+        tracker.Update(cursor);
+        tracker.ForceFullRefresh();
+        Assert(tracker.Cursor.Length==0,
+            "Recovery after malformed delta must request a fresh snapshot.");
     }
 
     private static void VerifyActivityOwnership()
