@@ -75,8 +75,14 @@ public static class SystemSummaryComparer
 
     private static void Diff(JsonElement a,JsonElement b,string key,string path,List<Change> changes)
     {
-        var x=a.TryGetProperty(key,out var av)?Value(av):"<missing>";
-        var y=b.TryGetProperty(key,out var bv)?Value(bv):"<missing>";
+        var hasLeft=a.TryGetProperty(key,out var av);
+        var hasRight=b.TryGetProperty(key,out var bv);
+        // JSON spelling 10 vs 10.0 does not represent an optical edit.
+        if(hasLeft && hasRight && av.ValueKind==JsonValueKind.Number &&
+           bv.ValueKind==JsonValueKind.Number &&
+           av.GetDouble()==bv.GetDouble()) return;
+        var x=hasLeft?Value(av):"<missing>";
+        var y=hasRight?Value(bv):"<missing>";
         if(!string.Equals(x,y,StringComparison.Ordinal))
             changes.Add(new Change(path,x,y));
     }
