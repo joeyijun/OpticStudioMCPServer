@@ -62,11 +62,14 @@ $update.Invoke($instance,$updateArgs)
 $filterArgs = New-Object object[] 2
 $filterArgs[0]='Running'; $filterArgs[1]='zemax_pop'
 $filtered=$visible.Invoke($instance,$filterArgs)
-if ($filtered.Count -ne 2 -or $filtered[0].ToolName -ne 'zemax_pop' -or
-    $filtered[1].TaskId -ne 'task-1') {
+if ($filtered.Count -ne 1 -or $filtered[0].ToolName -ne 'zemax_pop' -or
+    $filtered[0].TaskId -ne 'task-1') {
     throw 'Task Center ViewModel running/search filtering changed during WPF split.'
 }
-$selected = $select.Invoke($null, @($filtered, [string]'task:task-1'))
+$selectArgs = New-Object object[] 2
+$selectArgs[0]=$filtered
+$selectArgs[1]='task:task-1'
+$selected = $select.Invoke($null, $selectArgs)
 if ($selected.TaskId -ne 'task-1' -or $detail.Invoke($null, @($selected)) -notmatch 'Worker generation') {
     throw 'Task Center ViewModel did not preserve selection/detail diagnostic context.'
 }
