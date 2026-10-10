@@ -282,7 +282,7 @@ internal static class Program
             using var _ = await lease.AcquireAsync("client-b", "zemax_status", CancellationToken.None).ConfigureAwait(false);
             throw new InvalidOperationException("A background job did not prevent lease expiry and cross-client takeover.");
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("currently leased", StringComparison.OrdinalIgnoreCase)) { }
+        catch (ControlLeaseConflictException) { }
 
         lease.ObserveJob(8, new WorkerJobStatus { JobId = "job-1", State = "Completed" });
         await Task.Delay(80).ConfigureAwait(false);
@@ -291,7 +291,7 @@ internal static class Program
             using var _ = await lease.AcquireAsync("client-b", "zemax_status", CancellationToken.None).ConfigureAwait(false);
             throw new InvalidOperationException("A terminal event from the wrong Worker generation released the job lease.");
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("currently leased", StringComparison.OrdinalIgnoreCase)) { }
+        catch (ControlLeaseConflictException) { }
 
         lease.ReleaseGeneration(7);
         // Dead Worker generations must relinquish idle background ownership
