@@ -37,7 +37,7 @@ public static class ZemaxOperationMetadata
         {
             new OperationPolicy(ZemaxOperationImpact.ReadOnly, new[]
             {
-                "ApertureThroughput", "SequentialEnergyBudget", "RayFootprint", "CardinalPoints", "ChromaticFocalShift", "DiffractionEncircledEnergy", "FftMtfVsField", "FftPsf",
+                "ApertureThroughput", "SequentialEnergyBudget", "GetCoatingRta", "RayFootprint", "DiagnoseClipping", "CardinalPoints", "ChromaticFocalShift", "DiffractionEncircledEnergy", "FftMtfVsField", "FftPsf",
                 "FieldCurvatureDistortion", "GeometricEncircledEnergy", "GeometricImageAnalysis", "GeometricMTF", "GeometricMtfVsField",
                 "GetAdvancedSystemSettings", "GetAfocalMode", "GetApertureSettings", "GetApodization", "GetAsphericSurface", "GetConfiguration",
                 "GetConfigurationOperands", "GetExtraData", "GetFieldSettings", "GetFirstOrderData", "GetGlobalMatrix", "GetMaterialCatalogSettings",
@@ -45,10 +45,10 @@ public static class ZemaxOperationMetadata
                 "GetRayAiming", "GetRayAimingSettings", "GetSurface", "GetSurfaceAperture", "GetSurfaceParameter", "GetSurfaceSolves", "GetSystem", "GetSystemFiles",
                 "GetSystemMetadata", "GetTolerances", "ToleranceSummary", "GetUnits", "GetVariables", "GetWavelengthSettings", "HuygensPsf", "LateralColor",
                 "LongitudinalAberration", "MTF", "OpdFan", "PupilAberrationFan", "RayFan", "RayTrace", "RayTraceDiagnostics", "RayTraceExtended", "read",
-                "RelativeIllumination", "RmsSpot", "SeidelCoefficients", "SnapshotDiff", "SpotDiagram"
+                "RelativeIllumination", "RmsSpot", "SeidelCoefficients", "SnapshotDiff", "SpotDiagram", "TaskPlan", "SystemSummary"
             }, new[]
             {
-            "zemax_aperture_throughput", "zemax_energy_budget", "zemax_ray_footprint", "zemax_cardinal_points", "zemax_chromatic_focal_shift", "zemax_diffraction_encircled_energy", "zemax_fft_mtf", "zemax_fft_mtf_vs_field",
+            "zemax_aperture_throughput", "zemax_energy_budget", "zemax_coating_rta", "zemax_ray_footprint", "zemax_diagnose_clipping", "zemax_cardinal_points", "zemax_chromatic_focal_shift", "zemax_diffraction_encircled_energy", "zemax_fft_mtf", "zemax_fft_mtf_vs_field",
             "zemax_fft_psf", "zemax_field_curvature_distortion", "zemax_filter_glasses", "zemax_geometric_encircled_energy", "zemax_geometric_image_analysis",
             "zemax_geometric_mtf", "zemax_geometric_mtf_vs_field", "zemax_get_advanced_system_settings", "zemax_get_afocal_mode", "zemax_get_aperture_settings",
             "zemax_get_apodization", "zemax_get_aspheric_surface", "zemax_get_clear_semi_diameter_margin", "zemax_get_configuration",
@@ -61,7 +61,7 @@ public static class ZemaxOperationMetadata
             "zemax_job_list", "zemax_job_status", "zemax_lateral_color", "zemax_list_surface_types", "zemax_longitudinal_aberration", "zemax_multistart_status",
             "zemax_opd_fan", "zemax_operand_help", "zemax_pupil_aberration_fan", "zemax_ray_fan", "zemax_ray_trace", "zemax_ray_trace_diagnostics", "zemax_ray_trace_extended",
             "zemax_relative_illumination", "zemax_rms_spot", "zemax_search_operands", "zemax_seidel_coefficients", "zemax_snapshot_diff", "zemax_snapshot_list",
-            "zemax_spot_diagram", "zemax_status", "zemax_tool_catalog"
+            "zemax_spot_diagram", "zemax_status", "zemax_tool_catalog", "zemax_task_plan", "zemax_validate_model", "zemax_explain_result", "zemax_system_summary"
             }),
             new OperationPolicy(ZemaxOperationImpact.Caution, new[] { "NscRayTrace", "OpenFile", "RunTolerancing" }, new[]
             {
@@ -70,7 +70,7 @@ public static class ZemaxOperationMetadata
             new OperationPolicy(ZemaxOperationImpact.HighImpact, new[]
             {
                 "AddConfigurationOperand", "AddOperand", "AddSurface", "BatchSetSurfaces", "calculate", "clear", "ConstrainedOptimize", "DeleteConfigurationOperand",
-                "ExportAnalysis", "ForbesMeritFunction", "GlobalSearch", "Hammer", "LoadMeritFunctionFile", "MultistartOptimize", "NewSystem",
+                "ExportAnalysis", "ExportNscDetectorCsv", "AuditNativeZrd", "ForbesMeritFunction", "GlobalSearch", "Hammer", "LoadMeritFunctionFile", "MultistartOptimize", "NewSystem",
                 "OptimizationWizard", "Optimize", "Pop", "QuickFocus", "RemoveOperand", "RemoveSurface", "RestoreSnapshot", "SaveFile", "SaveMeritFunctionFile", "ScaleLens",
                 "SetAfocalMode", "SetAperture", "SetApodization", "SetAsphericSurface", "SetConfigurationOperandValue", "SetCurrentConfiguration",
                 "SetExtraData", "SetFields", "SetMtfUnits", "SetNumberOfConfigurations", "SetNumberOfFields", "SetNumberOfWavelengths", "SetOffAxisConic",
@@ -79,7 +79,7 @@ public static class ZemaxOperationMetadata
             }, new[]
             {
             "zemax_add_configuration_operand", "zemax_add_operand", "zemax_add_surface", "zemax_batch_set_surfaces", "zemax_clear_vignetting", "zemax_constrained_optimize",
-            "zemax_delete_configuration_operand", "zemax_export_analysis", "zemax_export_glass_catalog", "zemax_forbes_merit_function", "zemax_global_search",
+            "zemax_delete_configuration_operand", "zemax_export_analysis", "zemax_audit_native_zrd", "zemax_export_nsc_detector_csv", "zemax_export_glass_catalog", "zemax_forbes_merit_function", "zemax_global_search",
             "zemax_hammer", "zemax_load_merit_function_file", "zemax_multistart_optimize", "zemax_new_system", "zemax_optimization_wizard", "zemax_optimize",
             "zemax_pop", "zemax_quick_focus", "zemax_remove_operand", "zemax_remove_surface", "zemax_snapshot_restore", "zemax_save_file", "zemax_save_merit_function_file", "zemax_scale_lens",
             "zemax_set_afocal_mode", "zemax_set_aperture", "zemax_set_apodization", "zemax_set_aspheric_surface", "zemax_set_clear_semi_diameter_margin",

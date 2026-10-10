@@ -7,35 +7,123 @@ $type = $assembly.GetType('ZemaxMCP.Launcher.MainWindow')
 $flags = [Reflection.BindingFlags]'Static,NonPublic'
 $build = $type.GetMethod('BuildTaskHistory', $flags)
 $jobs = [Newtonsoft.Json.Linq.JArray]::Parse('[{"jobId":"running","toolName":"zemax_pop","state":"Running","fraction":0.42,"elapsedSeconds":38,"message":"Propagating beam"},{"jobId":"queued","toolName":"zemax_pop","state":"Queued","queuePosition":2},{"jobId":"done","toolName":"zemax_pop","state":"Completed","fraction":1,"elapsedSeconds":7},{"jobId":"failed","toolName":"zemax_pop","state":"Failed","message":"Analysis failed"}]')
-$health = [Newtonsoft.Json.Linq.JObject]::Parse('{"worker":{"workerGeneration":3},"tasks":[{"taskId":"task-1","jobId":"running","state":"working","createdAt":"2026-10-09T00:00:00Z"}]}')
+$health = [Newtonsoft.Json.Linq.JObject]::Parse('{"worker":{"workerGeneration":3},"tasks":[{"taskId":"task-1","jobId":"running","generation":3,"state":"working","createdAt":"2026-10-09T00:00:00Z"}]}')
 $arguments = New-Object object[] 2
 $arguments[0]=$jobs; $arguments[1]=$health
 $items = $build.Invoke($null, $arguments)
-if ($items.Count -ne 5) { throw 'Worker Jobs / owned Tasks did not reach the presentation model.' }
-if (!$items[0].IsActive -or $items[0].ProgressFraction -ne 0.42 -or $items[0].Elapsed -ne '38s') { throw 'Reported progress/duration mapping failed.' }
-if (!$items[1].IsActive -or $null -ne $items[1].ProgressFraction -or $items[1].Queue -notmatch '2') { throw 'Queued/unknown progress mapping failed.' }
-if ($items[2].IsActive -or $items[3].IsActive -or $items[3].Message -ne 'Analysis failed') { throw 'Terminal task states are wrong.' }
-if (!$items[4].IsOfficialTask -or !$items[4].IsActive -or $items[4].SelectionKey -eq $items[0].SelectionKey) { throw 'Task/Job selection identity or Working state failed.' }
-if ($items[0].IsProgressIndeterminate -or !$items[1].IsProgressIndeterminate -or $items[2].IsProgressIndeterminate) { throw 'Intermediate/queued/completed progress presentation failed.' }
+if ($items.Count -ne 4) { throw 'A wrapped Worker Job must not appear again as a duplicate official Task.' }
+if (!$items[0].IsActive -or $null -ne $items[0].ProgressFraction -or $items[0].Queue -notmatch '2') { throw 'Queued job must remain visible with unknown progress.' }
+if ($items[1].IsActive -or $items[2].IsActive -or $items[2].Message -ne 'Analysis failed') { throw 'Terminal task states are wrong.' }
+if (!$items[3].IsOfficialTask -or !$items[3].IsActive -or $items[3].JobId -ne 'running' -or
+    $items[3].ToolName -ne 'zemax_pop' -or $items[3].ProgressFraction -ne 0.42 -or $items[3].Elapsed -ne '38s') {
+    throw 'Linked owned MCP Task must inherit actual Worker Job progress and tool without duplicating it.'
+}
+if (!$items[0].IsProgressIndeterminate -or $items[1].IsProgressIndeterminate -or $items[3].IsProgressIndeterminate) {
+    throw 'Indeterminate queue and determinate live progress were misclassified.'
+}
 foreach ($endpoint in @(0,1)) {
     $jobs[0]['fraction'] = [Newtonsoft.Json.Linq.JValue]::new([double]$endpoint)
     $items = $build.Invoke($null, $arguments)
-    if (!$items[0].IsProgressIndeterminate -or $items[0].ProgressHint -notmatch '38s' -or $items[0].DisplayText -match '\d+%') { throw 'Active endpoint-only progress must animate with elapsed time, not a misleading percentage.' }
+    if (!$items[3].IsProgressIndeterminate -or $items[3].ProgressHint -notmatch '38s' -or
+        $items[3].DisplayText -match '\d+%') {
+        throw 'Active endpoint-only progress must animate with elapsed time, not a misleading percentage.'
+    }
 }
 $jobs[0]['fraction'] = [Newtonsoft.Json.Linq.JValue]::new([double]::NaN)
 $items = $build.Invoke($null, $arguments)
-if ($null -ne $items[0].ProgressFraction) { throw 'Non-finite progress must not become a determinate percentage.' }
-if (!$items[0].IsProgressIndeterminate) { throw 'Unknown active progress must animate.' }
+if ($null -ne $items[3].ProgressFraction -or !$items[3].IsProgressIndeterminate) {
+    throw 'Non-finite progress must not become a determinate percentage.'
+}
+$health['tasks'][0]['state'] = [Newtonsoft.Json.Linq.JValue]::new('completed')
+$items = $build.Invoke($null, $arguments)
+if ($items.Count -ne 4 -or $items[3].IsActive -or $null -ne $items[3].ProgressFraction -or
+    $items[3].IsProgressIndeterminate) {
+    throw 'A completed Task must not inherit stale fractional progress from the linked Worker Job.'
+}
+$health['tasks'][0]['state'] = [Newtonsoft.Json.Linq.JValue]::new('working')
+$health['tasks'][0]['generation'] = [Newtonsoft.Json.Linq.JValue]::new([long]4)
+$items = $build.Invoke($null, $arguments)
+if ($items.Count -ne 5 -or !$items[4].IsOfficialTask -or $items[4].WorkerGeneration -ne '4') {
+    throw 'Restored Task from a different Worker generation must not absorb a current Job of the same ID.'
+}
+$health['tasks'][0]['generation'] = [Newtonsoft.Json.Linq.JValue]::new([long]3)
+# Exercise the WPF-free Task Center view-model, not only the projection.
+$vmType = $assembly.GetType('ZemaxMCP.Launcher.TaskCenterViewModel')
+if ($null -eq $vmType) { throw 'Task Center ViewModel module is missing.' }
+$instance = [Activator]::CreateInstance($vmType, $true)
+$instanceFlags = [Reflection.BindingFlags]'Instance,NonPublic'
+$update = $vmType.GetMethod('Update', $instanceFlags)
+$visible = $vmType.GetMethod('Visible', $instanceFlags)
+$select = $vmType.GetMethod('Select', [Reflection.BindingFlags]'Static,NonPublic')
+$detail = $vmType.GetMethod('Detail', [Reflection.BindingFlags]'Static,NonPublic')
+$updateArgs = New-Object object[] 2
+$updateArgs[0]=$jobs; $updateArgs[1]=$health
+$update.Invoke($instance,$updateArgs)
+$filterArgs = New-Object object[] 2
+$filterArgs[0]='Running'; $filterArgs[1]='zemax_pop'
+$filtered=$visible.Invoke($instance,$filterArgs)
+if ($filtered.Count -ne 1 -or $filtered[0].ToolName -ne 'zemax_pop' -or
+    $filtered[0].TaskId -ne 'task-1') {
+    throw 'Task Center ViewModel running/search filtering changed during WPF split.'
+}
+$selectArgs = New-Object object[] 2
+$selectArgs[0]=$filtered
+$selectArgs[1]='task:task-1'
+$boundProperty = $vmType.GetProperty('VisibleJobs', [Reflection.BindingFlags]'Instance,Public')
+$refresh = $vmType.GetMethod('UpdateVisible', $instanceFlags)
+$refresh.Invoke($instance, $filterArgs)
+if ($null -eq $boundProperty -or $boundProperty.GetValue($instance).Count -ne 1) {
+    throw 'Task Center WPF ItemsSource binding does not expose the deduplicated filtered collection.'
+}
+$selected = $select.Invoke($null, $selectArgs)
+if ($selected.TaskId -ne 'task-1' -or $detail.Invoke($null, @($selected)) -notmatch 'Worker generation') {
+    throw 'Task Center ViewModel did not preserve selection/detail diagnostic context.'
+}
+$security = $assembly.GetType('ZemaxMCP.Launcher.TransportSecurityDisplay')
+if ($null -eq $security) { throw 'Client-path-aware TLS diagnostic is missing.' }
+$explain = $security.GetMethod('Explain', $flags)
+$https = $explain.Invoke($null, @('https://gateway.example/mcp', [bool]$false))
+$remoteHttp = $explain.Invoke($null, @('http://gateway.example/mcp', [bool]$true))
+$loopback = $explain.Invoke($null, @('http://127.0.0.1:5000/mcp', [bool]$false))
+if ($https -notmatch 'HTTPS/TLS' -or $https -match 'UNENCRYPTED' -or
+    $remoteHttp -notmatch 'UNENCRYPTED' -or $loopback -notmatch 'loopback') {
+    throw 'Transport security UI was derived from upstream Host TLS rather than actual client URI.'
+}
+$statusPresenter = $assembly.GetType('ZemaxMCP.Launcher.StatusPresentation')
+if ($null -eq $statusPresenter) { throw 'Pure status presentation module is missing.' }
+$formatName=$statusPresenter.GetMethod('FormatClientName',$flags)
+$formatUptime=$statusPresenter.GetMethod('FormatUptime',$flags)
+$formatPaths=$statusPresenter.GetMethod('FormatZemaxPaths',$flags)
+if($formatName.Invoke($null,@([string]'token:scoped:owner')) -ne 'authenticated client' -or
+   $formatUptime.Invoke($null,@([long]3661)) -ne '01:01:01') {
+    throw 'Launcher status view model leaked bearer identity or changed uptime formatting.'
+}
+$pathArgs = New-Object object[] 5
+$pathArgs[0]=$null
+$pathArgs[1]='C:\\Zemax'
+$pathArgs[2]=[Newtonsoft.Json.Linq.JObject]::Parse('{"zosApi":"C:/Zemax/ZOSAPI.dll","netHelper":"C:/Zemax/NetHelper.dll"}')
+$pathArgs[3]=$null
+$pathArgs[4]='C:/ZemaxData'
+if($formatPaths.Invoke($null,$pathArgs) -notmatch 'Remote ZOS-API') {
+    throw 'Remote ZOS-API source status was lost by the presentation refactor.'
+}
 $xaml = [IO.File]::ReadAllText((Join-Path $root 'src\ZemaxMCP.Launcher\MainWindow.xaml'))
 if ($xaml -notmatch 'Title="Zemax MCP"') { throw 'Window title must match the product name.' }
-$parse = $type.GetMethod('SelectMcpSseResponse', $flags)
+$diagnosticsType = $assembly.GetType('ZemaxMCP.Launcher.McpDiagnosticsClient')
+if ($null -eq $diagnosticsType) { throw 'Extracted non-UI MCP diagnostics adapter is missing.' }
+$parse = $diagnosticsType.GetMethod('SelectMcpSseResponse', $flags)
+if ($null -eq $parse) { throw 'Request-ID-aware SSE response parser must remain accessible on the diagnostic adapter.' }
 $sse = ': keepalive' + "`n`n" + 'data: {"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":42}}' + "`n`n" + 'data: {"jsonrpc":"2.0","id":7,"result":{"ignored":true}}' + "`n`n" + 'data: {"jsonrpc":"2.0","id":2741,' + "`n" + 'data: "result":{"resultType":"task","taskId":"task-1"}}' + "`n`n"
 $parseArguments = New-Object object[] 2
 $parseArguments[0]=$sse; $parseArguments[1]=[Newtonsoft.Json.Linq.JValue]::new(2741)
 $response = $parse.Invoke($null,$parseArguments)
 if ($response['result']['taskId'].ToString() -ne 'task-1') { throw 'SSE progress/unrelated messages hid the final Task response.' }
-$source = [IO.File]::ReadAllText((Join-Path $root 'src\ZemaxMCP.Launcher\MainWindow.xaml.cs'))
-$probe = $source.Substring($source.IndexOf('private static string TestMcpFunctionality'))
-$probe = $probe.Substring(0,$probe.IndexOf('private async void TasksPageGetTask_Click'))
+$source = [IO.File]::ReadAllText((Join-Path $root 'src\ZemaxMCP.Launcher\McpDiagnosticsClient.cs'))
+if ($source -notmatch 'internal static string TestMcpFunctionality' -or
+    $source -notmatch 'private static void AddAuthorization') {
+    throw 'Extracted diagnostic client is missing a required read-only MCP probe.'
+}
+$probe = $source.Substring($source.IndexOf('internal static string TestMcpFunctionality'))
+$probe = $probe.Substring(0,$probe.IndexOf('private static void AddAuthorization'))
 if ($probe -match '"initialize"' -or $probe -notmatch '"server/discover"') { throw 'Modern capability probe regressed to legacy initialize.' }
-Write-Output 'Task presentation: Running/Queued/Completed/Failed, honest progress, elapsed time, distinct Job/Task selection and SSE request-ID filtering passed.'
+Write-Output 'Task presentation: linked same-generation Task/Job deduplication, honest progress, restart isolation, elapsed time and SSE request-ID filtering passed.'

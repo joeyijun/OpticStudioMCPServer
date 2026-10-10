@@ -15,8 +15,8 @@ foreach ($found in $matches) {
     if ($inventory.ContainsKey($name)) { throw "Duplicate public tool in explicit catalog: $name" }
     $inventory[$name] = $found.Groups[2].Value
 }
-if ($inventory.Count -ne 138) {
-    throw "Explicit tool-domain inventory contains $($inventory.Count) tools, expected 138."
+if ($inventory.Count -ne 146) {
+    throw "Explicit tool-domain inventory contains $($inventory.Count) tools, expected 146."
 }
 
 # An acceptance case proves a workflow scenario, not every possible call or

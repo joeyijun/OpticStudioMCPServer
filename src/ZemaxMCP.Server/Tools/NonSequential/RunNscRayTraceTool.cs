@@ -32,7 +32,8 @@ public sealed class RunNscRayTraceTool
         bool UsePolarization,
         bool IgnoreErrors,
         double RuntimeSeconds,
-        string? JobId = null);
+        string? JobId = null,
+        NscSameTraceLedger.Report? SameTraceEnergy = null);
 
     [ZemaxTool(Name = "zemax_run_nsc_ray_trace")]
     [Description("Run the official non-sequential ray trace against the current NSC system without creating a ZRD file. Detector buffers may be cleared/updated, so this is a Caution operation. The run is bounded, cancellable, and can execute as a managed background Job.")]
@@ -45,23 +46,44 @@ public sealed class RunNscRayTraceTool
         [Description("Ask OpticStudio to ignore recoverable ray-trace errors")] bool ignoreErrors = true,
         [Description("Wall-clock timeout in seconds (1-3600)")] double timeoutSeconds = 60,
         [Description("Queue the trace as a managed Job and return immediately")] bool runInBackground = true,
+        [Description("Optional explicit 1..16 unique NSC scalar detector IDs. If present, REQUIRE clearDetectors=true and detectorObject=0 so the returned detector flux snapshot belongs to THIS successful trace, not previous traces. A background Job includes the ledger only in its finished result.")] int[]? snapshotDetectorObjects = null,
+        [Description("Optional USER-declared launched native flux from precisely this trace/source set, strictly positive. Ratios are per detector only; optical coating/absorption/clipping losses cannot be reconstructed from a detector sum.")] double? declaredLaunchedFlux = null,
+        [Description("Alongside a same-trace detector snapshot, also read up to 128 current NCE IObjectSources configured Power, analysis-ray count and wavelength number. Configuration power is not measured emitted flux and is NOT used as an automatic efficiency denominator.")] bool includeConfiguredSourcePower = false,
         CancellationToken cancellationToken = default)
     {
         try
         {
             ValidateInputs(detectorObject, timeoutSeconds);
+            if (snapshotDetectorObjects is {Length:>0})
+            {
+                if (!clearDetectors || detectorObject!=0)
+                    throw new ArgumentException("A same-trace detector snapshot requires clearDetectors=true and detectorObject=0 (clear ALL detectors).");
+                if (snapshotDetectorObjects.Length>16 ||
+                    snapshotDetectorObjects.Any(id=>id<1) ||
+                    snapshotDetectorObjects.Distinct().Count()!=snapshotDetectorObjects.Length)
+                    throw new ArgumentException("Provide 1..16 unique positive scalar detector IDs.");
+                if (declaredLaunchedFlux.HasValue &&
+                    (!double.IsFinite(declaredLaunchedFlux.Value) || declaredLaunchedFlux.Value<=0))
+                    throw new ArgumentException("User-declared launched flux must be finite and positive.");
+            }
+            else if (declaredLaunchedFlux.HasValue || includeConfiguredSourcePower)
+                throw new ArgumentException("Source metadata and declaredLaunchedFlux require snapshotDetectorObjects.");
 
             if (!runInBackground)
                 return await ExecuteCoreAsync(
                     clearDetectors, detectorObject, splitRays, scatterRays,
-                    usePolarization, ignoreErrors, timeoutSeconds, cancellationToken).ConfigureAwait(false);
+                    usePolarization, ignoreErrors, timeoutSeconds,
+                    snapshotDetectorObjects, declaredLaunchedFlux, includeConfiguredSourcePower,
+                    cancellationToken).ConfigureAwait(false);
 
             var job = _jobs.Enqueue("zemax_run_nsc_ray_trace", async context =>
             {
                 context.ReportProgress(0, "Waiting for the ZOS-API job slot.");
                 var result = await ExecuteCoreAsync(
                     clearDetectors, detectorObject, splitRays, scatterRays,
-                    usePolarization, ignoreErrors, timeoutSeconds, context.CancellationToken).ConfigureAwait(false);
+                    usePolarization, ignoreErrors, timeoutSeconds,
+                    snapshotDetectorObjects, declaredLaunchedFlux, includeConfiguredSourcePower,
+                    context.CancellationToken).ConfigureAwait(false);
                 if (!result.Success)
                     throw new InvalidOperationException(result.Error ?? "NSC ray trace failed.");
                 context.SetResult(result);
@@ -92,6 +114,9 @@ public sealed class RunNscRayTraceTool
         bool usePolarization,
         bool ignoreErrors,
         double timeoutSeconds,
+        int[]? snapshotDetectorObjects,
+        double? declaredLaunchedFlux,
+        bool includeConfiguredSourcePower,
         CancellationToken cancellationToken)
     {
         return await _session.ExecuteAsync(
@@ -104,7 +129,10 @@ public sealed class RunNscRayTraceTool
                 ["scatterRays"] = scatterRays,
                 ["usePolarization"] = usePolarization,
                 ["ignoreErrors"] = ignoreErrors,
-                ["timeoutSeconds"] = timeoutSeconds
+                ["timeoutSeconds"] = timeoutSeconds,
+                ["snapshotDetectorObjects"] = snapshotDetectorObjects,
+                ["declaredLaunchedFlux"] = declaredLaunchedFlux,
+                ["includeConfiguredSourcePower"] = includeConfiguredSourcePower
             },
             system =>
             {
@@ -157,6 +185,46 @@ public sealed class RunNscRayTraceTool
                                 ? "NSC Ray Trace completed without success."
                                 : trace.ErrorMessage);
 
+                    NscSameTraceLedger.Report? ledger = null;
+                    if(snapshotDetectorObjects is {Length:>0})
+                    {
+                        var readings=new List<(int Id,string Type,double Flux,double Hits)>();
+                        foreach(var id in snapshotDetectorObjects)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            if(id>nce.NumberOfObjects)
+                                throw new ArgumentOutOfRangeException(nameof(snapshotDetectorObjects),
+                                    "Detector ID is outside the active NSC object table.");
+                            var detector=nce.GetObjectAt(id)
+                                ?? throw new InvalidOperationException("Missing detector object "+id);
+                            if(!NscObjectClassification.IsDetector(detector) ||
+                               detector.Type is ZOSAPI.Editors.NCE.ObjectType.DetectorColor or
+                                   ZOSAPI.Editors.NCE.ObjectType.DetectorPolar)
+                                throw new ArgumentException("Only scalar NSC detectors are supported by same-trace flux snapshot: "+id);
+                            if(!nce.GetDetectorData(id,0,0,out var flux) ||
+                               !nce.GetDetectorData(id,-3,0,out var hits))
+                                throw new InvalidOperationException("Native post-trace detector flux/hits unavailable: "+id);
+                            readings.Add((id,detector.TypeName,flux,hits));
+                        }
+                        List<NscSameTraceLedger.ConfiguredSource>? configured=null;
+                        if(includeConfiguredSourcePower)
+                        {
+                            configured=new List<NscSameTraceLedger.ConfiguredSource>();
+                            for(var sourceId=1;sourceId<=nce.NumberOfObjects;sourceId++)
+                            {
+                                cancellationToken.ThrowIfCancellationRequested();
+                                var sourceRow=nce.GetObjectAt(sourceId);
+                                if(sourceRow?.ObjectData is not ZOSAPI.Editors.NCE.IObjectSources source)continue;
+                                if(configured.Count==128)
+                                    throw new InvalidOperationException("More than 128 NSC source objects: configured source-power audit is bounded.");
+                                configured.Add(new NscSameTraceLedger.ConfiguredSource(
+                                    sourceId,source.Power,source.NumberOfAnalysisRays,source.WaveNumber));
+                            }
+                        }
+                        ledger=NscSameTraceLedger.Build(declaredLaunchedFlux,readings,
+                            clearedAllDetectors:clearDetectors && detectorObject==0,
+                            configuredSources:configured);
+                    }
                     return new Result(
                         true,
                         null,
@@ -167,7 +235,8 @@ public sealed class RunNscRayTraceTool
                         scatterRays,
                         usePolarization,
                         ignoreErrors,
-                        stopwatch.Elapsed.TotalSeconds);
+                        stopwatch.Elapsed.TotalSeconds,
+                        SameTraceEnergy:ledger);
                 }
                 finally
                 {

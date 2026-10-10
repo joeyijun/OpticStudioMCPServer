@@ -410,7 +410,7 @@ try {
 
         if ($VerifyEngineeringOptics) {
             Invoke-Check "sequential-footprint-and-energy-budget" {
-                foreach ($required in @("zemax_energy_budget", "zemax_ray_footprint", "zemax_aperture_throughput")) {
+                foreach ($required in @("zemax_energy_budget", "zemax_ray_footprint", "zemax_aperture_throughput", "zemax_diagnose_clipping")) {
                     if ($required -notin $tools) { throw "Active profile does not expose $required." }
                 }
                 $case = Get-ToolPayload (Invoke-Tool "zemax_energy_budget" @{
@@ -447,7 +447,17 @@ try {
                     [int]$aperture.clearRays -ne [int]$fp.surfaces[0].clearRays) {
                     throw "Independent legacy aperture sampling disagrees with Ray Footprint."
                 }
-                "fields=2 wave=1; testedSurface=$last; pupil=$($case.numberOfPupilSamples); footprintPoints=$(@($fp.surfaces[0].points).Count)"
+                $diagnosis = Get-ToolPayload (Invoke-Tool "zemax_diagnose_clipping" @{
+                    surfaces = @($last); hx = 0.0; hy = 0.0; wavelength = 1;
+                    gridSize = 11; maxPointsPerSurface = 0
+                })
+                if ([int]$diagnosis.totalSampledRays -ne [int]$aperture.totalPupilRays -or
+                    [int]$diagnosis.clearRays -ne [int]$aperture.clearRays -or
+                    [int]$diagnosis.vignettedRays -ne [int]$aperture.vignettedRays -or
+                    [int]$diagnosis.rayTraceErrors -ne [int]$aperture.errorRays) {
+                    throw "One-call clipping diagnosis disagrees with native pupil throughput."
+                }
+                "fields=2 wave=1; testedSurface=$last; pupil=$($case.numberOfPupilSamples); footprintPoints=$(@($fp.surfaces[0].points).Count); suspects=$(@($diagnosis.suspects).Count)"
             } | Out-Null
         }
 

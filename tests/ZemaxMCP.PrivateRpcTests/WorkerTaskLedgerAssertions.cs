@@ -12,6 +12,7 @@ internal static class WorkerTaskLedgerAssertions
         VerifyCancellationAndGenerationFailure();
         VerifyDomainFailureAndExpiredResults();
         VerifyBoundedAdmission();
+        VerifyJournalRestartRecovery();
     }
 
     private static void VerifyAuthorizationAndCompletion()
@@ -132,8 +133,20 @@ internal static class WorkerTaskLedgerAssertions
     private static void VerifyBoundedAdmission()
     {
         var ledger = new WorkerTaskLedger(maxRecords: 2, maxRetainedResults: 1);
+        using (var admission = ledger.TryReserveAdmission())
+        {
+            Assert(admission != null, "An empty Task ledger did not reserve admission.");
+            using var secondReservation = ledger.TryReserveAdmission();
+            Assert(secondReservation != null && ledger.TryReserveAdmission() == null,
+                "Task reservations failed to enforce the active capacity limit.");
+        }
+        using (var recoveredAdmission = ledger.TryReserveAdmission())
+            Assert(recoveredAdmission != null,
+                "A released Task admission reservation was not available for reuse.");
         Assert(ledger.TryRegister("scoped:a", "active-1", 11, out var first), "Register failed.");
         Assert(ledger.TryRegister("scoped:b", "active-2", 11, out var second), "Register failed.");
+        Assert(ledger.TryReserveAdmission() == null,
+            "A saturated active Task ledger must reject admission before starting a Worker Job.");
         Assert(!ledger.TryRegister("scoped:c", "active-3", 11, out var denied) && denied == null,
             "A full ledger must reject admission rather than evict active Tasks.");
         ledger.ObserveJob(11, new WorkerJobStatus { JobId = "active-1", State = "Cancelled" });
@@ -146,6 +159,70 @@ internal static class WorkerTaskLedgerAssertions
         ledger.ObserveJob(11, new WorkerJobStatus { JobId = "active-3", State = "Unknown" });
         ExpectArgument(() => ledger.TryRegister("scoped:c", "active-1", 0, out _),
             "An invalid Worker generation must be rejected.");
+    }
+
+    private static void VerifyJournalRestartRecovery()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ZemaxTaskJournalTest-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var file = Path.Combine(root, "journal.json");
+        try
+        {
+            string runningTaskId;
+            string terminalTaskId;
+            string privateTaskId;
+            {
+                var firstHost = new WorkerTaskLedger(maxRecords: 5, maxRetainedResults: 2, journalPath: file);
+                Assert(firstHost.TryRegister("token:scoped:alice", "job-running", 41, out var active),
+                    "Journal test could not register active Task.");
+                runningTaskId = active!.TaskId;
+                Assert(firstHost.TryRegister("token:scoped:alice", "job-finished", 41, out var finished),
+                    "Journal test could not register completed Task.");
+                terminalTaskId = finished!.TaskId;
+                firstHost.ObserveJob(41, new WorkerJobStatus { JobId = "job-finished", State = "Completed" });
+                Assert(firstHost.TryComplete("token:scoped:alice", terminalTaskId, "job-finished", 41,
+                    Result("SECRET-OPTICAL-DATA-DO-NOT-PERSIST")), "Task journal test completion failed.");
+                Assert(firstHost.TryRegister("token:scoped:bob", "job-private", 41, out var privateTask),
+                    "Journal test could not register second owner's Task.");
+                privateTaskId = privateTask!.TaskId;
+                Assert(File.Exists(file), "Task journal was not atomically saved to local disk.");
+                Assert(!File.ReadAllText(file).Contains("SECRET-OPTICAL-DATA", StringComparison.Ordinal),
+                    "Task journal must never store raw tool results.");
+            }
+
+            var secondHost = new WorkerTaskLedger(maxRecords: 5, maxRetainedResults: 2, journalPath: file);
+            Assert(secondHost.TryGet("token:scoped:alice", runningTaskId, out var interrupted) &&
+                   interrupted!.State == "failed" &&
+                   interrupted.Message.Contains("restart", StringComparison.OrdinalIgnoreCase) &&
+                   interrupted.Result == null,
+                "Restarted Host must mark unresumable in-flight Tasks failed, not working.");
+            Assert(secondHost.TryGet("token:scoped:alice", terminalTaskId, out var completed) &&
+                   completed!.State == "completed" && completed.Result == null && completed.ResultExpired,
+                "Restarted Host must retain Task identity/status, never invent a persisted result.");
+            Assert(!secondHost.TryGet("token:scoped:bob", runningTaskId, out _) &&
+                   !secondHost.TryGet("token:scoped:alice", privateTaskId, out _) &&
+                   secondHost.ListOwnedMetadata("token:scoped:alice").Count == 2,
+                "Restored Task journal must preserve exact owner isolation.");
+            Assert(!secondHost.TryRequestCancel("token:scoped:alice", runningTaskId, 41, out _),
+                "A restarted Host cannot cancel a Worker Job from a dead generation.");
+            Assert(File.Exists(file + ".bak"),
+                "A bounded second journal generation should be retained as a repair backup.");
+            File.WriteAllText(file, "{ INVALID JOURNAL");
+            var repaired = new WorkerTaskLedger(maxRecords: 5, maxRetainedResults: 2, journalPath: file);
+            Assert(repaired.ListOwnedMetadata("token:scoped:alice").Count > 0 &&
+                   repaired.ListOwnedMetadata("scoped:foreign").Count == 0 &&
+                   !File.ReadAllText(file).Contains("SECRET-OPTICAL-DATA", StringComparison.Ordinal),
+                "A corrupt primary must recover only valid owner-scoped metadata from the backup.");
+            File.WriteAllText(file, "{ INVALID JOURNAL");
+            File.WriteAllText(file + ".bak", "{ INVALID BACKUP");
+            var invalid = new WorkerTaskLedger(journalPath: file);
+            Assert(invalid.ListOwnedMetadata("token:scoped:alice").Count == 0,
+                "Two corrupt journals must fail closed instead of exposing arbitrary Tasks.");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
     }
 
     private static CallToolResult Result(string message, bool error = false) => new()

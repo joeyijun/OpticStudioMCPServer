@@ -8,6 +8,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Protocol;
 using ZemaxMCP.HttpBridge.ModernHost;
+using ZemaxMCP.Launcher;
 using ZemaxMCP.Rpc;
 using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Server.Tools.Catalog;
@@ -30,7 +31,12 @@ internal static class Program
         try
         {
             VerifyActivityOwnership();
+            VerifyJobsDeltaOwnership();
+            VerifyLauncherDeltaCredentialScope();
+            VerifyHostLaunchPlan();
+            VerifyStructuredToolOutcomes();
             VerifyOfficialTasksDefaults();
+            VerifyTlsOptions();
             VerifyTaskPlanningCatalog();
             VerifyOriginBoundary();
             await VerifyBackgroundJobLeaseRetentionAsync().ConfigureAwait(false);
@@ -67,6 +73,18 @@ internal static class Program
             Environment.SetEnvironmentVariable("ZEMAX_MCP_TOOLSET", "basic-viewing");
             Environment.SetEnvironmentVariable("ZEMAX_MCP_READ_ONLY", "1");
             var catalog = new ToolCatalogTool();
+            // All seven engineering workflows begin with a single bounded,
+            // profile-visible model preflight rather than dumping the LDE.
+            foreach (var intent in new[] {
+                "clipping", "imaging", "straylight", "energy",
+                "optimize", "tolerance", "safe-edit" })
+            {
+                var playbook = catalog.Execute(task: intent).Playbooks.Single();
+                Assert(playbook.AvailableSteps.Concat(playbook.UnavailableSteps).FirstOrDefault() ==
+                           "zemax_system_summary" &&
+                       playbook.AvailableSteps.Contains("zemax_system_summary"),
+                    "Task plan must first expose bounded model metadata for " + intent);
+            }
             var clipping = catalog.Execute(task: "clipping");
             Assert(clipping.Playbooks.Count == 1 && clipping.Playbooks[0].Id == "clipping",
                 "Task planner should return the requested focused playbook.");
@@ -105,6 +123,43 @@ internal static class Program
         throw new InvalidOperationException(message);
     }
 
+    private static void VerifyStructuredToolOutcomes()
+    {
+        Assert(ToolOutcome.InvalidArgument == "invalid_argument" &&
+               ToolOutcome.Classify("Result expired") == "expired" &&
+               ToolOutcome.Classify("Job not found") == "not_found" &&
+               ToolOutcome.Classify("background Job is active") == "conflict" &&
+               ToolOutcome.Classify("RPC transport closed") == "transport_error",
+            "Typed tool failure mapping was regressed.");
+        var error = ToolOutcome.Failure("conflict", "Background Job is active.");
+        var json = System.Text.Json.JsonDocument.Parse(((TextContentBlock)error.Content.Single()).Text);
+        Assert(error.IsError == true &&
+               json.RootElement.GetProperty("code").GetString() == "conflict" &&
+               json.RootElement.GetProperty("success").GetBoolean() == false,
+            "Structured conflict envelope must preserve isError.");
+        var legacy = new CallToolResult
+        {
+            IsError = true,
+            Content = new List<ContentBlock>
+            {
+                new TextContentBlock { Text = "{\"success\":false,\"error\":\"expired\",\"detail\":12}" }
+            }
+        };
+        var normalized = ToolOutcome.Normalize(legacy);
+        using var doc = JsonDocument.Parse(((TextContentBlock)normalized.Content.Single()).Text);
+        Assert(normalized.IsError == true &&
+               doc.RootElement.GetProperty("code").GetString() == "expired" &&
+               doc.RootElement.GetProperty("detail").GetInt32() == 12,
+            "Failed legacy JSON must retain its fields while receiving a machine-readable code.");
+        var success = new CallToolResult
+        {
+            IsError = false,
+            Content = new List<ContentBlock> { new TextContentBlock { Text = "{\"ok\":true}" } }
+        };
+        Assert(ReferenceEquals(ToolOutcome.Normalize(success), success),
+            "Legacy successful tool output must remain byte-for-byte unchanged.");
+    }
+
     private static void VerifyOfficialTasksDefaults()
     {
         if (!HostOptions.Parse(Array.Empty<string>()).EnableOfficialTasks ||
@@ -113,9 +168,61 @@ internal static class Program
             throw new InvalidOperationException("Official Tasks must default on and respect explicit overrides.");
     }
 
+    private static void VerifyTlsOptions()
+    {
+        var old = Environment.GetEnvironmentVariable("ZEMAX_TEST_TLS_SECRET");
+        var path = Path.Combine(Path.GetTempPath(), "zemax-tls-" + Guid.NewGuid().ToString("N") + ".pfx");
+        try
+        {
+            Assert(!HostOptions.Parse(Array.Empty<string>()).TlsEnabled,
+                "Legacy loopback listeners must remain HTTP by default.");
+            AssertThrows<ArgumentException>(() => HostOptions.Parse(new[] { "--tls-pfx", path }),
+                "Host accepted a missing TLS certificate.");
+            using var rsa = System.Security.Cryptography.RSA.Create(2048);
+            var request = new System.Security.Cryptography.X509Certificates.CertificateRequest(
+                "CN=localhost", rsa, System.Security.Cryptography.HashAlgorithmName.SHA256,
+                System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+            request.CertificateExtensions.Add(new System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension(
+                false, false, 0, true));
+            using var cert = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(2));
+            File.WriteAllBytes(path, cert.Export(
+                System.Security.Cryptography.X509Certificates.X509ContentType.Pfx, "test-password"));
+            AssertThrows<ArgumentException>(() => HostOptions.Parse(new[] {
+                "--tls-pfx", path, "--tls-password-env", "ZEMAX_TEST_TLS_SECRET" }),
+                "Host accepted TLS without the password variable.");
+            Environment.SetEnvironmentVariable("ZEMAX_TEST_TLS_SECRET", "test-password");
+            var enabled = HostOptions.Parse(new[] {
+                "--tls-pfx", path, "--tls-password-env", "ZEMAX_TEST_TLS_SECRET" });
+            Assert(enabled.TlsEnabled && enabled.TransportScheme == "https" &&
+                   enabled.AllowedOrigins.All(x => x.Scheme == "https"),
+                "TLS listener/origin scheme mismatch.");
+            using var loaded = System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12FromFile(
+                enabled.TlsPfxPath, Environment.GetEnvironmentVariable(enabled.TlsPasswordEnvironmentVariable),
+                System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.EphemeralKeySet);
+            Assert(loaded.HasPrivateKey, "Configured TLS certificate must load with a private key.");
+            AssertThrows<ArgumentException>(() => HostOptions.Parse(new[] {
+                "--tls-password-env", "ZEMAX_TEST_TLS_SECRET" }),
+                "Host accepted TLS password option without --tls-pfx.");
+            AssertThrows<ArgumentException>(() => HostOptions.Parse(new[] {
+                "--tls-pfx", path, "--tls-password-env", "bad name" }),
+                "Invalid TLS password environment variable name was accepted.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ZEMAX_TEST_TLS_SECRET", old);
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
     private static void VerifyJobOwnershipRegistry()
     {
         var registry = new JobOwnerRegistry();
+        registry.Register("scoped:alice", "just-started", 3);
+        registry.Register("scoped:bob", "foreign", 3);
+        Assert(registry.ListOwnedJobIds("scoped:alice",3).SequenceEqual(new[]{"just-started"}) &&
+               registry.ListOwnedJobIds("scoped:alice",4).Count==0 &&
+               registry.ListOwnedJobIds("scoped:bob",3).SequenceEqual(new[]{"foreign"}),
+            "Owner-scoped Job IDs exposed foreign or cross-generation records.");
         registry.Register("scoped:a", "owned-1", 7);
         registry.Register("scoped:b", "owned-2", 7);
         if (!registry.IsOwned("scoped:a", "owned-1", 7) ||
@@ -158,6 +265,32 @@ internal static class Program
         if (JobOwnerRegistry.ValidateSingleResult(wrongSingle, "owned-1").IsError != true)
             throw new InvalidOperationException("Job status/cancel returned a different owner's result despite authorized request parameters.");
 
+        // An explicit terminal Worker reply must clear a matching lease even
+        // when a separate progress event has not reached the Host yet.
+        var terminalCancel = new CallToolResult
+        {
+            Content = new List<ContentBlock>
+            {
+                new TextContentBlock { Text = "{\"jobId\":\"owned-1\",\"state\":\"Cancelled\"}" }
+            },
+            IsError = false
+        };
+        if (!JobOwnerRegistry.TryGetTerminalState(terminalCancel, "owned-1", out var terminalState) ||
+            terminalState != "Cancelled" ||
+            JobOwnerRegistry.TryGetTerminalState(terminalCancel, "owned-2", out _))
+            throw new InvalidOperationException("Host accepted a missing/foreign terminal Job ID.");
+        var pendingJob = new CallToolResult
+        {
+            Content = new List<ContentBlock>
+            {
+                new TextContentBlock { Text = "{\"jobId\":\"owned-1\",\"state\":\"Cancelling\"}" }
+            },
+            IsError = false
+        };
+        if (JobOwnerRegistry.TryGetTerminalState(pendingJob, "owned-1", out _) ||
+            JobOwnerRegistry.TryGetTerminalState(wrongSingle, "owned-1", out _))
+            throw new InvalidOperationException("Nonterminal/foreign Job reply released an optical job lease.");
+
         var defaultList = new CallToolRequestParams
         {
             Name = "zemax_job_list",
@@ -186,6 +319,134 @@ internal static class Program
             throw new InvalidOperationException("Bounded job owner history did not drop stale entries safely.");
     }
 
+    private static void VerifyJobsDeltaOwnership()
+    {
+        var monitor = new McpJobTaskDeltaMonitor();
+        var completed = new WorkerJobStatus { JobId="same",State="Completed",ToolName="zemax_run_nsc_ray_trace" };
+        var delayed = new WorkerJobStatus { JobId="same",State="Running",ToolName="zemax_run_nsc_ray_trace" };
+        var terminalMerge=McpJobTaskDeltaMonitor.MergeStatuses(
+            new[]{completed},new[]{delayed});
+        Assert(terminalMerge.Single().State=="Completed",
+            "Late Worker progress event downgraded a confirmed terminal Job.");
+        var eventMerge=McpJobTaskDeltaMonitor.MergeStatuses(
+            new[]{delayed},new[]{completed});
+        Assert(eventMerge.Single().State=="Completed",
+            "Terminal Worker event did not override a stale cached Running state.");
+        var jobs = new[] {
+            new WorkerJobStatus { JobId="job-alice",ToolName="zemax_run_nsc_ray_trace",State="Running",Fraction=0.25,Message="alice-private" },
+            new WorkerJobStatus { JobId="job-bob",ToolName="zemax_global_search",State="Completed",Message="bob-private" }
+        };
+        var otherOwnerTasks = new object[] { new { taskId="task-alice-private",jobId="job-alice" } };
+        var alice = monitor.GetDelta("token:scoped:alice",true,null,17,false,true,
+            jobs,otherOwnerTasks,id=>id=="job-alice");
+        var encoded = JsonSerializer.Serialize(alice);
+        Assert(alice.Changed && alice.Snapshot?.OwnerScoped==true && alice.Snapshot.Jobs.Count==1 &&
+               encoded.Contains("alice-private",StringComparison.Ordinal) &&
+               !encoded.Contains("job-bob",StringComparison.Ordinal) &&
+               !encoded.Contains("bob-private",StringComparison.Ordinal),
+            "Jobs delta must return only the authenticated owner's Job and Task data.");
+        var unchanged = monitor.GetDelta("token:scoped:alice",true,alice.Cursor,17,false,true,
+            jobs,otherOwnerTasks,id=>id=="job-alice");
+        Assert(!unchanged.Changed && unchanged.Snapshot==null,
+            "No-change scoped Jobs delta must suppress its body.");
+        var other = monitor.GetDelta("token:scoped:bob",true,alice.Cursor,17,false,true,
+            jobs,Array.Empty<object>(),id=>id=="job-bob");
+        Assert(other.Cursor!=alice.Cursor && other.Changed &&
+               other.Snapshot?.Jobs.Single().JobId=="job-bob" &&
+               !JsonSerializer.Serialize(other).Contains("task-alice-private",StringComparison.Ordinal),
+            "Owner cursors or tasks leak between scoped bearer credentials.");
+        jobs[1].State="Running";jobs[1].Fraction=0.9;
+        Assert(!monitor.GetDelta("token:scoped:alice",true,alice.Cursor,17,true,false,
+            jobs,otherOwnerTasks,id=>id=="job-alice").Changed,
+            "Global Worker busy/freshness and foreign Job progress changed Alice's private cursor.");
+        jobs[0].Fraction=0.5;
+        Assert(monitor.GetDelta("token:scoped:alice",true,alice.Cursor,17,false,true,
+            jobs,otherOwnerTasks,id=>id=="job-alice").Changed,
+            "Own Worker progress did not advance the owner's delta cursor.");
+        Assert(monitor.GetDelta("token:scoped:alice",true,alice.Cursor,18,false,false,
+            Array.Empty<WorkerJobStatus>(),Array.Empty<object>(),_=>false).Changed,
+            "Worker restart must invalidate stale generation-bound cursors.");
+        var anon = monitor.GetDelta("",false,null,17,false,true,jobs,
+            otherOwnerTasks,_=>true);
+        Assert(anon.Snapshot?.OwnerScoped==false && anon.Snapshot.Jobs.Count==2 && anon.Snapshot.Tasks.Count==0,
+            "Shared/local Job state must not expose official Task IDs.");
+        AssertThrows<InvalidOperationException>(()=>monitor.GetDelta("",true,null,17,false,true,
+            jobs,Array.Empty<object>(),_=>false),"A scoped missing identity was not denied.");
+    }
+
+    private static void VerifyHostLaunchPlan()
+    {
+        var process=HostLaunchPlan.Build(
+            @"C:\Zemax MCP\Host.exe", @"C:\Zemax MCP\Worker.exe",
+            @"C:\Program Files\OpticStudio","0.0.0.0",8000,false,
+            "nonsequential-stray-light", @"C:\Zemax MCP\snapshots",
+            true,true,"192.168.1.12",true,@"C:\Certs\instance.pfx",
+            "token-secret-123","private-pfx-secret");
+        Assert(process.Arguments.Contains("--tls-pfx") &&
+               process.Arguments.Contains("--allowed-origin https://192.168.1.12:*") &&
+               process.Arguments.Contains("--enable-official-tasks true") &&
+               !process.Arguments.Contains("token-secret-123") &&
+               !process.Arguments.Contains("private-pfx-secret") &&
+               process.EnvironmentVariables["ZEMAX_MCP_TOKEN"]=="token-secret-123" &&
+               process.EnvironmentVariables["ZEMAX_MCP_TLS_PFX_PASSWORD"]=="private-pfx-secret",
+            "Launcher leaked remote credentials into process argv or lost TLS scheme.");
+        AssertThrows<ArgumentException>(()=>HostLaunchPlan.Build(
+            @"C:\Host.exe",@"C:\Worker.exe",@"C:\OS","0.0.0.0",
+            8000,false,"basic-viewing",@"C:\snapshots",
+            true,true,"127.0.0.1",false,null,"token",null),
+            "Remote LAN sharing cannot use loopback IPv4 as its published address.");
+        AssertThrows<ArgumentException>(()=>HostLaunchPlan.Build(
+            @"C:\Host.exe",@"C:\Worker.exe",@"C:\OS","0.0.0.0",
+            8000,false,"basic-viewing",@"C:\snapshots",
+            true,true,"192.168.1.12",false,null,"",null),
+            "Remote LAN binding accepted an empty bearer credential.");
+        AssertThrows<ArgumentException>(()=>HostLaunchPlan.Build(
+            @"C:\Host.exe",@"C:\Worker.exe",@"C:\OS","0.0.0.0",
+            8000,false,"basic-viewing",@"C:\snapshots",
+            true,true,"0.0.0.0",false,null,"token",null),
+            "LAN address must not use unspecified bind-all IPv4 as its published origin.");
+        AssertThrows<ArgumentException>(()=>HostLaunchPlan.Build(
+            @"C:\Host.exe",@"C:\Worker.exe",@"C:\OS","127.0.0.1",
+            8000,false,"basic-viewing",@"C:\snapshots",
+            true,false,"127.0.0.1",true,@"C:\Certs\abc.pfx","token",null),
+            "Launcher accepted TLS startup without a certificate password.");
+        AssertThrows<ArgumentException>(()=>HostLaunchPlan.Build(
+            @"C:\Host.exe",@"C:\Worker.exe",@"C:\OS","127.0.0.1",
+            8000,false,"not-a-profile",@"C:\snapshots",
+            true,false,"127.0.0.1",false,null,"token",null),
+            "Launcher accepted untrusted Host toolset startup arguments.");
+    }
+
+    private static void VerifyLauncherDeltaCredentialScope()
+    {
+        var tracker=new ScopedDeltaCursor();
+        Assert(tracker.Bind("http://127.0.0.1:5000/mcp","writer-a") &&
+               tracker.UrlSuffix("/jobs-delta")=="/jobs-delta?cursor=",
+            "Initial scoped status poll must be a full snapshot.");
+        var cursor=new string('a',64);
+        tracker.Update(cursor);
+        Assert(!tracker.Bind("http://127.0.0.1:5000/mcp","writer-a") &&
+               tracker.Cursor==cursor &&
+               tracker.Matches("http://127.0.0.1:5000/mcp","writer-a"),
+            "Same endpoint and credential must retain its cursor.");
+        Assert(tracker.Bind("http://127.0.0.1:5000/mcp","writer-b") &&
+               tracker.Cursor.Length==0 &&
+               !tracker.Matches("http://127.0.0.1:5000/mcp","writer-a"),
+            "Bearer swap must invalidate the old client's cached cursor.");
+        tracker.Update(cursor);
+        Assert(tracker.Bind("https://127.0.0.1:5000/mcp","writer-b") &&
+               tracker.Cursor.Length==0,
+            "Endpoint/transport switch must invalidate a stale cursor.");
+        AssertThrows<ArgumentException>(()=>tracker.Update("bad"),
+            "Malformed opaque cursor accepted by the Launcher.");
+        AssertThrows<ArgumentException>(()=>tracker.Update(new string('x',64)),
+            "Nonhex cursor accepted by the Launcher.");
+        tracker.Update(cursor);
+        tracker.ForceFullRefresh();
+        Assert(tracker.Cursor.Length==0,
+            "Recovery after malformed delta must request a fresh snapshot.");
+    }
+
     private static void VerifyActivityOwnership()
     {
         var monitor = new McpActivityMonitor();
@@ -202,7 +463,16 @@ internal static class Program
         var remaining = monitor.GetHealth();
         if (remaining.ActiveRequests != 1 || remaining.ActiveOperations[0].Tool != "zemax_get_system")
             throw new InvalidOperationException("Completed MCP activity was not removed independently.");
+        var oldCursor = monitor.GetDelta("client:codex@1.0|remote:192.168.8.20", null, true).Cursor;
+        using (monitor.Begin("client:third@1.0", "zemax_status")) { }
+        var untouched = monitor.GetDelta("client:codex@1.0|remote:192.168.8.20", oldCursor, true);
+        if (untouched.Changed || untouched.Activity != null)
+            throw new InvalidOperationException("Scoped cursor reveals changes to a foreign client.");
         first.Dispose();
+        var changed = monitor.GetDelta("client:codex@1.0|remote:192.168.8.20", oldCursor, true);
+        if (!changed.Changed || changed.Activity?.ActiveRequests != 0 ||
+            changed.Cursor == oldCursor)
+            throw new InvalidOperationException("Own activity completion was not surfaced by the delta cursor.");
         var completed = monitor.GetHealth();
         if (completed.ActiveRequests != 0 || completed.LastClient != "client:codex@1.0|remote:192.168.8.20" ||
             completed.LastTool != "zemax_get_system" || completed.LastRequestAt == null)
@@ -230,17 +500,47 @@ internal static class Program
     private static async Task VerifyBackgroundJobLeaseRetentionAsync()
     {
         var lease = new OpticStudioControlLease(TimeSpan.FromMilliseconds(50));
-        using (await lease.AcquireAsync("client-a", "zemax_global_search", CancellationToken.None).ConfigureAwait(false)) { }
+        Task<IDisposable> waitingObservation;
+        using (await lease.AcquireAsync("client-a", "zemax_global_search", CancellationToken.None).ConfigureAwait(false))
+        {
+            waitingObservation = lease.AcquireObservationAsync("client-b", CancellationToken.None);
+            Assert(!waitingObservation.IsCompleted,
+                "An observation interleaved with an in-flight mutation instead of waiting for the shared gate.");
+        }
+        using (await waitingObservation.ConfigureAwait(false)) { }
+        using (await lease.AcquireObservationAsync("client-b", CancellationToken.None).ConfigureAwait(false)) { }
+        if (!JsonSerializer.Serialize(lease.GetHealth()).Contains("client-a", StringComparison.Ordinal))
+            throw new InvalidOperationException("Foreign observation stole or cleared the persistent write owner.");
         if (!lease.RetainForJob("client-a", "job-1", generation: 7))
             throw new InvalidOperationException("The owning client could not retain control for its background job.");
 
+        // The original owner must NOT start another mutation while its own
+        // background COM Job is active; serialization of RPC calls alone
+        // cannot guarantee that a started Job has finished.
+        try
+        {
+            using var _ = await lease.AcquireAsync("client-a", "zemax_set_surface", CancellationToken.None).ConfigureAwait(false);
+            throw new InvalidOperationException("The owning client mutated the model while its background Job remained active.");
+        }
+        catch (ControlLeaseConflictException ex)
+        {
+            if (!ex.Message.Contains("background Job", StringComparison.Ordinal))
+                throw new InvalidOperationException("Own-job mutation conflict must explain how to recover.", ex);
+        }
+
         await Task.Delay(80).ConfigureAwait(false);
+        try
+        {
+            using var _ = await lease.AcquireObservationAsync("client-b", CancellationToken.None).ConfigureAwait(false);
+            throw new InvalidOperationException("Foreign observation entered during an active optical Job.");
+        }
+        catch (ControlLeaseConflictException) { }
         try
         {
             using var _ = await lease.AcquireAsync("client-b", "zemax_status", CancellationToken.None).ConfigureAwait(false);
             throw new InvalidOperationException("A background job did not prevent lease expiry and cross-client takeover.");
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("currently leased", StringComparison.OrdinalIgnoreCase)) { }
+        catch (ControlLeaseConflictException) { }
 
         lease.ObserveJob(8, new WorkerJobStatus { JobId = "job-1", State = "Completed" });
         await Task.Delay(80).ConfigureAwait(false);
@@ -249,7 +549,7 @@ internal static class Program
             using var _ = await lease.AcquireAsync("client-b", "zemax_status", CancellationToken.None).ConfigureAwait(false);
             throw new InvalidOperationException("A terminal event from the wrong Worker generation released the job lease.");
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("currently leased", StringComparison.OrdinalIgnoreCase)) { }
+        catch (ControlLeaseConflictException) { }
 
         lease.ReleaseGeneration(7);
         // Dead Worker generations must relinquish idle background ownership
@@ -406,7 +706,12 @@ internal static class Program
         Environment.SetEnvironmentVariable("ZEMAX_MCP_FAKE_WORKER_MODE", null);
         await using var client = new WorkerRpcClient(CreateOptions(10, 20));
         var ready = await client.GetStatusAsync(CancellationToken.None).ConfigureAwait(false);
-        if (!ready.Connected) throw new InvalidOperationException("Initial fake Worker connection failed.");
+        if (!ready.Connected || !client.TryGetCachedStatus(out var cached) ||
+            !string.Equals(cached?.ManifestFingerprint, StaticToolManifest.ContractFingerprint, StringComparison.Ordinal))
+            throw new InvalidOperationException("Last verified Worker status was not cached for nonblocking diagnostics.");
+        if (client.LastValidatedStatusAt is not { } timestamp ||
+            DateTimeOffset.UtcNow - timestamp > TimeSpan.FromMinutes(1))
+            throw new InvalidOperationException("Fresh fake Worker status lacked a recent validation timestamp.");
         var before = client.CurrentGeneration;
         var timer = Stopwatch.StartNew();
         try
@@ -420,6 +725,8 @@ internal static class Program
         if (timer.Elapsed < TimeSpan.FromSeconds(10) || timer.Elapsed > TimeSpan.FromSeconds(26))
             throw new InvalidOperationException("Hard recovery did not respect its configured soft/hard timeout window.");
 
+        if (client.TryGetCachedStatus(out _) || client.LastValidatedStatusAt.HasValue)
+            throw new InvalidOperationException("Retired Worker generation leaked its cached license/connection timestamp.");
         var result = await client.CallToolAsync(TestTool("zemax_test_echo"), CancellationToken.None).ConfigureAwait(false);
         if (result.IsError == true || client.CurrentGeneration <= before)
             throw new InvalidOperationException("A non-cooperative fake Worker was not replaced by a newer, responsive generation.");
@@ -584,56 +891,91 @@ internal static class Program
                     throw new InvalidOperationException("Two Launcher metadata probes could not coexist: " + body);
             }
 
-            using var heldResponse = await Send2026ToolCallAsync(client, endpoint, 4, "zemax_get_system", "client-a", "instance-a").ConfigureAwait(false);
-            if (!heldResponse.IsSuccessStatusCode) throw new InvalidOperationException("The first client could not retain the control lease across tool names.");
-            await Task.Delay(150).ConfigureAwait(false);
-            using (var activeHealthRequest = new HttpRequestMessage(HttpMethod.Get, endpoint + "/activity"))
+            // The shared-token Host is explicitly --read-only true.
+            // Keep this fixture read-only; the scoped read-write fixture
+            // below exercises distinct same-name same-IP writer identities,
+            // exclusive modification and post-disconnect handoff.
+            // Start the slow Worker read without awaiting the HTTP headers,
+            // then observe the real in-flight activity before completion.
+            var heldResponseTask = Send2026ToolCallAsync(client, endpoint, 4,
+                "zemax_get_system", "client-a", "instance-a");
+            var sawActiveRead = false;
+            var observedActivity = "";
+            for (var attempt = 0; attempt < 16 && !sawActiveRead; attempt++)
             {
-                activeHealthRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
-                using var activeHealthResponse = await client.SendAsync(activeHealthRequest).ConfigureAwait(false);
-                using var activeHealth = JsonDocument.Parse(await activeHealthResponse.Content.ReadAsStringAsync().ConfigureAwait(false));
-                var activeOperations = activeHealth.RootElement.GetProperty("activeOperations");
-                if (!activeHealthResponse.IsSuccessStatusCode || activeOperations.GetArrayLength() == 0 ||
-                    !activeOperations[0].GetProperty("client").GetString()!.Contains("client-a", StringComparison.Ordinal) ||
-                    activeOperations[0].GetProperty("tool").GetString() != "zemax_get_system")
-                    throw new InvalidOperationException("Remote activity did not identify the AI client and tool during an active call.");
+                await Task.Delay(125).ConfigureAwait(false);
+                using var activityRequest = new HttpRequestMessage(HttpMethod.Get, endpoint + "/activity");
+                activityRequest.Headers.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
+                using var activityResponse = await client.SendAsync(activityRequest).ConfigureAwait(false);
+                using var activityJson = JsonDocument.Parse(
+                    await activityResponse.Content.ReadAsStringAsync().ConfigureAwait(false));
+                observedActivity = activityJson.RootElement.GetRawText();
+                if (!activityResponse.IsSuccessStatusCode)
+                    throw new InvalidOperationException("Activity endpoint was not reachable during read.");
+                sawActiveRead = activityJson.RootElement.GetProperty("activeOperations")
+                    .EnumerateArray().Any(item =>
+                        item.GetProperty("client").GetString()?.Contains("client-a", StringComparison.Ordinal) == true &&
+                        item.GetProperty("tool").GetString() == "zemax_get_system");
             }
-            // Same clientInfo and same IP, but a different explicit instance ID.
-            using var rejectedLease = await Send2026ToolCallAsync(client, endpoint, 5, "zemax_get_system", "client-a", "instance-b").ConfigureAwait(false);
-            var rejectedLeaseBody = await ReadFirstMcpPayloadAsync(rejectedLease).ConfigureAwait(false);
-            if (!rejectedLeaseBody.Contains("currently leased", StringComparison.OrdinalIgnoreCase) &&
-                !rejectedLeaseBody.Contains("isError", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("Two same-name same-IP MCP client instances collapsed into one control identity: " + rejectedLeaseBody);
-
-            var heldBody = await ReadFirstMcpPayloadAsync(heldResponse).ConfigureAwait(false);
-            if (!heldBody.Contains("echo-ok", StringComparison.Ordinal))
-                throw new InvalidOperationException("The held control-lease request did not complete normally.");
-
-            foreach (var diagnostic in new[] { "zemax_status", "zemax_tool_catalog" })
+            if (!sawActiveRead)
             {
-                using var probe = await Send2026ToolCallAsync(client, endpoint, 302, diagnostic, "launcher-b", "instance-b").ConfigureAwait(false);
-                var body = await ReadFirstMcpPayloadAsync(probe).ConfigureAwait(false);
-                if (!body.Contains("echo-ok", StringComparison.Ordinal))
-                    throw new InvalidOperationException("A foreign lease blocked non-owning diagnostics: " + body);
+                var responseText = heldResponseTask.IsCompleted
+                    ? " Early MCP response: " + await ReadFirstMcpPayloadAsync(
+                        await heldResponseTask.ConfigureAwait(false)).ConfigureAwait(false)
+                    : " Worker request is still pending.";
+                throw new InvalidOperationException(
+                    "In-flight read was not observable on /activity: " + observedActivity + responseText);
             }
-            using (var ownerRequest = new HttpRequestMessage(HttpMethod.Get, endpoint + "/health"))
+            // A health check during a long optical read must return promptly
+            // from the last validated Worker status instead of entering the
+            // same blocked STA/RPC queue, which could exhaust the long-job
+            // timeout or make the Launcher appear frozen.
+            using (var busyHealth = new HttpRequestMessage(HttpMethod.Get, endpoint + "/health"))
             {
-                ownerRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
-                using var ownerResponse = await client.SendAsync(ownerRequest).ConfigureAwait(false);
-                using var json = JsonDocument.Parse(await ownerResponse.Content.ReadAsStringAsync().ConfigureAwait(false));
-                if (!json.RootElement.GetProperty("controlLease").GetProperty("owner").GetString()!.Contains("instance-a", StringComparison.Ordinal))
-                    throw new InvalidOperationException("Metadata diagnostics replaced the existing optical owner.");
+                busyHealth.Headers.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
+                using var busyDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+                using var busyResponse = await client.SendAsync(busyHealth, busyDeadline.Token).ConfigureAwait(false);
+                using var snapshot = JsonDocument.Parse(
+                    await busyResponse.Content.ReadAsStringAsync(busyDeadline.Token).ConfigureAwait(false));
+                if (!busyResponse.IsSuccessStatusCode ||
+                    snapshot.RootElement.GetProperty("workerBusy").GetBoolean() != true ||
+                    snapshot.RootElement.GetProperty("statusFresh").GetBoolean() != false ||
+                    !snapshot.RootElement.GetProperty("lastKnownStatus").GetBoolean() ||
+                    snapshot.RootElement.GetProperty("statusValidatedAt").ValueKind != JsonValueKind.String ||
+                    snapshot.RootElement.GetProperty("statusAgeSeconds").GetDouble() < 0 ||
+                    snapshot.RootElement.GetProperty("licenseStatus").GetString() != "fake-license")
+                    throw new InvalidOperationException(
+                        "Busy Worker health did not report accurate cached/stale status promptly: " +
+                        snapshot.RootElement.GetRawText());
             }
 
-            using var disconnect = await Send2026ToolCallAsync(client, endpoint, 6, "zemax_disconnect", "client-a", "instance-a").ConfigureAwait(false);
-            var disconnectBody = await ReadFirstMcpPayloadAsync(disconnect).ConfigureAwait(false);
-            if (!disconnect.IsSuccessStatusCode || !disconnectBody.Contains("success", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("The lease owner could not disconnect cleanly: " + disconnectBody);
+            using (var heldResponse = await heldResponseTask.ConfigureAwait(false))
+            {
+                var heldBody = await ReadFirstMcpPayloadAsync(heldResponse).ConfigureAwait(false);
+                if (!heldResponse.IsSuccessStatusCode || !heldBody.Contains("echo-ok", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Read-only Worker request failed: " + heldBody);
+            }
 
-            using var handedOff = await Send2026ToolCallAsync(client, endpoint, 7, "zemax_get_system", "client-a", "instance-b").ConfigureAwait(false);
-            var handedOffBody = await ReadFirstMcpPayloadAsync(handedOff).ConfigureAwait(false);
-            if (!handedOff.IsSuccessStatusCode || !handedOffBody.Contains("echo-ok", StringComparison.Ordinal))
-                throw new InvalidOperationException("A successful zemax_disconnect did not release control ownership for immediate handoff: " + handedOffBody);
+            using (var foreignRead = await Send2026ToolCallAsync(client, endpoint, 5,
+                       "zemax_get_system", "client-a", "instance-b").ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(foreignRead).ConfigureAwait(false);
+                if (!foreignRead.IsSuccessStatusCode || !body.Contains("echo-ok", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Separate read-only instances could not inspect one model: " + body);
+            }
+            using (var healthCheck = new HttpRequestMessage(HttpMethod.Get, endpoint + "/health"))
+            {
+                healthCheck.Headers.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
+                using var healthResult = await client.SendAsync(healthCheck).ConfigureAwait(false);
+                using var snapshot = JsonDocument.Parse(
+                    await healthResult.Content.ReadAsStringAsync().ConfigureAwait(false));
+                if (!healthResult.IsSuccessStatusCode ||
+                    snapshot.RootElement.GetProperty("controlLease").GetProperty("owner").ValueKind != JsonValueKind.Null)
+                    throw new InvalidOperationException("Non-mutating reads must not acquire a persistent writer lease.");
+            }
 
             using var spoofed = new HttpRequestMessage(HttpMethod.Get, endpoint + "/health");
             spoofed.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
@@ -730,17 +1072,46 @@ internal static class Program
                     throw new InvalidOperationException("Write credential did not enforce modern Job-only access and authorized tools.");
             }
 
-            using (var run = await SendScopedAsync(client, endpoint, 104, "tools/call", "zemax_get_system", writer).ConfigureAwait(false))
+            using (var run = await SendScopedAsync(client, endpoint, 104, "tools/call", "zemax_connect", writer).ConfigureAwait(false))
             {
                 var body = await ReadFirstMcpPayloadAsync(run).ConfigureAwait(false);
                 if (!run.IsSuccessStatusCode || !body.Contains("echo-ok", StringComparison.Ordinal) ||
                     !File.Exists(workerLog))
-                    throw new InvalidOperationException("Scoped writer did not reach the Worker.");
+                {
+                    // The MCP SDK deliberately returns a generic external
+                    // invocation error. Surface only ERROR-level local Host
+                    // diagnostics in this headless fake-Worker CI test so the
+                    // real exception can be fixed without weakening policy.
+                    var log = Directory.GetFiles(testRoot, "http-host-*.log")
+                        .OrderBy(value => value, StringComparer.Ordinal).LastOrDefault();
+                    var hostErrors = "(Host log unavailable)";
+                    if (log != null)
+                    {
+                        try
+                        {
+                            using var diagnosticStream = new FileStream(log, FileMode.Open, FileAccess.Read,
+                                FileShare.ReadWrite | FileShare.Delete);
+                            using var diagnosticReader = new StreamReader(diagnosticStream);
+                            var diagnosticLines = diagnosticReader.ReadToEnd()
+                                .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+                            var lastError = Array.FindLastIndex(diagnosticLines, line =>
+                                line.Contains("[ERR]", StringComparison.Ordinal) ||
+                                line.Contains("[FTL]", StringComparison.Ordinal));
+                            hostErrors = lastError < 0 ? "(no error lines)" :
+                                string.Join(" | ", diagnosticLines.Skip(lastError).Take(14))
+                                    .Substring(0, Math.Min(3800, string.Join(" | ",
+                                        diagnosticLines.Skip(lastError).Take(14)).Length));
+                        }
+                        catch (IOException) { hostErrors = "(Host log locked by active process)"; }
+                    }
+                    throw new InvalidOperationException("Scoped writer did not reach the Worker: " +
+                        body + " Host errors: " + hostErrors);
+                }
             }
 
             // Both clients deliberately advertise the same clientInfo and
             // instance ID. The authenticated token ID must own the lease.
-            using (var competing = await SendScopedAsync(client, endpoint, 105, "tools/call", "zemax_get_system", otherWriter).ConfigureAwait(false))
+            using (var competing = await SendScopedAsync(client, endpoint, 105, "tools/call", "zemax_connect", otherWriter).ConfigureAwait(false))
             {
                 var body = await ReadFirstMcpPayloadAsync(competing).ConfigureAwait(false);
                 if (body.Contains("echo-ok", StringComparison.Ordinal) ||
@@ -749,13 +1120,22 @@ internal static class Program
                     throw new InvalidOperationException("Two distinct authenticated tokens shared one control lease: " + body);
             }
 
+            using (var readerObservation = await SendScopedAsync(client, endpoint, 1051,
+                       "tools/call", "zemax_get_system", reader).ConfigureAwait(false))
+            {
+                var body = await ReadFirstMcpPayloadAsync(readerObservation).ConfigureAwait(false);
+                if (!readerObservation.IsSuccessStatusCode ||
+                    !body.Contains("echo-ok", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Read-only credential cannot inspect model owned by another token: " + body);
+            }
+
             using (var release = await SendScopedAsync(client, endpoint, 106, "tools/call", "zemax_disconnect", writer).ConfigureAwait(false))
             {
                 var body = await ReadFirstMcpPayloadAsync(release).ConfigureAwait(false);
                 if (!release.IsSuccessStatusCode || !body.Contains("success", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Scoped owner could not release its lease.");
             }
-            using (var handoff = await SendScopedAsync(client, endpoint, 107, "tools/call", "zemax_get_system", otherWriter).ConfigureAwait(false))
+            using (var handoff = await SendScopedAsync(client, endpoint, 107, "tools/call", "zemax_connect", otherWriter).ConfigureAwait(false))
             {
                 var body = await ReadFirstMcpPayloadAsync(handoff).ConfigureAwait(false);
                 if (!handoff.IsSuccessStatusCode || !body.Contains("echo-ok", StringComparison.Ordinal))
@@ -831,9 +1211,13 @@ internal static class Program
             {
                 var body = await scopedHealth.Content.ReadAsStringAsync().ConfigureAwait(false);
                 if (!scopedHealth.IsSuccessStatusCode || !body.Contains("scoped", StringComparison.Ordinal) ||
-                    body.Contains("fake-owned-job", StringComparison.Ordinal) ||
-                    body.Contains("eventJobs", StringComparison.Ordinal))
-                    throw new InvalidOperationException("Scoped /health leaked cross-client Jobs or Worker event state.");
+                    !body.Contains("zosApiConnected", StringComparison.Ordinal) ||
+                    !body.Contains("\"jobs\"", StringComparison.Ordinal) ||
+                    !body.Contains("\"tasks\"", StringComparison.Ordinal) ||
+                    body.Contains("private-job-result", StringComparison.Ordinal) ||
+                    body.Contains("eventJobs", StringComparison.Ordinal) ||
+                    body.Contains("C:\\\\Fake", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Scoped /health must expose safe owner-filtered status, not cross-client results or paths.");
             }
             using (var scopedActivity = await SendScopedGetAsync(client, new Uri(endpoint, endpoint.AbsolutePath.TrimEnd('/') + "/activity"), writer).ConfigureAwait(false))
             {
@@ -842,6 +1226,72 @@ internal static class Program
                     body.Contains("activeOperations", StringComparison.Ordinal))
                     throw new InvalidOperationException("Scoped /activity leaked cross-client operations.");
             }
+            // Delta cursors are stable for one owner unless that owner's
+            // activity changes. A second scoped credential cannot read
+            // foreign active-operation names or results through this route.
+            string ownerActivityCursor;
+            using (var delta = await SendScopedGetAsync(client,
+                       new Uri(endpoint, endpoint.AbsolutePath.TrimEnd('/') + "/activity-delta"),
+                       otherWriter).ConfigureAwait(false))
+            {
+                var body = await delta.Content.ReadAsStringAsync().ConfigureAwait(false);
+                using var parsed = JsonDocument.Parse(body);
+                ownerActivityCursor = parsed.RootElement.GetProperty("cursor").GetString() ?? "";
+                if (!delta.IsSuccessStatusCode || ownerActivityCursor.Length != 64 ||
+                    !parsed.RootElement.GetProperty("changed").GetBoolean() ||
+                    body.Contains("private-unknown-result", StringComparison.Ordinal) ||
+                    body.Contains("private-job-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Scoped activity cursor leaked Job data or failed to initialize: " + body);
+            }
+            using (var unchanged = await SendScopedGetAsync(client,
+                       new Uri(endpoint, endpoint.AbsolutePath.TrimEnd('/') +
+                           "/activity-delta?cursor=" + ownerActivityCursor), otherWriter).ConfigureAwait(false))
+            {
+                var body = await unchanged.Content.ReadAsStringAsync().ConfigureAwait(false);
+                using var parsed = JsonDocument.Parse(body);
+                if (!unchanged.IsSuccessStatusCode ||
+                    parsed.RootElement.GetProperty("changed").GetBoolean() ||
+                    parsed.RootElement.GetProperty("activity").ValueKind != JsonValueKind.Null)
+                    throw new InvalidOperationException("Activity delta did not suppress unchanged owner data: " + body);
+            }
+
+            string ownerJobCursor;
+            using (var firstJobs = await SendScopedGetAsync(client,
+                       new Uri(endpoint, endpoint.AbsolutePath.TrimEnd('/') + "/jobs-delta"),
+                       otherWriter).ConfigureAwait(false))
+            {
+                var body=await firstJobs.Content.ReadAsStringAsync().ConfigureAwait(false);
+                using var parsed=JsonDocument.Parse(body);
+                var jobDeltaRoot=parsed.RootElement;
+                ownerJobCursor=jobDeltaRoot.GetProperty("cursor").GetString() ?? "";
+                if(!firstJobs.IsSuccessStatusCode || ownerJobCursor.Length!=64 ||
+                    !jobDeltaRoot.GetProperty("changed").GetBoolean() ||
+                    !body.Contains("fake-owned-job",StringComparison.Ordinal) ||
+                    body.Contains("private-unknown-result",StringComparison.Ordinal) ||
+                    body.Contains("private-job-result",StringComparison.Ordinal) ||
+                    body.Contains("C:\\\\Fake",StringComparison.Ordinal))
+                    throw new InvalidOperationException("Scoped Jobs delta failed to filter secrets: "+body);
+            }
+            using (var noJobsChange=await SendScopedGetAsync(client,
+                       new Uri(endpoint,endpoint.AbsolutePath.TrimEnd('/') +
+                           "/jobs-delta?cursor="+ownerJobCursor),otherWriter).ConfigureAwait(false))
+            {
+                var body=await noJobsChange.Content.ReadAsStringAsync().ConfigureAwait(false);
+                using var parsed=JsonDocument.Parse(body);
+                if(!noJobsChange.IsSuccessStatusCode || parsed.RootElement.GetProperty("changed").GetBoolean() ||
+                   parsed.RootElement.GetProperty("snapshot").ValueKind!=JsonValueKind.Null)
+                    throw new InvalidOperationException("Jobs delta repeated identical owned data: "+body);
+            }
+            using (var foreignJobs=await SendScopedGetAsync(client,
+                       new Uri(endpoint,endpoint.AbsolutePath.TrimEnd('/') + "/jobs-delta"),writer).ConfigureAwait(false))
+            {
+                var body=await foreignJobs.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if(!foreignJobs.IsSuccessStatusCode ||
+                   body.Contains("fake-owned-job",StringComparison.Ordinal) ||
+                   body.Contains("private-job-result",StringComparison.Ordinal))
+                    throw new InvalidOperationException("Foreign credential saw owner jobs in delta: "+body);
+            }
+
             using (var ownerCancel = await SendScopedAsync(client, endpoint, 114, "tools/call", "zemax_job_cancel", otherWriter,
                        new { jobId = "fake-owned-job" }).ConfigureAwait(false))
             {
@@ -879,6 +1329,24 @@ internal static class Program
                     throw new InvalidOperationException("Official CreateTaskResult did not have a taskId.");
             }
 
+            // Scoped diagnostics must show the owner's official Task handle
+            // while disclosing neither this Task nor Worker paths to a foreign token.
+            foreach (var (bearer, shouldSeeOwn) in new[] {
+                (otherWriter, true), (writer, false)
+            })
+            {
+                using var response = await SendScopedGetAsync(client,
+                    new Uri(endpoint, endpoint.AbsolutePath.TrimEnd('/') + "/health"), bearer).ConfigureAwait(false);
+                var payload = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode ||
+                    payload.Contains(taskId, StringComparison.Ordinal) != shouldSeeOwn ||
+                    payload.Contains("fake-task-job", StringComparison.Ordinal) != shouldSeeOwn ||
+                    payload.Contains("C:\\\\Fake", StringComparison.Ordinal) ||
+                    payload.Contains("private-task-final-result", StringComparison.Ordinal) ||
+                    payload.Contains("eventJobs", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Owner-scoped Task diagnostic listing is incorrect.");
+            }
+
             foreach (var method in new[] { "tasks/get", "tasks/update", "tasks/cancel" })
             {
                 using var deniedTask = await SendTaskAsync(client, endpoint, 116, method, null, writer, taskId).ConfigureAwait(false);
@@ -911,6 +1379,50 @@ internal static class Program
                 var payload = await ReadFirstMcpPayloadAsync(unsolicited).ConfigureAwait(false);
                 if (!payload.Contains("\"error\":", StringComparison.Ordinal))
                     throw new InvalidOperationException("Worker Job falsely accepted an unsolicited Task input response.");
+            }
+
+            // With a long COM-bound foreground read in progress, tasks/get
+            // must use the Host's already-authorized Task state rather than
+            // queuing job_status behind the busy Worker RPC. This is a real
+            // concurrent HTTP smoke test, not just a static code assertion.
+            var longModelRead = SendScopedAsync(client, endpoint, 1173, "tools/call",
+                "zemax_get_system", otherWriter);
+            var workerBusySeen = false;
+            for (var poll = 0; poll < 20 && !workerBusySeen; poll++)
+            {
+                await Task.Delay(75).ConfigureAwait(false);
+                using var busyHealth = await SendScopedGetAsync(client,
+                    new Uri(endpoint, endpoint.AbsolutePath.TrimEnd('/') + "/health"),
+                    otherWriter).ConfigureAwait(false);
+                using var healthJson = JsonDocument.Parse(
+                    await busyHealth.Content.ReadAsStringAsync().ConfigureAwait(false));
+                workerBusySeen = busyHealth.IsSuccessStatusCode &&
+                    healthJson.RootElement.GetProperty("workerBusy").GetBoolean() &&
+                    healthJson.RootElement.GetProperty("foregroundRpcBusy").GetBoolean() &&
+                    healthJson.RootElement.GetProperty("activeRequests").GetInt32() > 0 &&
+                    string.Equals(healthJson.RootElement.GetProperty("lastTool").GetString(),
+                        "zemax_get_system", StringComparison.Ordinal);
+            }
+            if (!workerBusySeen)
+                throw new InvalidOperationException("Scoped long-read fixture never entered Worker busy state.");
+            var taskPollTimer = Stopwatch.StartNew();
+            using (var nonBlockingPoll = await SendTaskAsync(client, endpoint, 1174, "tasks/get", null,
+                       otherWriter, taskId).ConfigureAwait(false))
+            {
+                taskPollTimer.Stop();
+                var payload = await ReadFirstMcpPayloadAsync(nonBlockingPoll).ConfigureAwait(false);
+                if (!nonBlockingPoll.IsSuccessStatusCode ||
+                    !payload.Contains("\"working\"", StringComparison.Ordinal) ||
+                    taskPollTimer.Elapsed > TimeSpan.FromSeconds(2))
+                    throw new InvalidOperationException(
+                        "tasks/get blocked behind a running Worker COM-bound RPC: " +
+                        taskPollTimer.Elapsed.TotalMilliseconds + "ms; " + payload);
+            }
+            using (var modelRead = await longModelRead.ConfigureAwait(false))
+            {
+                var result = await ReadFirstMcpPayloadAsync(modelRead).ConfigureAwait(false);
+                if (!modelRead.IsSuccessStatusCode || !result.Contains("echo-ok", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Long read fixture did not complete: " + result);
             }
 
             using (var working = await SendTaskAsync(client, endpoint, 118, "tasks/get", null,
@@ -1091,9 +1603,11 @@ internal static class Program
         return client.SendAsync(Create2026Request(endpoint, body, "tools/list", null), HttpCompletionOption.ResponseHeadersRead);
     }
 
-    private static Task<HttpResponseMessage> Send2026ToolCallAsync(HttpClient client, Uri endpoint, int id, string toolName, string clientName, string instanceId)
+    private static Task<HttpResponseMessage> Send2026ToolCallAsync(HttpClient client, Uri endpoint, int id, string toolName, string clientName, string instanceId, object? arguments = null)
     {
         var body = Build2026Body(id, "tools/call", toolName, clientName, instanceId);
+        if (arguments != null)
+            body = body.Replace("\"arguments\":{}", "\"arguments\":" + JsonSerializer.Serialize(arguments), StringComparison.Ordinal);
         return client.SendAsync(Create2026Request(endpoint, body, "tools/call", toolName), HttpCompletionOption.ResponseHeadersRead);
     }
 
@@ -1226,7 +1740,9 @@ internal static class Program
                     await Task.Delay(Timeout.InfiniteTimeSpan).ConfigureAwait(false);
                     return;
                 }
-                if (string.Equals(command, "zemax_get_system", StringComparison.Ordinal) || string.Equals(command, "zemax_test_hold", StringComparison.Ordinal))
+                if (string.Equals(command, "zemax_get_system", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_connect", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_test_hold", StringComparison.Ordinal))
                 {
                     await SendAsync(writer, ZemaxRpcProtocol.Progress, string.Empty, operationId, new
                     {
@@ -1317,8 +1833,12 @@ internal static class Program
                     }).ConfigureAwait(false);
                     continue;
                 }
-                if (string.Equals(command, "zemax_status", StringComparison.Ordinal) || string.Equals(command, "zemax_tool_catalog", StringComparison.Ordinal) || string.Equals(command, "zemax_get_system", StringComparison.Ordinal) ||
-                    string.Equals(command, "zemax_test_echo", StringComparison.Ordinal) || string.Equals(command, "zemax_test_hold", StringComparison.Ordinal))
+                if (string.Equals(command, "zemax_status", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_tool_catalog", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_get_system", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_connect", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_test_echo", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_test_hold", StringComparison.Ordinal))
                 {
                     await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
                     {

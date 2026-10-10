@@ -6,6 +6,8 @@ internal sealed class ControlLeaseConflictException : InvalidOperationException
 {
     public ControlLeaseConflictException()
         : base("OpticStudio control is currently leased to another MCP client. Diagnostic status checks do not require control; wait for the current optical operation or owner to release control.") { }
+
+    public ControlLeaseConflictException(string message) : base(message) { }
 }
 
 /// <summary>
@@ -38,6 +40,10 @@ internal sealed class OpticStudioControlLease
         // semaphore. A caller may cancel during that wait.
         lock (_sync)
         {
+            // A background COM Job retains the exclusive model lifecycle for
+            // all clients, including its creator. Without this check its
+            // creator could start a second mutation while that Job is running.
+            if (_jobHolds.Count > 0) throw ActiveJobConflict();
             if (!IsExpiredLocked() &&
                 _ownerClientId != null &&
                 !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
@@ -52,6 +58,9 @@ internal sealed class OpticStudioControlLease
             cancellationToken.ThrowIfCancellationRequested();
             lock (_sync)
             {
+                // A job could have started while this caller waited for the
+                // foreground gate. Check again before granting the edit lease.
+                if (_jobHolds.Count > 0) throw ActiveJobConflict();
                 if (IsExpiredLocked()) _ownerClientId = null;
                 if (_ownerClientId != null &&
                     !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
@@ -69,6 +78,35 @@ internal sealed class OpticStudioControlLease
             throw;
         }
     }
+
+    /// <summary>
+    /// Permit read-only inspection by any authorized client without taking or
+    /// renewing the persistent mutating-owner lease. Physical operations are
+    /// still serialized behind the same execution gate. Foreign observers are
+    /// not admitted while an owner holds an active background optical Job,
+    /// since the STA may be blocked or the model may be mid-operation.
+    /// </summary>
+    public async Task<IDisposable> AcquireObservationAsync(string clientId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(clientId)) clientId = "anonymous";
+        await _execution.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_sync)
+                if (_jobHolds.Values.Any(job => !string.Equals(job.ClientId, clientId, StringComparison.Ordinal)))
+                    throw new ControlLeaseConflictException();
+            return new ObservationReleaser(this);
+        }
+        catch
+        {
+            _execution.Release();
+            throw;
+        }
+    }
+
+    private static ControlLeaseConflictException ActiveJobConflict() =>
+        new("An OpticStudio background Job is active; additional mutations are blocked until it reaches a terminal state. Query or cancel the existing Job first.");
 
     private bool IsExpiredLocked() =>
         _ownerClientId != null &&
@@ -143,6 +181,11 @@ internal sealed class OpticStudioControlLease
         string.Equals(state, "Cancelled", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(state, "Failed", StringComparison.OrdinalIgnoreCase);
 
+    public bool HasActiveBackgroundJobs
+    {
+        get { lock (_sync) return _jobHolds.Count != 0; }
+    }
+
     public object GetHealth()
     {
         lock (_sync) return new
@@ -170,6 +213,13 @@ internal sealed class OpticStudioControlLease
     }
 
     private sealed record JobHold(string ClientId, long Generation);
+
+    private sealed class ObservationReleaser : IDisposable
+    {
+        private OpticStudioControlLease? _lease;
+        public ObservationReleaser(OpticStudioControlLease lease) => _lease = lease;
+        public void Dispose() => Interlocked.Exchange(ref _lease, null)?._execution.Release();
+    }
 
     private sealed class Releaser : IDisposable
     {

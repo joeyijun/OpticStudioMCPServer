@@ -7,6 +7,26 @@
   <ItemGroup>
     <Compile Include="..\..\src\ZemaxMCP.Core\Models\AnalysisResults.cs" Link="Core\AnalysisResults.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\MtfSeriesReader.cs" Link="Server\MtfSeriesReader.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\SequentialEnergySurfaceRange.cs" Link="Server\SequentialEnergySurfaceRange.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\SpectralWeighting.cs" Link="Server\SpectralWeighting.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\MechanicalFootprintBoundary.cs" Link="Server\MechanicalFootprintBoundary.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\GlobalFootprintProjection.cs" Link="Server\GlobalFootprintProjection.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\GlobalPlanarMechanicalBoundary.cs" Link="Server\GlobalPlanarMechanicalBoundary.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\GlobalRaySegmentBoundary.cs" Link="Server\GlobalRaySegmentBoundary.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\CadMultiSegmentAudit.cs" Link="Server\CadMultiSegmentAudit.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\CadTriangleMeshAudit.cs" Link="Server\CadTriangleMeshAudit.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\CoatingRtaAudit.cs" Link="Server\CoatingRtaAudit.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\CoatingPerformanceReflection.cs" Link="Server\CoatingPerformanceReflection.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscDetectorTilePreview.cs" Link="Server\NscDetectorTilePreview.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscPixelCalibration.cs" Link="Server\NscPixelCalibration.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscDetectorCsvExport.cs" Link="Server\NscDetectorCsvExport.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscSameTraceLedger.cs" Link="Server\NscSameTraceLedger.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\ZrdPathEnergyCore.cs" Link="Server\ZrdPathEnergyCore.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\ConservativeRayEnergyTree.cs" Link="Server\ConservativeRayEnergyTree.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\SystemSummaryComparer.cs" Link="Server\SystemSummaryComparer.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\ModelPreflightChecks.cs" Link="Server\ModelPreflightChecks.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\ModelWorkflowValidator.cs" Link="Server\ModelWorkflowValidator.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\OpticalResultInterpreter.cs" Link="Server\OpticalResultInterpreter.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Session\IZosSystemSnapshot.cs" Link="Core\IZosSystemSnapshot.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Session\ZemaxOperationMetadata.cs" Link="Core\ZemaxOperationMetadata.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Session\ZemaxOperationSafety.cs" Link="Core\ZemaxOperationSafety.cs" />

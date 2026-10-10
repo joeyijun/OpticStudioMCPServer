@@ -386,8 +386,8 @@
                   ToolTip="Stop the local MCP service" Click="Stop_Click"/>
           <Button Content="Refresh" Style="{StaticResource ActionButton}" MinWidth="74" Height="34" Padding="10,5" Margin="0,0,7,0"
                   ToolTip="Refresh live service status" Click="RefreshStatus_Click"/>
-          <Button x:Name="TestConnectionButton" Content="Test connection" Style="{StaticResource ActionButton}" MinWidth="120" Height="34" Padding="9,5" Margin="0,0,9,0"
-                  ToolTip="Check connection, authentication and ZOS-API, then run tools/list and read-only zemax_status. No lens changes." Click="TestConnection_Click"/>
+          <Button x:Name="TestConnectionButton" Content="Check connection" Style="{StaticResource ActionButton}" MinWidth="125" Height="34" Padding="9,5" Margin="0,0,9,0"
+                  ToolTip="Check Host, authentication, Worker, OpticStudio ZOS-API and license status without exercising optical tools." Click="TestConnection_Click"/>
           <Button Content="Exit service" Style="{StaticResource ExitButton}" VerticalAlignment="Center"
                   ToolTip="Stop the MCP service and close the launcher" Click="Exit_Click"/>
         </StackPanel>
@@ -520,7 +520,13 @@
         <StackPanel Margin="28,20,28,24">
           <TextBlock Text="Tasks" FontSize="28" FontWeight="SemiBold" Foreground="{StaticResource HeadingBrush}"/>
           <TextBlock x:Name="TasksPageSummary" Text="Waiting for task status…" Style="{StaticResource HelperText}" Margin="0,6,0,20"/>
-          <Border Style="{StaticResource Card}">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="1.05*"/>
+              <ColumnDefinition Width="16"/>
+              <ColumnDefinition Width="1.25*"/>
+            </Grid.ColumnDefinitions>
+          <Border Grid.Column="2" Style="{StaticResource Card}">
             <StackPanel>
               <TextBlock Text="Selected task" Style="{StaticResource StatusHeading}" Margin="0,0,0,16"/>
               <Grid>
@@ -564,17 +570,23 @@
               </StackPanel>
             </StackPanel>
           </Border>
-          <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+          <Border Grid.Column="0" Style="{StaticResource Card}">
             <StackPanel>
               <Grid Margin="0,0,0,12">
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <TextBlock Text="Recent activity" Style="{StaticResource StatusHeading}" VerticalAlignment="Center"/>
                 <ComboBox x:Name="TasksPageFilter" Grid.Column="1" Width="140" Height="32" SelectedIndex="0" SelectionChanged="TasksPageFilter_Changed" AutomationProperties.Name="Filter Tasks and Jobs by state">
                   <ComboBoxItem Content="All"/><ComboBoxItem Content="Running"/><ComboBoxItem Content="Queued"/><ComboBoxItem Content="Completed"/><ComboBoxItem Content="Failed"/><ComboBoxItem Content="Cancelled"/>
                 </ComboBox>
+                <TextBox x:Name="TasksPageSearch" Grid.Row="1" Grid.ColumnSpan="2"
+                         Height="32" Margin="0,10,0,0" Padding="10,5"
+                         ToolTip="Filter tasks by tool, Job ID, Task ID, or state"
+                         AutomationProperties.Name="Search Tasks and Jobs"
+                         TextChanged="TasksPageSearch_Changed"/>
               </Grid>
               <TextBlock x:Name="TasksPageEmpty" Text="No recent tasks. Start a background operation from your AI client." Style="{StaticResource HelperText}" Margin="0,6,0,10" TextWrapping="Wrap"/>
-              <ListBox x:Name="TasksPageJobs" MaxHeight="220" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="TasksPageJobs_Changed" AutomationProperties.Name="Background Job list">
+              <ListBox x:Name="TasksPageJobs" ItemsSource="{Binding VisibleJobs}" MinHeight="280" MaxHeight="460" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="TasksPageJobs_Changed" AutomationProperties.Name="Background Job list">
                 <ListBox.ItemContainerStyle>
                   <Style TargetType="ListBoxItem">
                     <Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,3"/>
@@ -597,6 +609,7 @@
               </ListBox>
             </StackPanel>
           </Border>
+          </Grid>
           <Expander x:Name="TasksPageDetailsSection" Header="Details and result" Margin="4,18,4,0" Foreground="{StaticResource BodyBrush}">
             <TextBox x:Name="TasksPageDetail" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MaxHeight="240" MinHeight="90" Background="#BFFFFFFF" BorderBrush="#DCE3ED" FontFamily="Consolas" FontSize="12" Padding="12" Margin="0,10,0,0" Text="Select a task to inspect its details."/>
           </Expander>
@@ -659,7 +672,20 @@
                        LostFocus="Port_LostFocus"/>
               <Button Grid.Column="2" Content="New token" Style="{StaticResource SmallButton}" HorizontalAlignment="Right" Click="RegenerateToken_Click"/>
             </Grid>
-            <Button Content="Copy secure setup" Style="{StaticResource ActionButton}" HorizontalAlignment="Stretch" Margin="0,10,0,0" Click="CopySecureSetup_Click"/>
+            <CheckBox x:Name="EnableTls" Content="Encrypt Host connection using TLS (PFX)" Margin="0,12,0,0"
+                      ToolTip="Use a trusted PFX certificate with a private key. Changes apply at next Start." Checked="TlsSettings_Changed" Unchecked="TlsSettings_Changed"/>
+            <Grid Margin="0,6,0,0">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <TextBox x:Name="TlsPfxPath" Style="{StaticResource InputBox}" ToolTip="Full path to a trusted PKCS#12 (.pfx) certificate."
+                       LostFocus="TlsSettings_Changed"/>
+              <Button Grid.Column="1" Content="PFX…" Style="{StaticResource SmallButton}" Margin="6,0,0,0" Click="BrowseTlsPfx_Click"/>
+            </Grid>
+            <PasswordBox x:Name="TlsPfxPassword" Margin="0,6,0,0" Padding="7,5"
+                         ToolTip="PFX password is DPAPI protected for this Windows user. Only the child Host receives it."
+                         LostFocus="TlsSettings_Changed"/>
+            <TextBlock Text="Clients must trust the certificate, with a matching DNS name or IP. Restart Host to apply."
+                       Style="{StaticResource HelperText}" Margin="0,5,0,0"/>
+            <Button Content="Copy connection setup" Style="{StaticResource ActionButton}" HorizontalAlignment="Stretch" Margin="0,10,0,0" Click="CopySecureSetup_Click"/>
           </StackPanel>
         </Grid>
       </Border>
@@ -719,6 +745,8 @@
             <StackPanel Grid.Column="1" Orientation="Horizontal">
               <Button Content="Logs" Style="{StaticResource SmallButton}" Margin="0,0,7,0" Click="OpenLogs_Click"/>
               <Button Content="Updates" Style="{StaticResource SmallButton}" Margin="0,0,7,0" Click="Update_Click"/>
+              <Button x:Name="TestMcpToolsButton" Content="Test MCP tools" Style="{StaticResource SmallButton}" Margin="0,0,7,0" Click="TestMcpTools_Click"
+                      ToolTip="Actually call tools/list and read-only zemax_status, and negotiate official Tasks; never starts an optical Job."/>
               <Button Content="Copy diagnostics" Style="{StaticResource SmallButton}" Click="CopyDiagnostics_Click"/>
             </StackPanel>
           </Grid>

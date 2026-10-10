@@ -1,6 +1,6 @@
 # Optical tool result conventions (post-1.5.0)
 
-This is a **backward-compatible contract**, not a claim that all 136 tools now
+This is a **backward-compatible contract**, not a claim that all 141 tools now
 share a new JSON envelope. Worker tool results remain the existing JSON text
 inside MCP `CallToolResult.content`; do not silently wrap or rename historical
 payloads. New result fields and new tools should follow these rules.

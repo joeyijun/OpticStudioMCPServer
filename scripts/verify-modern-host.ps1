@@ -147,7 +147,8 @@ if ($hostSource -notmatch 'OpticStudioControlLease' -or $hostSource -notmatch 'R
   throw "Control ownership and Host/Origin boundaries must remain explicit and non-wildcarded."
 }
 if ($hostSource -notmatch '"zemax_disconnect"' -or $hostSource -notmatch 'ReleaseOwnership\(clientId\)' -or
-    $privateRpcTest -notmatch 'immediate handoff') {
+    $privateRpcTest -notmatch 'Authenticated second client could not acquire the lease after disconnect' -or
+    $privateRpcTest -notmatch 'Read-only Host tools/list exposed a HighImpact') {
   throw "A successful zemax_disconnect must release the owning client lease and the MCP E2E suite must verify immediate handoff."
 }
 if ($controlLeaseSource -notmatch '_execution.WaitAsync\(cancellationToken\)' -or
@@ -187,7 +188,7 @@ if ($privateRpcTest -notmatch '2026-07-28' -or $privateRpcTest -notmatch 'io\.mo
     $privateRpcTest -notmatch 'Send2026ListToolsAsync' -or $privateRpcTest -match '"initialize"') {
   throw "The E2E suite must cover stateless discovery, manifest mismatch, event dispatch, and distinct same-info client instances."
 }
-if ($schemaTest -notmatch 'StaticToolManifest\.All\.Count != 138' -or $schemaTest -notmatch 'zemax_open_file' -or
+if ($schemaTest -notmatch 'StaticToolManifest\.All\.Count != 146' -or $schemaTest -notmatch 'zemax_open_file' -or
     $schemaTest -notmatch 'zemax_set_fields' -or $schemaTest -notmatch 'zemax_optimize' -or
     $schemaTest -notmatch 'unresolved opaque object contracts') {
   throw "Generated manifest regressions must verify count, policy metadata, required parameters, nested records, defaults, and absence of opaque contracts."
@@ -216,10 +217,12 @@ if ($jobOwners -notmatch 'MaximumRecords = 256' -or
     $hostSource -notmatch 'JobOwnerRegistry.FilterList' -or
     $hostSource -notmatch 'jobOwners.ReleaseGeneration' -or
     $hostSource -notmatch 'zemax_multistart_status' -or
-    $hostSource -notmatch 'jobDiagnostics = "per-client job tools only"' -or
+    $hostSource -notmatch 'jobDiagnostics = "authenticated-owner-only"' -or
+    $hostSource -notmatch 'taskLedger\?\.ListOwnedMetadata\(scopedOwner, 25\)' -or
     $privateRpcTest -notmatch 'VerifyJobOwnershipRegistry' -or
     $privateRpcTest -notmatch 'Foreign writer could cancel another client' -or
-    $privateRpcTest -notmatch 'Scoped /health leaked') {
+    $privateRpcTest -notmatch 'Scoped /health must expose' -or
+    $privateRpcTest -notmatch 'Owner-scoped Task diagnostic listing is incorrect') {
   throw "Scoped Jobs must bind owner+generation, deny unowned status/cancel, filter list results, redact health, block legacy global multistart state and be covered by E2E tests."
 }
 # Release-validation contract: modern stateless MCP is the primary live path;

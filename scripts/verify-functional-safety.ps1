@@ -336,6 +336,18 @@ if ($nscDetector -notmatch 'out var rows, out var columns' -or
     $nscDetector -notmatch 'CancellationToken cancellationToken') {
     throw "zemax_get_nsc_detector must preserve the ZOS-API Rows/Cols output order, size cross-check, and cancellation."
 }
+if ($nscDetector -notmatch 'RoiPixelMin' -or
+    $nscDetector -notmatch 'RoiPixelMax' -or
+    $nscDetector -notmatch 'RoiPixelMean' -or
+    $nscDetector -notmatch 'RoiNonzeroPixelCount' -or
+    $nscDetector -notmatch 'RoiPeakRow' -or
+    $nscDetector -notmatch 'RoiPeakColumn' -or
+    $nscDetector -notmatch 'roiIntegral = dataType == 0' -or
+    $nscDetector -notmatch 'roiLaunchedFraction = roiIntegral.Value / launchedFlux.Value' -or
+    $nscDetector -notmatch 'double.IsInfinity\(roiSum.Value\)' -or
+    $nscDetector -notmatch 'double.IsInfinity\(detectorLaunchedFraction.Value\)') {
+    throw "NSC ROI reports must retain bounded pixel statistics while separately integrating power and rejecting overflow/invalid source normalization."
+}
 if ($nscObjects -notmatch 'startObject > numberOfObjects' -or
     $nscObjects -notmatch 'CancellationToken cancellationToken' -or
     $nscObjects -notmatch 'ValidateFinite\(') {

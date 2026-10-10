@@ -51,13 +51,13 @@ The Host may start and answer `tools/list` without starting the Worker. The Work
 
 ### Desktop/package
 
-- `src/ZemaxMCP.Launcher` owns end-user setup, configuration, status and service lifecycle.
+- `src/ZemaxMCP.Launcher` owns end-user setup, configuration, status and service lifecycle. The WPF `MainWindow` owns visible UI state and service-start/stop interactions; `ClientConfigurator` owns per-client config-file formats and detection; `McpDiagnosticsClient` owns HTTP MCP health/protocol smoke probes; `JobActionClient` owns authenticated Job status/cancellation RPC; `TaskPresentation` owns UI-independent Task/Job projections; `TaskCenterViewModel` owns Task Center history, filter/selection and detail rendering inputs without any WPF controls, exposing INotifyPropertyChanged/VisibleJobs for XAML ListBox ItemsSource binding; and `ScopedDeltaCursor` owns credential-bound polling cursors; `HostLaunchPlan` validates the local Host launch configuration and keeps bearer/PFX secrets out of command-line arguments. The WPF window still owns the service process lifecycle, so this is not yet full MVVM. `StatusPresentation` now formats client-safe names, uptime and local/remote ZOS-API path evidence without WPF. These are incremental separations, **not yet a complete WPF MVVM conversion**.
 - `src/ZemaxMCP.ClientProxy` adapts stdio-only clients to the public HTTP MCP endpoint and emits a per-process client instance identity.
 - `src/ZemaxMCP.Installer` owns first-install UI and delegates upgrades to `src/ZemaxMCP.Updater`; portable upgrades use the same updater replacement/rollback path when an installed copy exists.
 
 ## Tool contract ownership
 
-Worker tool methods remain the authoring source for tool names, descriptions and parameter shapes. At build time the manifest generator produces a static contract containing all 135 tools. Each entry includes:
+Worker tool methods remain the authoring source for tool names, descriptions and parameter shapes. At build time the manifest generator produces a static contract containing all 146 tools. Each entry includes:
 
 - stable MCP tool name
 - description
@@ -81,7 +81,7 @@ RPC v3 deliberately has no discovery command. Its request/response surface is li
 - `result`
 - `error`
 
-Tool arguments remain manifest-defined JSON between Host and Worker, while RPC infrastructure/status/event envelopes are strongly typed. This avoids maintaining 135 duplicate per-tool RPC DTOs while still providing a compile-time typed infrastructure boundary.
+Tool arguments remain manifest-defined JSON between Host and Worker, while RPC infrastructure/status/event envelopes are strongly typed. This avoids maintaining 146 duplicate per-tool RPC DTOs while still providing a compile-time typed infrastructure boundary.
 
 ## Progress and event dispatch
 
@@ -96,6 +96,20 @@ The Host pipe reader only parses and routes frames. It records snapshot creation
 
 Background jobs that outlive the original MCP request remain observable through job/status state. Queue length, metadata history, and large result-payload history have separate bounds. Cancellation has an independent drain deadline; if a cancelled ZOS-API job cannot stop within that grace period, the Worker generation is terminated so the Host can start cleanly.
 
+## Cached Job/Task delta diagnostics
+
+`GET /mcp/jobs-delta` returns HMAC cursor-based changes for the already
+cached Host Job state and latest generation-bound progress events. It
+does **not** send a new Worker status RPC or block on COM. Scoped
+bearer credentials receive only their authenticated owned Job IDs
+and safe Task metadata; uncached just-registered Jobs have explicit
+`Unknown` state. Global Worker busy/freshness cannot affect another
+scoped owner's cursor. Launcher polls this endpoint at one-second
+cadence, resets the opaque cursor when either endpoint **or bearer
+credential** changes, and falls back to five-second `/health` for
+older Hosts. Never confuse this cached state with a verified fresh
+ZOS-API numeric or physical observation.
+
 ## Long-running optical tools
 
 Long-running NSC tracing and sequential tolerancing use the same bounded Worker Job lifecycle as optimization. The synchronous implementation owns the ZOS-API tool, polls through `ISystemTool.WaitWithTimeout`, cooperatively cancels and drains on caller cancellation/timeout, and always closes the tool before the next COM operation. Background mode wraps that same implementation in `McpJobManager`; it does not create a second execution path.
@@ -104,7 +118,7 @@ Tolerancing result extraction is structured rather than text-parser-first: the W
 
 ## Client identity and control lease
 
-OpticStudio ownership is independent of MCP transport sessions. In opt-in multi-client authentication mode, the Host authenticates a unique bearer-token digest and uses the server-controlled credential ID as lease identity. Each request reloads credential hashes to allow immediate revocation; a scoped read-only credential exposes only ReadOnly-impact tools in both tools/list and tools/call. This is an authorization boundary, not confidential multi-tenant isolation for Job history or optical files. See [per-client authentication](MULTI_CLIENT_AUTH.md). An owned background Job keeps the control lease alive beyond the normal idle timeout and is bound to the Worker generation that created it; terminal Job state or generation replacement releases the hold. Identity is resolved in this order:
+OpticStudio ownership is independent of MCP transport sessions. In opt-in multi-client authentication mode, the Host authenticates a unique bearer-token digest and uses the server-controlled credential ID as lease identity. Each request reloads credential hashes to allow immediate revocation; a scoped read-only credential exposes only ReadOnly-impact tools in both tools/list and tools/call. This is an authorization boundary, not confidential multi-tenant isolation for Job history or optical files. See [per-client authentication](MULTI_CLIENT_AUTH.md). An owned background Job keeps the control lease alive beyond the normal idle timeout and is bound to the Worker generation that created it; terminal Job state or generation replacement releases the hold. In the P1 development branch, ordinary ReadOnly tools instead use a **serialized, non-owning observation lease**: they may inspect the stateful model without taking or renewing a writer's persistent lease, but they cannot interleave within a single ZOS-API call. A foreign client is still denied an observation while an active background optical Job holds control. This is not a consistent multi-call snapshot or confidential lens multi-tenancy; mutations and long-running Jobs remain owner-exclusive. Identity is resolved in this order:
 
 1. a dedicated authenticated client profile, when provisioned;
 2. request-scoped `io.zemaxmcp/clientInstanceId` metadata;

@@ -61,7 +61,9 @@ if ($releaseWorkflow -notmatch 'test-launcher-materials\.ps1' -or
 }
 Write-Host "Desktop component, release-gate, client identity, project organization, and self-contained Host packaging verification passed."
 if ($launcherXaml -notmatch 'x:Name="OfficialTasks".*IsChecked="True"' -or
-    $launcherCode -notmatch 'OfficialTasksSettings.HostArgument\(OfficialTasks.IsChecked == true\)' -or
+    $launcherCode -notmatch 'HostLaunchPlan.Build\(' -or
+    $launcherCode -notmatch 'OfficialTasks.IsChecked==true' -or
+    (Get-Content -Raw (Join-Path $root 'src\ZemaxMCP.Launcher\HostLaunchPlan.cs')) -notmatch '--enable-official-tasks' -or
     $launcherCode -notmatch 'OfficialTasksSettings.IsEnabled\(settings\["enableOfficialTasks"\]\)' -or
     $launcherCode -notmatch '\["enableOfficialTasks"\] = OfficialTasks.IsChecked == true') {
   throw "Launcher must expose default-on official Tasks, preserve explicit settings, and pass the selected value to Host startup."

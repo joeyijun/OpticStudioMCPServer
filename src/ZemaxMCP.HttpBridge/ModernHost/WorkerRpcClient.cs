@@ -20,6 +20,11 @@ namespace ZemaxMCP.HttpBridge.ModernHost;
 /// </summary>
 internal sealed class WorkerRpcClient : IAsyncDisposable
 {
+    private sealed class WorkerCommandException : InvalidOperationException
+    {
+        internal string Code { get; }
+        internal WorkerCommandException(string code, string message) : base(message) => Code = code;
+    }
     private readonly HostOptions _options;
     private readonly SemaphoreSlim _executionGate = new(1, 1);
     private readonly SemaphoreSlim _writeGate = new(1, 1);
@@ -46,6 +51,9 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     private bool _disposed;
     private Task? _cancelledOperationRecovery;
     private OperationProgress? _lastProgress;
+    private WorkerStatus? _cachedWorkerStatus;
+    private long _cachedWorkerStatusGeneration;
+    private DateTimeOffset? _cachedWorkerStatusAt;
     private string? _lastSnapshotPath;
 
     public WorkerRpcClient(HostOptions options)
@@ -139,8 +147,17 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
                 ReadOnly = _options.ReadOnly,
                 Toolset = _options.Toolset
             };
-            return await SendAsync<CallToolResult>(ZemaxRpcProtocol.InvokeTool, invocation, operationId, cancellationToken,
-                ownsGenerationRecovery: true).ConfigureAwait(false);
+            try
+            {
+                return await SendAsync<CallToolResult>(ZemaxRpcProtocol.InvokeTool, invocation, operationId, cancellationToken,
+                    ownsGenerationRecovery: true).ConfigureAwait(false);
+            }
+            catch (WorkerCommandException ex) when (ex.Code is "invalid_argument" or "not_found")
+            {
+                // These are recoverable, typed tool-domain failures. Do not
+                // swallow protocol, handshake, transport or recovery faults.
+                return ToolOutcome.Failure(ex.Code, ex.Message);
+            }
         }
         finally
         {
@@ -149,13 +166,64 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         }
     }
 
+    /// <summary>Read-only, non-blocking diagnostic status from this Worker generation.</summary>
+    internal IReadOnlyList<WorkerJobStatus> GetObservedJobStatuses()
+    {
+        // Only return events from the CURRENT Worker generation. A restarted
+        // Worker may reuse an operation ID; never mix generations.
+        var generation = CurrentGeneration;
+        if (generation <= 0) return Array.Empty<WorkerJobStatus>();
+        return _eventJobs.Where(pair =>
+                _eventJobGenerations.TryGetValue(pair.Key, out var observedGeneration) &&
+                observedGeneration == generation)
+            .Select(pair => pair.Value)
+            .Take(256).ToArray();
+    }
+
+    public bool TryGetCachedStatus(out WorkerStatus? status)
+    {
+        lock (_connectionGate)
+        {
+            status = _activeGeneration != 0 && _activeGeneration == _cachedWorkerStatusGeneration
+                ? _cachedWorkerStatus : null;
+            return status != null;
+        }
+    }
+
+    /// <summary>
+    /// Validation timestamp of the status belonging to the current Worker
+    /// generation, not a heartbeat for an ongoing COM call.
+    /// </summary>
+    public DateTimeOffset? LastValidatedStatusAt
+    {
+        get
+        {
+            lock (_connectionGate)
+                return _activeGeneration != 0 && _cachedWorkerStatusGeneration == _activeGeneration
+                    ? _cachedWorkerStatusAt : null;
+        }
+    }
+
+    public bool HasForegroundTool => _executionGate.CurrentCount == 0;
+
     public async Task<WorkerStatus> GetStatusAsync(CancellationToken cancellationToken)
     {
         await StartAsync(cancellationToken).ConfigureAwait(false);
+        var requestedGeneration = CurrentGeneration;
         var status = await SendAsync<WorkerStatus>(ZemaxRpcProtocol.GetStatus, new { }, Guid.NewGuid().ToString("N"), cancellationToken).ConfigureAwait(false);
         if (status.RpcVersion != ZemaxRpcProtocol.Version ||
             !string.Equals(status.ManifestFingerprint, StaticToolManifest.ContractFingerprint, StringComparison.Ordinal))
             throw new InvalidDataException("Worker status reported a different RPC/tool contract than the authenticated Host generation.");
+        lock (_connectionGate)
+        {
+            // Never publish a late status from a retired Worker generation.
+            if (requestedGeneration != 0 && _activeGeneration == requestedGeneration)
+            {
+                _cachedWorkerStatus = status;
+                _cachedWorkerStatusGeneration = requestedGeneration;
+                _cachedWorkerStatusAt = DateTimeOffset.UtcNow;
+            }
+        }
         return status;
     }
 
@@ -214,7 +282,8 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
             if (string.Equals(response.Kind, ZemaxRpcProtocol.Error, StringComparison.Ordinal))
             {
                 var error = response.Payload.Deserialize<ZemaxRpcError>(_jsonOptions);
-                throw new InvalidOperationException(error?.Message ?? "Worker command failed.");
+                throw new WorkerCommandException(error?.Code ?? "worker_error",
+                    error?.Message ?? "Worker command failed.");
             }
             return response.Payload.Deserialize<T>(_jsonOptions) ?? throw new InvalidOperationException("Worker returned an empty response.");
         }
@@ -550,6 +619,9 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
             _worker = null;
             _startedAt = null;
             _activeGeneration = 0;
+            _cachedWorkerStatus = null;
+            _cachedWorkerStatusGeneration = 0;
+            _cachedWorkerStatusAt = null;
         }
 
         if (generation != 0)

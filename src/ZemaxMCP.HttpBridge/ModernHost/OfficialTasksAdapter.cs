@@ -26,21 +26,26 @@ internal sealed class OfficialTasksAdapter
     private readonly WorkerTaskLedger _ledger;
     private readonly WorkerRpcClient _worker;
     private readonly JobOwnerRegistry _owners;
+    private readonly OpticStudioControlLease _controlLease;
     private readonly bool _scoped;
     private readonly Func<JsonRpcRequest, string> _getOwner;
+    private readonly Func<RequestContext<CallToolRequestParams>, bool> _isAuthorized;
     private readonly Func<RequestContext<CallToolRequestParams>, CancellationToken, Task<CallToolResult>> _execute;
     private const string ExtensionId = "io.modelcontextprotocol/tasks";
 
     internal OfficialTasksAdapter(
         WorkerTaskLedger ledger, WorkerRpcClient worker, JobOwnerRegistry owners,
-        bool scoped, Func<JsonRpcRequest, string> getOwner,
+        OpticStudioControlLease controlLease, bool scoped, Func<JsonRpcRequest, string> getOwner,
+        Func<RequestContext<CallToolRequestParams>, bool> isAuthorized,
         Func<RequestContext<CallToolRequestParams>, CancellationToken, Task<CallToolResult>> execute)
     {
         _ledger = ledger;
         _worker = worker;
         _owners = owners;
+        _controlLease = controlLease;
         _scoped = scoped;
         _getOwner = getOwner;
+        _isAuthorized = isAuthorized;
         _execute = execute;
     }
 
@@ -77,6 +82,22 @@ internal sealed class OfficialTasksAdapter
         // All old clients, down-level clients and non-eligible tools keep their
         // ordinary tools/call result. Authorization happens inside _execute.
         var eligible = EligibleTools.Contains(request.Params.Name) && IsTaskNegotiated(request.JsonRpcRequest);
+        // A full ledger must not reveal live workload/capacity to a credential
+        // that is not permitted to invoke the tool. Run the ordinary Host
+        // denial before checking shared Task capacity.
+        if (eligible && !_isAuthorized(request))
+            return new ResultOrAlternate<CallToolResult>(
+                await _execute(request, cancellationToken).ConfigureAwait(false));
+        using var admission = eligible ? _ledger.TryReserveAdmission() : null;
+        if (eligible && admission == null)
+            return new ResultOrAlternate<CallToolResult>(new CallToolResult
+            {
+                IsError = true,
+                Content = new List<ContentBlock>
+                {
+                    new TextContentBlock { Text = "Official Tasks are at capacity. No Worker Job was started; retry after an active Task finishes." }
+                }
+            });
         var result = await _execute(request, cancellationToken).ConfigureAwait(false);
         if (!eligible || !Program.TryGetStartedJobId(request.Params.Name, result, out var jobId))
             return new ResultOrAlternate<CallToolResult>(result);
@@ -84,11 +105,21 @@ internal sealed class OfficialTasksAdapter
         var owner = _getOwner(request.JsonRpcRequest);
         var generation = _worker.CurrentGeneration;
         if (!_ledger.TryRegister(owner, jobId, generation, out var snapshot) || snapshot == null)
-            return new ResultOrAlternate<CallToolResult>(result); // full ledger: preserve legacy Job handle
+            return new ResultOrAlternate<CallToolResult>(new CallToolResult
+            {
+                IsError = true,
+                Content = new List<ContentBlock>
+                {
+                    new TextContentBlock
+                    {
+                        Text = "Worker Job " + jobId + " started, but official Task registration failed. Use zemax_job_status with this Job ID; no Task ID was created."
+                    }
+                }
+            });
 
         // A terminal Worker event may have arrived before registration.
         if (_worker.TryGetJobStatus(generation, jobId, out var current) && current != null)
-            _ledger.ObserveJob(generation, current);
+            ObserveJob(generation, current);
 
         return ResultOrAlternate<CallToolResult>.FromAlternate(new CreateTaskResult
         {
@@ -101,6 +132,18 @@ internal sealed class OfficialTasksAdapter
         }, McpTasksJsonContext.Default.CreateTaskResult);
     }
 
+    /// <summary>
+    /// Task polling and Task cancellation can see a terminal Worker result
+    /// before the asynchronous Worker status event. Update the Task ledger
+    /// AND the optical control lease from the same generation-bound evidence.
+    /// In particular, an older cancelled Task must not block the next Job.
+    /// </summary>
+    private void ObserveJob(long generation, WorkerJobStatus job)
+    {
+        _ledger.ObserveJob(generation, job);
+        _controlLease.ObserveJob(generation, job);
+    }
+
     private async ValueTask<JsonNode?> GetAsync(JsonRpcRequest request, CancellationToken cancellationToken)
     {
         RequireTasks(request);
@@ -109,7 +152,21 @@ internal sealed class OfficialTasksAdapter
         var snapshot = GetOwned(owner, taskId);
         if (snapshot.State == "working")
         {
-            await RefreshAsync(owner, snapshot, cancellationToken).ConfigureAwait(false);
+            if (_worker.HasForegroundTool)
+            {
+                // A running COM-bound foreground RPC owns Worker admission.
+                // Querying job_status here would line up behind that RPC and
+                // could stall an otherwise healthy Tasks/get poll for minutes.
+                // Use generation-matched progress already observed by the
+                // Host instead; the next unblocked poll fetches the real result.
+                if (_worker.TryGetJobStatus(snapshot.Generation, snapshot.JobId, out var observed) &&
+                    observed != null)
+                    ObserveJob(snapshot.Generation, observed);
+            }
+            else
+            {
+                await RefreshAsync(owner, snapshot, cancellationToken).ConfigureAwait(false);
+            }
             snapshot = GetOwned(owner, taskId);
         }
 
@@ -186,7 +243,7 @@ internal sealed class OfficialTasksAdapter
                 throw new McpProtocolException("Worker Job cancellation was not acknowledged.", McpErrorCode.InternalError);
 
             if (TryReadStatus(result, jobId, out var state, out _, out _, out _))
-                _ledger.ObserveJob(snapshot.Generation, new WorkerJobStatus { JobId = jobId, State = state });
+                ObserveJob(snapshot.Generation, new WorkerJobStatus { JobId = jobId, State = state });
         }
         return JsonSerializer.SerializeToNode(new CancelTaskResult(), McpTasksJsonContext.Default.CancelTaskResult);
     }
@@ -221,7 +278,7 @@ internal sealed class OfficialTasksAdapter
                 "The Worker Job status or final payload is unavailable or invalid.");
             return;
         }
-        _ledger.ObserveJob(task.Generation, new WorkerJobStatus
+        ObserveJob(task.Generation, new WorkerJobStatus
         {
             JobId = task.JobId, State = state, Message = message
         });

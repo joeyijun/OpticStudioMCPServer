@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Hosting;
+using System.Security.Cryptography.X509Certificates;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -43,7 +45,23 @@ internal static class Program
         try
         {
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = Array.Empty<string>() });
-            builder.WebHost.UseUrls("http://" + options.Host + ":" + options.Port);
+            builder.WebHost.UseUrls(options.TransportScheme + "://" + options.Host + ":" + options.Port);
+            if (options.TlsEnabled)
+            {
+                // Never place a private-key password in CLI arguments or logs.
+                var certificate = X509CertificateLoader.LoadPkcs12FromFile(
+                    options.TlsPfxPath, Environment.GetEnvironmentVariable(options.TlsPasswordEnvironmentVariable),
+                    X509KeyStorageFlags.EphemeralKeySet);
+                if (!certificate.HasPrivateKey)
+                    throw new InvalidOperationException("TLS PFX must contain a private key.");
+                builder.WebHost.ConfigureKestrel(server =>
+                    server.ConfigureHttpsDefaults(https => https.ServerCertificate = certificate));
+            }
+            else if (options.Host is not ("127.0.0.1" or "localhost" or "::1" or "[::1]"))
+            {
+                Log.Warning("LAN HTTP transmits Bearer tokens and optical data without encryption. Prefer TLS with a trusted PKCS#12 certificate.");
+                Console.Error.WriteLine("WARNING: LAN HTTP is unencrypted. Use TLS or a trusted isolated LAN.");
+            }
             builder.WebHost.UseSetting("AllowedHosts", string.Join(";", options.AllowedHosts));
             builder.Host.UseSerilog();
             builder.Services.AddSingleton(options);
@@ -61,6 +79,8 @@ internal static class Program
             builder.Services.AddSingleton(controlLease);
             var activity = new McpActivityMonitor();
             builder.Services.AddSingleton(activity);
+            var jobTaskDelta = new McpJobTaskDeltaMonitor();
+            builder.Services.AddSingleton(jobTaskDelta);
             var mcpBuilder = builder.Services
                 .AddMcpServer(server => server.ServerInfo = new()
                 {
@@ -90,11 +110,20 @@ internal static class Program
             WorkerTaskLedger? taskLedger = null;
             if (options.EnableOfficialTasks)
             {
-                taskLedger = new WorkerTaskLedger();
+                // Reuse journal across Host restarts on this local listener
+                // without merging unrelated ports' owners or Worker histories.
+                // Persist only bounded Task metadata; raw results never hit disk.
+                var journalPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "ZemaxMCP", "task-journals", "listener-" + options.Port + ".json");
+                taskLedger = new WorkerTaskLedger(journalPath: journalPath);
                 workerClient.JobStateChanged += taskLedger.ObserveJob;
                 workerClient.GenerationEnded += taskLedger.ReleaseGeneration;
                 var adapter = new OfficialTasksAdapter(taskLedger, workerClient, jobOwners,
-                    credentialStore != null, ResolveTaskIdentity, HandleToolCallAsync);
+                    controlLease, credentialStore != null, ResolveTaskIdentity,
+                    request => StaticToolManifest.TryGet(request.Params.Name, out var candidate) &&
+                        IsAuthorizedTool(options, request.User, candidate),
+                    HandleToolCallAsync);
                 builder.Services.Configure<ModelContextProtocol.Server.McpServerOptions>(adapter.Configure);
             }
             else
@@ -110,17 +139,8 @@ internal static class Program
                     if (!StaticToolManifest.TryGet(request.Params.Name, out var requestedTool) ||
                         !IsAuthorizedTool(options, request.User, requestedTool))
                     {
-                        return new CallToolResult
-                        {
-                            Content = new List<ContentBlock>
-                            {
-                                new TextContentBlock
-                                {
-                                    Text = "The selected toolset/read-only policy does not permit " + request.Params.Name + "."
-                                }
-                            },
-                            IsError = true
-                        };
+                        return ToolOutcome.Failure("domain_error",
+                            "The selected toolset/read-only policy does not permit " + request.Params.Name + ".");
                     }
 
                     var clientId = ResolveControlIdentity(request);
@@ -172,14 +192,8 @@ internal static class Program
                         var requestedLimit = 50;
                         if (request.Params.Name == "zemax_job_list" &&
                             !JobOwnerRegistry.TryGetRequestedListLimit(request.Params, out requestedLimit))
-                            return new CallToolResult
-                            {
-                                Content = new List<ContentBlock>
-                                {
-                                    new TextContentBlock { Text = "Job list limit must be an integer between 1 and 128." }
-                                },
-                                IsError = true
-                            };
+                            return ToolOutcome.Failure("domain_error",
+                                "Job list limit must be an integer between 1 and 128.");
 
                         var workerRequest = request.Params.Name == "zemax_job_list"
                             ? JobOwnerRegistry.ExpandListRequest(request.Params)
@@ -195,15 +209,13 @@ internal static class Program
                         IDisposable ownership;
                         try
                         {
-                            ownership = await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false);
+                            ownership = string.Equals(requestedTool.Impact, "ReadOnly", StringComparison.Ordinal)
+                                ? await controlLease.AcquireObservationAsync(clientId, cancellationToken).ConfigureAwait(false)
+                                : await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false);
                         }
                         catch (ControlLeaseConflictException ex)
                         {
-                            return new CallToolResult
-                            {
-                                Content = new List<ContentBlock> { new TextContentBlock { Text = ex.Message } },
-                                IsError = true
-                            };
+                            return ToolOutcome.Failure("conflict", ex.Message);
                         }
                         using (ownership)
                         {
@@ -222,11 +234,21 @@ internal static class Program
                         }
                     }
 
+                    // A completed/cancelled Job result is authoritative even
+                    // if its asynchronous state event was delayed or dropped.
+                    // Require the returned ID to match the requested Job;
+                    // ObserveJob additionally validates the Worker generation.
+                    if ((request.Params.Name is "zemax_job_status" or "zemax_job_cancel") &&
+                        JobOwnerRegistry.TryGetJobId(request.Params, out var terminalJobId) &&
+                        JobOwnerRegistry.TryGetTerminalState(result, terminalJobId, out var terminalState))
+                        controlLease.ObserveJob(workerClient.CurrentGeneration,
+                            new WorkerJobStatus { JobId = terminalJobId, State = terminalState });
+
                     if (string.Equals(request.Params.Name, "zemax_disconnect", StringComparison.Ordinal) &&
                         IsSuccessfulDisconnect(result))
                         controlLease.ReleaseOwnership(clientId);
 
-                    return result;
+                    return ToolOutcome.Normalize(result);
             }
 
             var app = builder.Build();
@@ -274,16 +296,18 @@ internal static class Program
                 }
 
                 if (credentialStore != null &&
-                    (string.Equals(context.Request.Path.Value, options.McpPath + "/health", StringComparison.OrdinalIgnoreCase) ||
-                     string.Equals(context.Request.Path.Value, options.McpPath + "/activity", StringComparison.OrdinalIgnoreCase)))
+                    string.Equals(context.Request.Path.Value, options.McpPath + "/activity", StringComparison.OrdinalIgnoreCase))
                 {
-                    // These legacy diagnostic endpoints carry all clients' Jobs,
-                    // progress and lease identities. Never expose their full
-                    // payload in scoped mode; return a safe liveness response.
+                    // Activity remains a liveness-only response in scoped mode.
+                    // /health instead constructs owner-filtered structured
+                    // diagnostics below without revealing foreign jobs or
+                    // global connection paths.
                     context.Response.StatusCode = StatusCodes.Status200OK;
                     await context.Response.WriteAsJsonAsync(new
                     {
                         bridgeRunning = true,
+                        transportSecurity = options.TlsEnabled ? "tls" : "plaintext",
+                        tlsEnabled = options.TlsEnabled,
                         authenticationMode = "scoped",
                         clientId = scopedCredential!.Id,
                         permission = scopedCredential.Permission,
@@ -325,19 +349,158 @@ internal static class Program
                         ? "token:" + profile : ""));
             });
 
+            // Owner-specific opaque activity cursor. Matching cursors avoid
+            // transmitting unchanged activity JSON on high-frequency polls.
+            app.MapGet(options.McpPath + "/activity-delta", (HttpContext httpContext, string? cursor) =>
+            {
+                var profile = httpContext.User.FindFirst("zemax-mcp-auth-profile")?.Value;
+                var scoped = credentialStore != null;
+                var owner = scoped && profile != null &&
+                    profile.StartsWith("scoped:", StringComparison.Ordinal)
+                    ? "token:" + profile : "";
+                return Results.Json(activity.GetDelta(owner, cursor, scoped));
+            });
+
+            // Cached status + coalesced progress events provide fast Job/Task
+            // updates with NO Worker RPC (and therefore no COM lock queue).
+            // Scope is derived solely from authenticated middleware claims.
+            app.MapGet(options.McpPath + "/jobs-delta", (HttpContext httpContext, string? cursor) =>
+            {
+                var profile = httpContext.User.FindFirst("zemax-mcp-auth-profile")?.Value;
+                var scoped = credentialStore != null;
+                var owner = scoped && profile != null &&
+                    profile.StartsWith("scoped:", StringComparison.Ordinal)
+                    ? "token:" + profile : "";
+                if (scoped && owner.Length == 0)
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
+                var generation = workerClient.CurrentGeneration;
+                var statusAvailable = workerClient.TryGetCachedStatus(out var current);
+                var cached = current?.Jobs ?? Array.Empty<WorkerJobStatus>();
+                var observed = workerClient.GetObservedJobStatuses();
+                // Prefer latest coalesced Worker progress for a Job ID; normal
+                // cached Job lists fill missing elapsed/queue information.
+                var merged = McpJobTaskDeltaMonitor.MergeStatuses(cached, observed).ToList();
+                if (scoped)
+                {
+                    // Registration precedes the first Worker Job status/event.
+                    // Include a truthful unknown-state placeholder for own Job
+                    // IDs, never a fabricated state or another client's Job.
+                    var knownIds = merged.Select(job => job.JobId)
+                        .ToHashSet(StringComparer.Ordinal);
+                    foreach (var id in jobOwners.ListOwnedJobIds(owner, generation))
+                        if (knownIds.Add(id))
+                            merged.Add(new WorkerJobStatus {
+                                JobId = id, ToolName = "ZOS-API Job", State = "Unknown",
+                                Message = "Job registered; no cached Worker status yet. Query zemax_job_status for a definitive state."
+                            });
+                }
+                var tasks = scoped && taskLedger != null
+                    ? taskLedger.ListOwnedMetadata(owner, 25) : Array.Empty<object>();
+                var delta = jobTaskDelta.GetDelta(owner, scoped, cursor,
+                    generation, workerClient.HasForegroundTool ||
+                        controlLease.HasActiveBackgroundJobs,
+                    statusAvailable || observed.Count > 0,
+                    merged, tasks,
+                    id => jobOwners.IsOwned(owner, id, generation));
+                return Results.Json(delta);
+            });
+
             app.MapGet(options.McpPath + "/health", async (HttpContext httpContext, CancellationToken cancellationToken) =>
             {
+                // A long STA operation or background Job must never make
+                // Launcher /health queue a second Worker status RPC that may
+                // hang behind COM and interfere with hard-recovery timers.
+                // Use the last contract-validated status from THIS generation;
+                // advertise staleness rather than misrepresenting it as live.
+                var foregroundRpcBusy = worker.HasForegroundTool;
+                var workerBusy = foregroundRpcBusy || controlLease.HasActiveBackgroundJobs;
+                var statusFresh = false;
                 WorkerStatus? status = null;
-                try { status = await worker.GetStatusAsync(cancellationToken).ConfigureAwait(false); }
-                catch (Exception ex) { Log.Warning(ex, "Worker health RPC failed"); }
+                if (workerBusy)
+                    worker.TryGetCachedStatus(out status);
+                else
+                {
+                    try
+                    {
+                        status = await worker.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+                        statusFresh = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning(ex, "Worker health RPC failed; using generation-bound cached status");
+                        worker.TryGetCachedStatus(out status);
+                    }
+                }
+                var validatedAt = status != null ? worker.LastValidatedStatusAt : null;
+                var statusAgeSeconds = validatedAt.HasValue
+                    ? Math.Max(0, (DateTimeOffset.UtcNow - validatedAt.Value).TotalSeconds)
+                    : (double?)null;
                 var profile = httpContext.User.FindFirst("zemax-mcp-auth-profile")?.Value;
+                if (credentialStore != null)
+                {
+                    // Return useful Launcher diagnostics to this credential, not
+                    // the global Worker status, paths, lease owner, or another
+                    // client's jobs/results. Authenticate on every request above.
+                    var scopedOwner = profile != null &&
+                        profile.StartsWith("scoped:", StringComparison.Ordinal)
+                        ? "token:" + profile : "";
+                    var ownedJobs = (status?.Jobs ?? Array.Empty<WorkerJobStatus>())
+                        .Where(job => jobOwners.IsOwned(scopedOwner, job.JobId, worker.CurrentGeneration))
+                        .Select(job => new
+                        {
+                            job.JobId, job.ToolName, job.State, job.Fraction,
+                            job.QueuePosition, job.Message, job.ElapsedSeconds
+                            // Worker status snapshots do not contain results.
+                        }).ToArray();
+                    var ownedTasks = taskLedger?.ListOwnedMetadata(scopedOwner, 25) ?? Array.Empty<object>();
+                    var ownedActivity = activity.GetForClient(scopedOwner);
+                    return Results.Json(new
+                    {
+                        bridgeRunning = true,
+                        transportSecurity = options.TlsEnabled ? "tls" : "plaintext",
+                        tlsEnabled = options.TlsEnabled,
+                        authenticationMode = "scoped",
+                        permission = httpContext.User.FindFirst("zemax-mcp-permission")?.Value,
+                        jobDiagnostics = "authenticated-owner-only",
+                        hostVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown",
+                        mcpServerRunning = worker.CurrentGeneration != 0,
+                        workerBusy,
+                        foregroundRpcBusy,
+                        statusFresh,
+                        statusValidatedAt = validatedAt,
+                        statusAgeSeconds,
+                        lastKnownStatus = status != null,
+                        zosApiLoaded = status?.ZosApiLoaded ?? false,
+                        zosApiConnected = status?.Connected ?? false,
+                        licenseStatus = status?.CurrentLicenseStatus ?? status?.LastLicenseStatus ?? "Not validated",
+                        licenseValidForApi = status?.LicenseValidForApi,
+                        toolset = options.Toolset,
+                        readOnly = options.ReadOnly,
+                        jobs = ownedJobs,
+                        tasks = ownedTasks,
+                        worker = new { workerGeneration = worker.CurrentGeneration, detailsRestricted = true },
+                        controlLease = new { ownershipRestricted = true },
+                        lastClient = ownedActivity.LastClient,
+                        lastTool = ownedActivity.LastTool,
+                        lastRequestAt = ownedActivity.LastRequestAt,
+                        activeRequests = ownedActivity.ActiveRequests
+                    });
+                }
                 var activityHealth = credentialStore == null ? activity.GetHealth()
                     : activity.GetForClient(profile != null && profile.StartsWith("scoped:", StringComparison.Ordinal)
                         ? "token:" + profile : "");
                 return Results.Json(new
                 {
                     bridgeRunning = true,
-                    mcpServerRunning = status != null,
+                    transportSecurity = options.TlsEnabled ? "tls" : "plaintext",
+                    tlsEnabled = options.TlsEnabled,
+                    mcpServerRunning = worker.CurrentGeneration != 0,
+                    workerBusy,
+                    foregroundRpcBusy,
+                    statusFresh,
+                    statusValidatedAt = validatedAt,
+                    statusAgeSeconds,
+                    lastKnownStatus = status != null,
                     hostVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown",
                     workerVersion = status?.WorkerVersion,
                     zosApiAssemblyVersion = status?.ZosApiAssemblyVersion,
@@ -405,7 +568,7 @@ internal static class Program
             app.MapMcp(options.McpPath);
 
             Log.Information("Official MCP ASP.NET Core Host listening at {Endpoint}; private RPC v{RpcVersion}, manifest {ManifestFingerprint}",
-                "http://" + options.Host + ":" + options.Port + options.McpPath,
+                options.TransportScheme + "://" + options.Host + ":" + options.Port + options.McpPath,
                 ZemaxRpcProtocol.Version,
                 StaticToolManifest.ContractFingerprint);
             await app.RunAsync().ConfigureAwait(false);

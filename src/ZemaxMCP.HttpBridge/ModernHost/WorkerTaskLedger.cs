@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ModelContextProtocol.Protocol;
 using ZemaxMCP.Rpc;
 
@@ -19,16 +20,188 @@ internal sealed class WorkerTaskLedger
     private readonly int _maxRecords;
     private readonly int _maxRetainedResults;
     private long _sequence;
+    private int _reservedAdmissions;
+    private readonly string? _journalPath;
+    private DateTimeOffset _lastJournalWrite;
+
+    /// <summary>
+    /// Reserve capacity BEFORE a negotiated Task starts its underlying Worker
+    /// job. A saturated ledger must reject explicitly, not silently switch
+    /// an opted-in Task call to the legacy Job-ID response.
+    /// </summary>
+    internal IDisposable? TryReserveAdmission()
+    {
+        lock (_gate)
+        {
+            var active = _tasks.Values.Count(entry => !IsTerminal(entry.State));
+            if (active + _reservedAdmissions >= _maxRecords) return null;
+            _reservedAdmissions++;
+            return new AdmissionReservation(this);
+        }
+    }
+
+    private sealed class AdmissionReservation : IDisposable
+    {
+        private WorkerTaskLedger? _owner;
+        internal AdmissionReservation(WorkerTaskLedger owner) => _owner = owner;
+        public void Dispose()
+        {
+            var owner = Interlocked.Exchange(ref _owner, null);
+            if (owner == null) return;
+            lock (owner._gate) owner._reservedAdmissions--;
+        }
+    }
 
     internal WorkerTaskLedger(
         int maxRecords = DefaultMaxRecords,
-        int maxRetainedResults = DefaultMaxRetainedResults)
+        int maxRetainedResults = DefaultMaxRetainedResults,
+        string? journalPath = null)
     {
         if (maxRecords < 1) throw new ArgumentOutOfRangeException(nameof(maxRecords));
         if (maxRetainedResults < 0 || maxRetainedResults > maxRecords)
             throw new ArgumentOutOfRangeException(nameof(maxRetainedResults));
         _maxRecords = maxRecords;
         _maxRetainedResults = maxRetainedResults;
+        _journalPath = string.IsNullOrWhiteSpace(journalPath) ? null : journalPath;
+        RestoreJournal();
+    }
+
+    // Local, owner-scoped metadata only. Never persist a raw optical result,
+    // bearer token, ZOS file path or per-task binary payload.
+    private sealed class JournalRecord
+    {
+        public string TaskId { get; set; } = "";
+        public string Owner { get; set; } = "";
+        public string JobId { get; set; } = "";
+        public long Generation { get; set; }
+        public long Sequence { get; set; }
+        public string State { get; set; } = "working";
+        public string Message { get; set; } = "";
+        public bool CancelRequested { get; set; }
+        public bool ResultExpired { get; set; }
+        public DateTimeOffset CreatedAt { get; set; }
+        public DateTimeOffset UpdatedAt { get; set; }
+    }
+
+    private static JournalRecord[] ReadJournal(string path)
+    {
+        var file = new FileInfo(path);
+        if (file.Length > 1024 * 1024)
+            throw new InvalidDataException("Task journal exceeds its one-megabyte safety bound.");
+        return JsonSerializer.Deserialize<JournalRecord[]>(File.ReadAllText(path))
+            ?? throw new InvalidDataException("Task journal cannot be null.");
+    }
+
+    private void RestoreJournal()
+    {
+        if (_journalPath == null) return;
+        var backup = _journalPath + ".bak";
+        if (!File.Exists(_journalPath) && !File.Exists(backup)) return;
+        try
+        {
+            JournalRecord[] saved;
+            var recoveredBackup = false;
+            try
+            {
+                saved = ReadJournal(_journalPath);
+            }
+            catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or InvalidDataException)
+            {
+                Serilog.Log.Warning(ex, "Primary Task journal is unavailable; attempting bounded metadata-only backup");
+                if (!File.Exists(backup)) return;
+                saved = ReadJournal(backup);
+                recoveredBackup = true;
+            }
+            foreach (var record in saved.OrderBy(x => x.Sequence).TakeLast(_maxRecords))
+            {
+                if (record.TaskId.Length is < 1 or > 128 ||
+                    record.JobId.Length is < 1 or > 128 ||
+                    record.Owner.Length is < 1 or > 512 ||
+                    record.Generation <= 0 || record.Sequence <= 0 ||
+                    record.CreatedAt == default || record.UpdatedAt == default ||
+                    _tasks.ContainsKey(record.TaskId) ||
+                    _byJob.ContainsKey((record.Generation, record.JobId)))
+                    continue;
+                var entry = new Entry(record.TaskId, record.Owner, record.JobId,
+                    record.Generation, record.Sequence)
+                {
+                    CreatedAt = record.CreatedAt,
+                    UpdatedAt = DateTimeOffset.UtcNow,
+                    CancelRequested = record.CancelRequested,
+                    // Results are deliberately never stored in the journal.
+                    ResultExpired = record.ResultExpired || record.State == "completed"
+                };
+                if (IsTerminal(record.State))
+                {
+                    entry.State = record.State;
+                    entry.Message = record.Message;
+                }
+                else
+                {
+                    // MCP Task protocol supports failed, not interrupted, as a
+                    // terminal Task state. Preserve the interruption reason.
+                    entry.State = "failed";
+                    entry.Message = "Host restarted; the previous Worker Job was interrupted and cannot resume.";
+                }
+                _tasks.Add(entry.TaskId, entry);
+                _byJob.Add((entry.Generation, entry.JobId), entry.TaskId);
+                _sequence = Math.Max(_sequence, entry.Sequence);
+            }
+            if (recoveredBackup && File.Exists(_journalPath))
+            {
+                // Never let File.Replace rotate the corrupted primary INTO
+                // the good .bak during the first repair write.
+                File.Delete(_journalPath);
+            }
+            PersistLocked(force: true);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Could not restore the bounded, metadata-only Task journal");
+        }
+    }
+
+    // Mutations are serialized under _gate; replace a complete temporary file
+    // atomically. Throttle progress chatter, but always flush lifecycle changes.
+    // Journal failures do not turn successful Worker execution into an error.
+    private void PersistLocked(bool force = false)
+    {
+        if (_journalPath == null) return;
+        if (!force && DateTimeOffset.UtcNow - _lastJournalWrite < TimeSpan.FromSeconds(5)) return;
+        try
+        {
+            var folder = Path.GetDirectoryName(_journalPath)
+                ?? throw new InvalidOperationException("Journal path has no parent directory.");
+            Directory.CreateDirectory(folder);
+            var records = _tasks.Values.OrderBy(x => x.Sequence).Select(x => new JournalRecord
+            {
+                TaskId = x.TaskId, Owner = x.Owner, JobId = x.JobId,
+                Generation = x.Generation, Sequence = x.Sequence,
+                State = x.State,
+                // Diagnostic payloads may contain lens paths or private data;
+                // the persistent journal stores status categories only.
+                Message = x.State switch
+                {
+                    "completed" => "Completed; result not persisted.",
+                    "cancelled" => "Cancelled.",
+                    "failed" => "Failed; inspect live logs for the original reason.",
+                    _ => "Working at previous Host shutdown."
+                },
+                CancelRequested = x.CancelRequested, ResultExpired = x.ResultExpired,
+                CreatedAt = x.CreatedAt, UpdatedAt = x.UpdatedAt
+            }).ToArray();
+            var json = JsonSerializer.Serialize(records);
+            var temp = _journalPath + ".tmp";
+            File.WriteAllText(temp, json);
+            if (File.Exists(_journalPath))
+                File.Replace(temp, _journalPath, _journalPath + ".bak");
+            else File.Move(temp, _journalPath);
+            _lastJournalWrite = DateTimeOffset.UtcNow;
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Failed to persist Task status journal; live memory state remains authoritative");
+        }
     }
 
     /// <summary>
@@ -64,6 +237,7 @@ internal sealed class WorkerTaskLedger
             _tasks.Add(entry.TaskId, entry);
             _byJob.Add((generation, jobId), entry.TaskId);
             snapshot = Snapshot(entry);
+            PersistLocked(force: true);
             return true;
         }
     }
@@ -126,6 +300,7 @@ internal sealed class WorkerTaskLedger
             entry.CancelRequested = true;
             entry.UpdatedAt = DateTimeOffset.UtcNow;
             jobId = entry.JobId;
+            PersistLocked(force: true);
             return true;
         }
     }
@@ -168,6 +343,7 @@ internal sealed class WorkerTaskLedger
                     return;
             }
             entry.UpdatedAt = DateTimeOffset.UtcNow;
+            PersistLocked(force: IsTerminal(entry.State) || entry.WorkerFinished);
         }
     }
 
@@ -188,6 +364,7 @@ internal sealed class WorkerTaskLedger
 
             FinishLocked(entry, "completed", "Completed.", result);
             TrimResultsLocked();
+            PersistLocked(force: true);
             return true;
         }
     }
@@ -205,6 +382,7 @@ internal sealed class WorkerTaskLedger
                 return false;
             FinishLocked(entry, "failed", string.IsNullOrWhiteSpace(reason)
                 ? "The Worker Job result is unavailable or expired." : reason, null);
+            PersistLocked(force: true);
             return true;
         }
     }
@@ -218,9 +396,14 @@ internal sealed class WorkerTaskLedger
         if (generation <= 0) return;
         lock (_gate)
         {
+            var changed = false;
             foreach (var entry in _tasks.Values.Where(entry =>
                          entry.Generation == generation && !IsTerminal(entry.State)))
+            {
                 FinishLocked(entry, "failed", "The Worker generation ended before the Task result was available.", null);
+                changed = true;
+            }
+            if (changed) PersistLocked(force: true);
         }
     }
 
@@ -283,7 +466,7 @@ internal sealed class WorkerTaskLedger
         internal string JobId { get; }
         internal long Generation { get; }
         internal long Sequence { get; }
-        internal DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
+        internal DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
         internal DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
         internal string State { get; set; } = "working";
         internal string Message { get; set; } = "Queued.";

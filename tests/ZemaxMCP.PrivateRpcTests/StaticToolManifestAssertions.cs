@@ -9,8 +9,8 @@ internal static class StaticToolManifestAssertions
     [ModuleInitializer]
     internal static void VerifyStaticToolManifestContract()
     {
-        if (StaticToolManifest.All.Count != 138)
-            throw new InvalidOperationException("Static Host tool manifest must contain all 138 Worker commands.");
+        if (StaticToolManifest.All.Count != 146)
+            throw new InvalidOperationException("Static Host tool manifest must contain all 146 Worker commands.");
         if (StaticToolManifest.ContractFingerprint.Length != 64 ||
             StaticToolManifest.ContractFingerprint.Any(character => !Uri.IsHexDigit(character)))
             throw new InvalidOperationException("Static tool contract fingerprint must be a SHA-256 hex digest.");
@@ -37,11 +37,11 @@ internal static class StaticToolManifestAssertions
 
         var expectedProfileCounts = new Dictionary<string, int>(StringComparer.Ordinal)
         {
-            ["basic-viewing"] = 36,
-            ["sequential-design"] = 81,
-            ["nonsequential-stray-light"] = 25,
-            ["optimization-tolerance"] = 68,
-            ["full-expert"] = 138
+            ["basic-viewing"] = 41,
+            ["sequential-design"] = 87,
+            ["nonsequential-stray-light"] = 31,
+            ["optimization-tolerance"] = 73,
+            ["full-expert"] = 146
         };
         foreach (var pair in expectedProfileCounts)
         {
@@ -63,10 +63,75 @@ internal static class StaticToolManifestAssertions
             !budgetSchema.GetProperty("required").EnumerateArray().Any(x => x.GetString() == "detectorObjects"))
             throw new InvalidOperationException("NSC energy budgeting must require an array of detector IDs.");
 
+        var zrdAudit = StaticToolManifest.GetRequired("zemax_audit_native_zrd");
+        if (zrdAudit.DomainId != "non-sequential" || zrdAudit.Impact != "HighImpact" ||
+            !StaticToolManifest.IsAllowed("nonsequential-stray-light", zrdAudit.Name, false) ||
+            StaticToolManifest.IsAllowed("nonsequential-stray-light", zrdAudit.Name, true) ||
+            StaticToolManifest.IsAllowed("basic-viewing", zrdAudit.Name, false) ||
+            !zrdAudit.InputSchema.GetProperty("properties").TryGetProperty("zrdPath",out _))
+            throw new InvalidOperationException($"Local ZRD file ingest requires explicit path and HighImpact file-access permission; domain={zrdAudit.DomainId}, impact={zrdAudit.Impact}, nscEnabled={StaticToolManifest.IsAllowed("nonsequential-stray-light", zrdAudit.Name, false)}, readOnlyEnabled={StaticToolManifest.IsAllowed("nonsequential-stray-light", zrdAudit.Name, true)}, basicEnabled={StaticToolManifest.IsAllowed("basic-viewing", zrdAudit.Name, false)}, hasPath={zrdAudit.InputSchema.GetProperty("properties").TryGetProperty("zrdPath",out _)}.");
+
+        var csvExport = StaticToolManifest.GetRequired("zemax_export_nsc_detector_csv");
+        var csvExportProperties = csvExport.InputSchema.GetProperty("properties");
+        if (csvExport.DomainId != "files" || csvExport.Impact != "HighImpact" ||
+            !StaticToolManifest.IsAllowed("nonsequential-stray-light",csvExport.Name,false) ||
+            StaticToolManifest.IsAllowed("nonsequential-stray-light",csvExport.Name,true) ||
+            StaticToolManifest.IsAllowed("basic-viewing",csvExport.Name,false) ||
+            !csvExportProperties.TryGetProperty("csvPath",out _) ||
+            !csvExportProperties.TryGetProperty("rowCount",out _) ||
+            !csvExportProperties.TryGetProperty("columnCount",out _) ||
+            !csvExportProperties.TryGetProperty("overwrite",out _))
+            throw new InvalidOperationException("Filesystem-writing NSC CSV export must be privileged and explicitly bounded.");
+
         var detectorSchema = StaticToolManifest.GetRequired("zemax_get_nsc_detector").InputSchema.GetProperty("properties");
-        foreach (var field in new[] { "includePixels", "dataType", "startRow", "startColumn", "rowCount", "columnCount" })
+        foreach (var field in new[] { "includePixels", "dataType", "startRow", "startColumn", "rowCount", "columnCount", "calibratedColumnXSign", "calibratedRowYSign" })
             if (!detectorSchema.TryGetProperty(field, out _))
                 throw new InvalidOperationException("Detector ROI tool is missing the published field " + field);
+
+        var coating = StaticToolManifest.GetRequired("zemax_coating_rta");
+        var coatingFields = coating.InputSchema.GetProperty("properties");
+        if (coating.DomainId != "analysis" || coating.Impact != "ReadOnly" ||
+            !StaticToolManifest.IsAllowed("sequential-design",coating.Name,true) ||
+            StaticToolManifest.IsAllowed("nonsequential-stray-light",coating.Name,false) ||
+            !coatingFields.TryGetProperty("surfaces",out _) ||
+            !coatingFields.TryGetProperty("anglesDegrees",out _) ||
+            !coatingFields.TryGetProperty("wavelengths",out _) ||
+            !coatingFields.TryGetProperty("direction",out _))
+            throw new InvalidOperationException("Native coating RTA must be a bounded read-only sequential analysis.");
+
+        var footprintInputs = StaticToolManifest.GetRequired("zemax_ray_footprint").InputSchema.GetProperty("properties");
+        if (!footprintInputs.TryGetProperty("cadOpaqueMeshTriangles",out _) ||
+            !footprintInputs.TryGetProperty("cadOpaqueMeshPartIds",out _) ||
+            !footprintInputs.TryGetProperty("cadStopGlobalPolygons",out _) ||
+            !footprintInputs.TryGetProperty("cadStopAfterSurfaces",out _) ||
+            !footprintInputs.TryGetProperty("globalMechanicalMode",out _) ||
+            !footprintInputs.TryGetProperty("mechanicalGlobalPolygon",out _) ||
+            !footprintInputs.TryGetProperty("mechanicalPlaneTolerance",out _) ||
+            !footprintInputs.TryGetProperty("includeGlobalCoordinates",out _) ||
+            !footprintInputs.TryGetProperty("mechanicalRectangle", out _) ||
+            !footprintInputs.TryGetProperty("mechanicalPolygon", out _) ||
+            !footprintInputs.TryGetProperty("mechanicalSurface", out _))
+            throw new InvalidOperationException("Footprint tool must advertise explicit local mechanical boundary controls.");
+        var traceArguments=StaticToolManifest.GetRequired("zemax_run_nsc_ray_trace").InputSchema.GetProperty("properties");
+        if(!traceArguments.TryGetProperty("snapshotDetectorObjects",out _) ||
+           !traceArguments.TryGetProperty("declaredLaunchedFlux",out _) ||
+           !traceArguments.TryGetProperty("includeConfiguredSourcePower",out _))
+            throw new InvalidOperationException("NSC trace must expose explicitly scoped post-trace detector evidence.");
+
+        var detectorInputs = StaticToolManifest.GetRequired("zemax_get_nsc_detector").InputSchema.GetProperty("properties");
+        if (!detectorInputs.TryGetProperty("includeTilePlan", out _) ||
+            !detectorInputs.TryGetProperty("tilePlanPage", out _) ||
+            !detectorInputs.TryGetProperty("heatmapBins", out _))
+            throw new InvalidOperationException("Detector tool must advertise paged native tile/mean-map controls.");
+        if (!StaticToolManifest.GetRequired("zemax_system_summary").InputSchema.GetProperty("properties").TryGetProperty("baselineSummaryJson", out _))
+            throw new InvalidOperationException("System summary must expose bounded prior-design comparison.");
+
+        var energyInputs=StaticToolManifest.GetRequired("zemax_energy_budget").InputSchema.GetProperty("properties");
+        if (!energyInputs.TryGetProperty("relativeSourceSpectralWeights", out _) ||
+            !energyInputs.TryGetProperty("relativeDetectorSpectralResponse",out _))
+            throw new InvalidOperationException("Sequential energy budgets need separately supplied source and detector spectral inputs.");
+        if (!StaticToolManifest.GetRequired("zemax_energy_budget").InputSchema.GetProperty("properties").TryGetProperty("startSurface", out _))
+            throw new InvalidOperationException("Sequential energy budgeting must advertise bounded startSurface for segmented LDEs.");
 
         foreach (var pair in new[] {
             (Name: "zemax_energy_budget", Domain: "analysis",
@@ -82,6 +147,55 @@ internal static class StaticToolManifestAssertions
                 !entry.InputSchema.GetProperty("properties").TryGetProperty(pair.RequiredField, out _))
                 throw new InvalidOperationException("Engineering analysis tool schema/permission contract regressed: " + pair.Name);
         }
+
+        var clipping = StaticToolManifest.GetRequired("zemax_diagnose_clipping");
+        if (clipping.DomainId != "analysis" || clipping.Impact != "ReadOnly" ||
+            !StaticToolManifest.IsAllowed("basic-viewing", clipping.Name, readOnly: true) ||
+            !StaticToolManifest.IsAllowed("sequential-design", clipping.Name, readOnly: true) ||
+            !StaticToolManifest.IsAllowed("optimization-tolerance", clipping.Name, readOnly: true) ||
+            StaticToolManifest.IsAllowed("nonsequential-stray-light", clipping.Name, readOnly: false))
+            throw new InvalidOperationException("One-call clipping diagnosis must preserve ReadOnly semantics and sequential-only profile exposure.");
+        var clippingSchema = clipping.InputSchema.GetProperty("properties");
+        foreach (var field in new[] { "surfaces", "hx", "hy", "wavelength", "gridSize", "maxPointsPerSurface" })
+            if (!clippingSchema.TryGetProperty(field, out _))
+                throw new InvalidOperationException("Clipping diagnosis is missing bounded sampling input: " + field);
+
+        var summary = StaticToolManifest.GetRequired("zemax_system_summary");
+        if (summary.DomainId != "system" || summary.Impact != "ReadOnly" ||
+            !StaticToolManifest.IsAllowed("basic-viewing", summary.Name, readOnly: true) ||
+            !StaticToolManifest.IsAllowed("sequential-design", summary.Name, readOnly: true) ||
+            !StaticToolManifest.IsAllowed("nonsequential-stray-light", summary.Name, readOnly: true) ||
+            !StaticToolManifest.IsAllowed("optimization-tolerance", summary.Name, readOnly: true))
+            throw new InvalidOperationException("Bounded system summary must be read-only and present in every optical profile.");
+        var summaryProperties = summary.InputSchema.GetProperty("properties");
+        foreach (var pair in new[] { ("maxSurfaces", 12), ("maxFields", 8), ("maxWavelengths", 8) })
+            if (!summaryProperties.TryGetProperty(pair.Item1, out var setting) ||
+                setting.GetProperty("default").GetInt32() != pair.Item2)
+                throw new InvalidOperationException("Bounded model summary lost its required safe default: " + pair.Item1);
+
+        foreach (var aiName in new[] { "zemax_validate_model","zemax_explain_result" })
+        {
+            var ai = StaticToolManifest.GetRequired(aiName);
+            if (ai.DomainId != "system" || ai.Impact != "ReadOnly" ||
+                !StaticToolManifest.IsAllowed("basic-viewing",aiName,true) ||
+                !StaticToolManifest.IsAllowed("nonsequential-stray-light",aiName,true) ||
+                !StaticToolManifest.IsAllowed("optimization-tolerance",aiName,true))
+                throw new InvalidOperationException("AI explain/validation tools must remain read-only in all profiles.");
+        }
+        if (!StaticToolManifest.GetRequired("zemax_explain_result").InputSchema.GetProperty("properties").TryGetProperty("resultJson",out _))
+            throw new InvalidOperationException("AI explanation must require an explicit user-provided result payload.");
+        if (!StaticToolManifest.GetRequired("zemax_validate_model").InputSchema.GetProperty("properties").TryGetProperty("purpose",out _))
+            throw new InvalidOperationException("AI preflight must expose purpose-specific checks.");
+
+        var aiPlanner = StaticToolManifest.GetRequired("zemax_task_plan");
+        if (aiPlanner.DomainId != "system" || aiPlanner.Impact != "ReadOnly" ||
+            !StaticToolManifest.IsAllowed("basic-viewing", aiPlanner.Name, readOnly: true) ||
+            !StaticToolManifest.IsAllowed("nonsequential-stray-light", aiPlanner.Name, readOnly: true) ||
+            !StaticToolManifest.IsAllowed("optimization-tolerance", aiPlanner.Name, readOnly: true))
+            throw new InvalidOperationException("Engineering task planner must remain read-only and discoverable in all focused profiles.");
+        if (!aiPlanner.InputSchema.GetProperty("required").EnumerateArray()
+            .Any(field => field.GetString() == "task"))
+            throw new InvalidOperationException("Engineering task planner must require an explicit task intent.");
 
         var snapshotList = StaticToolManifest.GetRequired("zemax_snapshot_list").InputSchema.GetProperty("properties");
         if (snapshotList.GetProperty("limit").GetProperty("default").GetInt32() != 25)

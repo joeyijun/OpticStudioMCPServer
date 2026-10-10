@@ -27,15 +27,22 @@ public partial class MainWindow : Window
     private bool _clientSetupPrompted;
     private bool _refreshingStatus;
     private bool _refreshingActivity;
+    private bool _refreshingJobsDelta;
+    private bool _jobsDeltaSupported = true;
+    private readonly ScopedDeltaCursor _jobsDelta = new ScopedDeltaCursor();
+    private DateTimeOffset _jobsDeltaRetryAfter;
     private bool _healthReachable;
     private bool _activityEndpointSupported = true;
+    private bool _activityDeltaSupported = true;
+    private readonly ScopedDeltaCursor _activityDelta = new ScopedDeltaCursor();
     private DateTimeOffset _activityEndpointRetryAfter;
-    private string _observedActivityEndpoint = "";
     private bool _windowLoaded;
     private bool _settingsLoadFailed;
     private string _localAccessToken = "";
     private string _remoteEndpoint = "";
     private string _remoteAccessToken = "";
+    private bool LocalTlsEnabled => EnableTls.IsChecked == true;
+    private string LocalTlsPfxPath => TlsPfxPath.Text.Trim();
     private string _fullDiagnostics = "Status has not been checked yet.";
     private readonly Forms.NotifyIcon _trayIcon;
     private readonly DispatcherTimer _statusTimer;
@@ -43,6 +50,9 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        // WPF ItemsSource observes a real view-model property rather than a
+        // manually assigned ListBox collection on every Job status refresh.
+        TasksPageJobs.DataContext=_taskCenter;
         SourceInitialized += (_, _) => ApplyMaterial();
         SystemEvents.UserPreferenceChanged += AppearancePreferenceChanged;
         SystemEvents.SessionSwitch += AppearanceSessionChanged;
@@ -75,7 +85,11 @@ public partial class MainWindow : Window
         _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _statusTimer.Tick += async (_, _) => await RefreshStatusAsync();
         _activityTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _activityTimer.Tick += async (_, _) => await RefreshActivityAsync();
+        _activityTimer.Tick += async (_, _) =>
+        {
+            await RefreshActivityAsync();
+            await RefreshJobsDeltaAsync();
+        };
     }
 
     private static System.Drawing.Icon GetApplicationIcon()
@@ -116,7 +130,7 @@ public partial class MainWindow : Window
             : hasRemoteEndpoint
             ? "Using the saved remote MCP endpoint. Local service startup is skipped."
             : installs.Count == 0
-            ? "No local OpticStudio found. Paste secure setup from the OpticStudio computer, then select Test MCP and Configure clients."
+            ? "No local OpticStudio found. Paste secure setup from the OpticStudio computer, then select Check connection and Configure clients."
             : "Starting local MCP endpoint automatically…");
         RefreshEndpoint();
         _windowLoaded = true;
@@ -208,13 +222,38 @@ public partial class MainWindow : Window
     private string HostName => ShareOnLan.IsChecked == true ? "0.0.0.0" : "127.0.0.1";
     private void RefreshEndpoint() => Endpoint.Text = Url;
     private ZemaxInstallation? Installation => ZemaxVersions.SelectedItem as ZemaxInstallation;
-    private string Url => "http://" + (ShareOnLan.IsChecked == true ? GetLanAddress() : "127.0.0.1") + ":" + Port.Text + "/mcp";
+    private string Url => (LocalTlsEnabled ? "https://" : "http://") +
+        (ShareOnLan.IsChecked == true ? GetLanAddress() : "127.0.0.1") + ":" + Port.Text + "/mcp";
     private bool IsRemoteEndpointConfigured => Uri.TryCreate(_remoteEndpoint, UriKind.Absolute, out var remote) &&
         (remote.Scheme == Uri.UriSchemeHttp || remote.Scheme == Uri.UriSchemeHttps) && !string.IsNullOrWhiteSpace(_remoteAccessToken);
     private string McpUrl => Uri.TryCreate(_remoteEndpoint, UriKind.Absolute, out var remote) &&
         (remote.Scheme == Uri.UriSchemeHttp || remote.Scheme == Uri.UriSchemeHttps) ? remote.ToString().TrimEnd('/') : Url;
     private string McpToken => IsRemoteEndpointConfigured ? _remoteAccessToken : _localAccessToken;
     private string SelectedToolsetProfile => (ToolsetProfile.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag?.ToString() ?? "full-expert";
+
+    private void BrowseTlsPfx_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Filter = "PKCS#12 certificates (*.pfx)|*.pfx|All files (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+        if (dialog.ShowDialog(this) == true)
+        {
+            TlsPfxPath.Text = dialog.FileName;
+            SaveSettings();
+        }
+    }
+
+    private void TlsSettings_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_windowLoaded) return;
+        RefreshEndpoint();
+        SaveSettings();
+        Report("TLS preferences saved. Stop/Start only when no optical Job is active. " +
+               "Remote clients must trust the certificate and verify its endpoint name.");
+    }
 
     private void ShareOnLan_Changed(object sender, RoutedEventArgs e)
     {
@@ -287,6 +326,12 @@ public partial class MainWindow : Window
             Report("Port must be a number from 1 to 65535.");
             return;
         }
+        if (LocalTlsEnabled && (!File.Exists(LocalTlsPfxPath) ||
+                                string.IsNullOrWhiteSpace(TlsPfxPassword.Password)))
+        {
+            Report("TLS startup requires an existing PFX file and password in Settings.");
+            return;
+        }
         StopBridge();
         if (!automaticRestart) _bridgeRestartAttempts = 0;
         SaveSettings();
@@ -304,13 +349,10 @@ public partial class MainWindow : Window
         try
         {
             var snapshots = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZemaxMCP", "snapshots");
-            var networkAllowlist = ShareOnLan.IsChecked == true
-                ? $" --allowed-host {GetLanAddress()} --allowed-origin http://{GetLanAddress()}:*"
-                : string.Empty;
-            var startInfo = new ProcessStartInfo(bridge,
-                $"--server \"{server}\" --zemax-root \"{Installation.Root}\" --host {HostName} --port {port} --read-only {(ReadOnlyMode.IsChecked == true ? "true" : "false")} --toolset {SelectedToolsetProfile} --snapshot-dir \"{snapshots}\" " + OfficialTasksSettings.HostArgument(OfficialTasks.IsChecked == true) + networkAllowlist)
-            { UseShellExecute = false, CreateNoWindow = true };
-            startInfo.EnvironmentVariables["ZEMAX_MCP_TOKEN"] = _localAccessToken;
+            var startInfo=HostLaunchPlan.Build(bridge,server,Installation.Root,HostName,
+                port,ReadOnlyMode.IsChecked==true,SelectedToolsetProfile,snapshots,
+                OfficialTasks.IsChecked==true,ShareOnLan.IsChecked==true,GetLanAddress(),
+                LocalTlsEnabled,LocalTlsPfxPath,_localAccessToken,TlsPfxPassword.Password);
             process = Process.Start(startInfo);
         }
         catch (Exception ex)
@@ -354,19 +396,37 @@ public partial class MainWindow : Window
     {
         if (_refreshingActivity || !_healthReachable) return;
         var endpoint = McpUrl;
-        if (!string.Equals(endpoint, _observedActivityEndpoint, StringComparison.OrdinalIgnoreCase))
+        var accessToken = McpToken; // WPF PasswordBox must remain on Dispatcher thread.
+        if (_activityDelta.Bind(endpoint,accessToken))
         {
-            _observedActivityEndpoint = endpoint;
             _activityEndpointSupported = true;
+            _activityDeltaSupported = true;
         }
         if (!_activityEndpointSupported && DateTimeOffset.UtcNow < _activityEndpointRetryAfter) return;
         _refreshingActivity = true;
-        var accessToken = McpToken;
         try
         {
-            var activity = await Task.Run(() => GetEndpointJson(endpoint, accessToken, "/activity", 2000));
+            JObject activity;
+            if (_activityDeltaSupported)
+            {
+                try
+                {
+                    var delta = await Task.Run(() => GetEndpointJson(endpoint, accessToken,
+                        _activityDelta.UrlSuffix("/activity-delta"), 2000));
+                    if (!_activityDelta.Matches(McpUrl,McpToken)) return; // Token changed during request.
+                    _activityDelta.Update(delta["cursor"]?.ToString() ?? "");
+                    if (delta["changed"]?.Value<bool>() != true) return;
+                    activity = delta["activity"] as JObject ?? new JObject();
+                }
+                catch (WebException ex) when ((ex.Response as HttpWebResponse)?.StatusCode == HttpStatusCode.NotFound)
+                {
+                    _activityDeltaSupported = false;
+                    activity = await Task.Run(() => GetEndpointJson(endpoint, accessToken, "/activity", 2000));
+                }
+            }
+            else activity = await Task.Run(() => GetEndpointJson(endpoint, accessToken, "/activity", 2000));
             _activityEndpointSupported = true;
-            if (_healthReachable && string.Equals(endpoint, McpUrl, StringComparison.OrdinalIgnoreCase))
+            if (_healthReachable && _activityDelta.Matches(McpUrl,McpToken))
                 RefreshClientDashboard(activity, refreshSetup: false);
         }
         catch (WebException ex) when ((ex.Response as HttpWebResponse)?.StatusCode == HttpStatusCode.NotFound)
@@ -378,122 +438,68 @@ public partial class MainWindow : Window
         catch (Exception) { /* The next full health check owns offline state. */ }
         finally { _refreshingActivity = false; }
     }
-    private sealed class BackgroundJobView
+    private async Task RefreshJobsDeltaAsync()
     {
-        public string JobId { get; set; } = "";
-        public string TaskId { get; set; } = "";
-        public bool IsOfficialTask => TaskId.Length > 0;
-        public string State { get; set; } = "";
-        public string DisplayText { get; set; } = "";
-        public string ToolName { get; set; } = "";
-        public string Message { get; set; } = "";
-        public string Owner { get; set; } = "Not individually reported";
-        public string WorkerGeneration { get; set; } = "Not reported";
-        public string Elapsed { get; set; } = "Not reported";
-        public string Queue { get; set; } = "";
-        public string Progress { get; set; } = "";
-        public double? ProgressFraction { get; set; }
-        public bool IsProgressIndeterminate => IsActive &&
-            (!ProgressFraction.HasValue || ProgressFraction.Value <= 0 || ProgressFraction.Value >= 1);
-        public string ProgressHint => IsProgressIndeterminate
-            ? (State.Equals("Queued", StringComparison.OrdinalIgnoreCase) ? "Queued" : "In progress") +
-                " · elapsed " + Elapsed + " · no intermediate estimate reported"
-            : ProgressFraction.HasValue ? Math.Round(ProgressFraction.Value * 100) + "% reported · elapsed " + Elapsed
-            : "No numeric progress reported.";
-        public string SelectionKey => IsOfficialTask ? "task:" + TaskId : "job:" + JobId;
-        public string ActivitySubtitle => (IsOfficialTask ? "MCP Task" : "Worker Job") + " · " + Elapsed +
-            (string.IsNullOrWhiteSpace(Progress) ? "" : Progress);
-        public bool IsActive => State.Equals("Queued", StringComparison.OrdinalIgnoreCase) ||
-            State.Equals("Running", StringComparison.OrdinalIgnoreCase) ||
-            State.Equals("Working", StringComparison.OrdinalIgnoreCase) ||
-            State.Equals("Cancelling", StringComparison.OrdinalIgnoreCase);
+        if (!_healthReachable || _refreshingJobsDelta || _refreshingStatus) return;
+        var endpoint=McpUrl;
+        var token=McpToken; // PasswordBox must be read ONLY on the WPF thread.
+        if(_jobsDelta.Bind(endpoint,token))
+            _jobsDeltaSupported=true;
+        if (!_jobsDeltaSupported && DateTimeOffset.UtcNow<_jobsDeltaRetryAfter) return;
+        _refreshingJobsDelta=true;
+        try
+        {
+            JObject response;
+            try
+            {
+                response=await Task.Run(()=>GetEndpointJson(endpoint,token,
+                    _jobsDelta.UrlSuffix("/jobs-delta"),2500));
+            }
+            catch(WebException error) when((error.Response as HttpWebResponse)?.StatusCode==HttpStatusCode.NotFound)
+            {
+                // Back-level Hosts keep the 5-second full /health polling path.
+                _jobsDeltaSupported=false;
+                _jobsDeltaRetryAfter=DateTimeOffset.UtcNow.AddMinutes(1);
+                return;
+            }
+            if(!_jobsDelta.Matches(McpUrl,McpToken)) return; // No stale cross-credential update.
+            _jobsDelta.Update(response["cursor"]?.ToString() ?? "");
+            _jobsDeltaSupported=true;
+            if(response["changed"]?.Value<bool>()!=true) return;
+            var snapshot=response["snapshot"] as JObject ??
+                throw new InvalidDataException("Changed Jobs delta must include a snapshot.");
+            var worker=new JObject { ["workerGeneration"]=snapshot["workerGeneration"]?.DeepClone() };
+            var presentationHealth=new JObject {
+                ["tasks"]=snapshot["tasks"]?.DeepClone() ?? new JArray(),
+                ["worker"]=worker,
+                ["clientIsolation"]=snapshot["ownerScoped"]?.Value<bool>()==true ? "scoped" : "shared/local"
+            };
+            RefreshTaskCenter(snapshot["jobs"] as JArray,presentationHealth);
+        }
+        catch(WebException)
+        {
+            // The 5-second full health path owns connection/offline warnings.
+        }
+        catch(Exception)
+        {
+            _jobsDelta.ForceFullRefresh(); // Re-fetch a complete owner-scoped snapshot.
+        }
+        finally { _refreshingJobsDelta=false; }
     }
 
-    private List<BackgroundJobView> _taskHistory = new List<BackgroundJobView>();
+    private readonly TaskCenterViewModel _taskCenter=new TaskCenterViewModel();
 
     private void RefreshTaskCenter(JArray? jobs, JObject? health = null)
     {
-        _taskHistory = BuildTaskHistory(jobs, health);
+        _taskCenter.Update(jobs, health);
         RefreshTasksPage();
-        var active = _taskHistory.Count(item => item.IsActive);
-        TaskCenterSummary.Text = _taskHistory.Count == 0
-            ? "No background tasks reported."
-            : active + " active · " + (_taskHistory.Count - active) + " recent";
+        TaskCenterSummary.Text = _taskCenter.Summary;
     }
 
-    private static List<BackgroundJobView> BuildTaskHistory(JArray? jobs, JObject? health)
-    {
-        var items = (jobs ?? new JArray()).OfType<JObject>()
-            .Where(job => !string.IsNullOrWhiteSpace(job["jobId"]?.ToString()))
-            .Take(25)
-            .Select(job =>
-            {
-                var id = job["jobId"]!.ToString();
-                var state = job["state"]?.ToString() ?? "Unknown";
-                var tool = job["toolName"]?.ToString() ?? job["tool"]?.ToString() ?? "ZOS-API Job";
-                var progress = job["fraction"]?.Value<double?>() ?? job["progress"]?.Value<double?>();
-                var active = new BackgroundJobView { State = state }.IsActive;
-                var pct = progress.HasValue && !double.IsNaN(progress.Value) &&
-                    !double.IsInfinity(progress.Value) && progress.Value >= 0 && progress.Value <= 1 &&
-                    (!active || (progress.Value > 0 && progress.Value < 1))
-                    ? " · " + Math.Round(progress.Value * 100) + "%" : "";
-                var queue = job["queuePosition"]?.Value<int?>() is { } position && position > 0
-                    ? " · queue " + position : "";
-                return new BackgroundJobView
-                {
-                    JobId = id,
-                    ToolName = tool,
-                    Message = job["message"]?.ToString() ?? "No Worker message.",
-                    Owner = job["owner"]?.ToString() ??
-                        (health?["clientIsolation"]?.ToString().Contains("scoped") == true ? "Authenticated credential (owner-filtered)" :
-                         (health?["controlLease"]?["owner"] == null ? "Not individually reported" :
-                            "current control lease: " + health["controlLease"]?["owner"]?.ToString() +
-                            " (may differ from Job creator)")),
-                    WorkerGeneration = health?["worker"]?["workerGeneration"]?.ToString() ?? "Not reported",
-                    Elapsed = job["elapsedSeconds"]?.Value<double?>() is double seconds &&
-                        !double.IsNaN(seconds) && !double.IsInfinity(seconds) && seconds >= 0
-                        ? seconds.ToString("F0") + "s" : job["elapsed"]?.ToString() ?? "Not reported",
-                    Queue = queue,
-                    Progress = pct,
-                    ProgressFraction = progress.HasValue && !double.IsNaN(progress.Value) &&
-                        !double.IsInfinity(progress.Value) && progress.Value >= 0 && progress.Value <= 1
-                        ? progress : null,
-                    State = state,
-                    DisplayText = tool + " · " + state + pct + queue + " · " + id.Substring(0, Math.Min(id.Length, 8))
-                };
-            }).ToList();
-
-        if (health?["tasks"] is JArray ownerTasks)
-        {
-            foreach (var record in ownerTasks.OfType<JObject>().Take(25))
-            {
-                var taskId = record["taskId"]?.ToString() ?? "";
-                if (taskId.Length == 0) continue;
-                var linkedJobId = record["jobId"]?.ToString() ?? "";
-                var state = record["state"]?.ToString() ?? "working";
-                var started = DateTimeOffset.TryParse(record["createdAt"]?.ToString(), out var born)
-                    ? born : DateTimeOffset.UtcNow;
-                var completedAt = DateTimeOffset.TryParse(record["updatedAt"]?.ToString(), out var updated)
-                    ? updated : DateTimeOffset.UtcNow;
-                var elapsed = ((state == "working" ? DateTimeOffset.UtcNow : completedAt) - started).TotalSeconds;
-                items.Add(new BackgroundJobView
-                {
-                    TaskId = taskId,
-                    JobId = linkedJobId,
-                    State = state,
-                    ToolName = "Official MCP Task",
-                    Owner = "This authenticated credential",
-                    WorkerGeneration = record["generation"]?.ToString() ?? "Not reported",
-                    Elapsed = Math.Max(0, elapsed).ToString("F0") + "s",
-                    Message = (record["message"]?.ToString() ?? "") +
-                        (record["cancelRequested"]?.Value<bool>() == true ? " · cancellation requested" : "") +
-                        (record["resultExpired"]?.Value<bool>() == true ? " · result expired" : ""),
-                    DisplayText = "MCP Task · " + state + " · " + taskId.Substring(0, Math.Min(8, taskId.Length))
-                });
-            }
-        }
-        return items;
-    }
+    // Preserve existing reflection smoke tests while the presentation logic
+    // moves out of the WPF window into a separately testable projection.
+    private static List<BackgroundJobView> BuildTaskHistory(JArray? jobs, JObject? health) =>
+        TaskPresentation.Build(jobs, health);
 
     private async Task RequestCancellationAsync(BackgroundJobView selection)
     {
@@ -523,22 +529,15 @@ public partial class MainWindow : Window
 
     private void RefreshTasksPage()
     {
-        if (TasksPageJobs == null) return;
-        var selected = (TasksPageJobs.SelectedItem as BackgroundJobView)?.SelectionKey;
-        var state = (TasksPageFilter?.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() ?? "All";
-        var visible = _taskHistory.Where(item => state == "All" ||
-            (state == "Running" && (item.State.Equals("Working", StringComparison.OrdinalIgnoreCase) ||
-                item.State.Equals("Cancelling", StringComparison.OrdinalIgnoreCase))) ||
-            string.Equals(item.State, state, StringComparison.OrdinalIgnoreCase)).ToList();
-        TasksPageJobs.ItemsSource = visible;
-        TasksPageJobs.SelectedItem = visible.FirstOrDefault(item => item.SelectionKey == selected) ??
-            visible.FirstOrDefault(item => item.IsActive) ?? visible.FirstOrDefault();
-        var active = _taskHistory.Count(item => item.IsActive);
-        TasksPageSummary.Text = _taskHistory.Count == 0 ? "Background activity from your AI clients." :
-            active + " active · " + (_taskHistory.Count - active) + " recent";
-        TasksPageEmpty.Visibility = visible.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        TasksPageEmpty.Text = _taskHistory.Count == 0 ?
-            "No recent tasks. Start a background operation from your AI client." : "No tasks match this filter.";
+        if(TasksPageJobs==null)return;
+        var selected=(TasksPageJobs.SelectedItem as BackgroundJobView)?.SelectionKey;
+        var state=(TasksPageFilter?.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() ?? "All";
+        var search=TasksPageSearch?.Text ?? "";
+        var visible=_taskCenter.UpdateVisible(state,search);
+        TasksPageJobs.SelectedItem=TaskCenterViewModel.Select(visible,selected);
+        TasksPageSummary.Text=_taskCenter.PageSummary;
+        TasksPageEmpty.Visibility=visible.Count==0?Visibility.Visible:Visibility.Collapsed;
+        TasksPageEmpty.Text=_taskCenter.EmptyMessage(visible.Count);
     }
 
     private void TasksPageFilter_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -546,33 +545,25 @@ public partial class MainWindow : Window
         if (TasksPageJobs != null) RefreshTasksPage();
     }
 
-    private void TasksPageJobs_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    private void TasksPageSearch_Changed(object sender, System.Windows.Controls.TextChangedEventArgs e)
     {
-        if (TasksPageDetail == null || TasksPageCancel == null || TasksPageViewResult == null) return;
-        var selected = TasksPageJobs?.SelectedItem as BackgroundJobView;
-        TasksPageCancel.IsEnabled = selected?.IsActive == true;
-        TasksPageViewResult.IsEnabled = selected != null;
-        TasksPageTitle.Text = selected?.ToolName ?? "No task selected";
-        TasksPageState.Text = selected?.State ?? "Idle";
-        TasksPageMetadata.Text = selected == null ? "Tasks appear here when an AI starts a background operation." :
-            (selected.IsOfficialTask ? "Task " + selected.TaskId : "Job " + selected.JobId) +
-            " · " + selected.Owner + " · elapsed " + selected.Elapsed;
-        TasksPageProgress.IsIndeterminate = selected?.IsProgressIndeterminate == true;
-        TasksPageProgress.Value = (selected?.ProgressFraction ?? 0) * 100;
-        TasksPageProgressHint.Text = selected?.ProgressHint ?? "No numeric progress reported.";
-        TasksPageMessage.Text = selected?.Message ?? "";
-        TasksPageDetail.Text = selected == null ? "Select a Job to inspect its details." :
-            (selected.IsOfficialTask ? "Task ID: " + selected.TaskId + "\nLinked Job: " + selected.JobId :
-                "Job ID: " + selected.JobId) + "\nTool: " + selected.ToolName +
-            "\nState: " + selected.State +
-            "\nWorker generation: " + selected.WorkerGeneration +
-            "\nOwner visibility: " + selected.Owner +
-            "\nElapsed: " + selected.Elapsed +
-            "\nProgress: " + (string.IsNullOrWhiteSpace(selected.Progress) ? "Not reported" : selected.Progress) +
-            "\nQueue: " + (string.IsNullOrWhiteSpace(selected.Queue) ? "Not queued" : selected.Queue) +
-            "\nWorker message / failure reason: " + selected.Message +
-            "\n\n'View result' calls Tasks/get for owned official Tasks or job_status for Worker Jobs. "+
-            "A completed Job may have expired its result; official Tasks require their separate Task ID.";
+        if (TasksPageJobs != null) RefreshTasksPage();
+    }
+
+    private void TasksPageJobs_Changed(object sender,System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if(TasksPageDetail==null || TasksPageCancel==null || TasksPageViewResult==null)return;
+        var selected=TasksPageJobs?.SelectedItem as BackgroundJobView;
+        TasksPageCancel.IsEnabled=selected?.IsActive==true;
+        TasksPageViewResult.IsEnabled=selected!=null;
+        TasksPageTitle.Text=selected?.ToolName??"No task selected";
+        TasksPageState.Text=selected?.State??"Idle";
+        TasksPageMetadata.Text=TaskCenterViewModel.Metadata(selected);
+        TasksPageProgress.IsIndeterminate=selected?.IsProgressIndeterminate==true;
+        TasksPageProgress.Value=(selected?.ProgressFraction??0)*100;
+        TasksPageProgressHint.Text=selected?.ProgressHint??"No numeric progress reported.";
+        TasksPageMessage.Text=TaskCenterViewModel.Message(selected);
+        TasksPageDetail.Text=TaskCenterViewModel.Detail(selected);
     }
 
     private async void TasksPageCancel_Click(object sender, RoutedEventArgs e)
@@ -602,62 +593,11 @@ public partial class MainWindow : Window
         finally { TasksPageViewResult.IsEnabled = true; }
     }
 
-    private static string RequestJobCancellation(string endpoint, string accessToken, string jobId)
-    {
-        _ = RequestJobTool(endpoint, accessToken, jobId, "zemax_job_cancel");
-        return "accepted for " + jobId + "; final state will be confirmed by the next status poll.";
-    }
+    private static string RequestJobCancellation(string endpoint,string token,string jobId) =>
+        JobActionClient.RequestJobCancellation(endpoint,token,jobId);
 
-    private static string RequestJobTool(string endpoint, string accessToken, string jobId, string toolName)
-    {
-        // Always route through ordinary MCP tools/call so scoped ownership and
-        // the Worker's generation check remain authoritative. This is not an
-        // elevated Launcher-specific administrative cancellation API.
-        var body = new JObject
-        {
-            ["jsonrpc"] = "2.0",
-            ["id"] = 1,
-            ["method"] = "tools/call",
-            ["params"] = new JObject
-            {
-                ["name"] = toolName,
-                ["arguments"] = new JObject { ["jobId"] = jobId },
-                ["_meta"] = new JObject
-                {
-                    ["io.modelcontextprotocol/protocolVersion"] = "2026-07-28",
-                    ["io.modelcontextprotocol/clientInfo"] = new JObject
-                    {
-                        ["name"] = "zemax-launcher",
-                        ["version"] = ProductVersion
-                    }
-                }
-            }
-        };
-        var request = (HttpWebRequest)WebRequest.Create(endpoint);
-        request.Method = "POST";
-        request.ContentType = "application/json";
-        request.Accept = "application/json, text/event-stream";
-        request.Timeout = 15000;
-        request.Headers["MCP-Protocol-Version"] = "2026-07-28";
-        request.Headers["Mcp-Method"] = "tools/call";
-        request.Headers["Mcp-Name"] = toolName;
-        AddAuthorization(request, accessToken);
-        var bytes = Encoding.UTF8.GetBytes(body.ToString(Newtonsoft.Json.Formatting.None));
-        using (var stream = request.GetRequestStream()) stream.Write(bytes, 0, bytes.Length);
-        using var response = (HttpWebResponse)request.GetResponse();
-        using var reader = new StreamReader(response.GetResponseStream());
-        var raw = reader.ReadToEnd();
-        if (response.ContentType?.StartsWith("text/event-stream", StringComparison.OrdinalIgnoreCase) == true)
-        {
-            raw = raw.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                .FirstOrDefault(line => line.StartsWith("data:", StringComparison.Ordinal))?.Substring(5) ?? "";
-        }
-        var rpc = JObject.Parse(raw);
-        if (rpc["error"] != null || rpc["result"]?["isError"]?.Value<bool>() == true)
-            throw new InvalidOperationException("MCP rejected the request (not owner, stale generation, or cancellation error).");
-        return rpc["result"]?["content"]?.FirstOrDefault()?["text"]?.ToString() ??
-            rpc["result"]?.ToString(Newtonsoft.Json.Formatting.Indented) ?? "No Job result payload.";
-    }
+    private static string RequestJobTool(string endpoint,string token,string jobId,string toolName) =>
+        JobActionClient.RequestJobTool(endpoint,token,jobId,toolName);
 
     private async Task RefreshStatusAsync()
     {
@@ -680,6 +620,10 @@ public partial class MainWindow : Window
             var licenseStatus = health["licenseStatus"]?.ToString() ?? "Not checked";
             var bridgeRunning = health["bridgeRunning"]?.Value<bool>() == true;
             var serverRunning = health["mcpServerRunning"]?.Value<bool>() == true;
+            var workerBusy = health["workerBusy"]?.Value<bool>() == true;
+            var statusFresh = health["statusFresh"]?.Value<bool>() ?? true;
+            var statusAge = health["statusAgeSeconds"]?.Value<double?>();
+            var lastKnownStatus = health["lastKnownStatus"]?.Value<bool>() ?? true;
             var activeRequests = health["activeRequests"]?.Value<int>() ?? 0;
             var activeOperations = health["activeOperations"] as JArray;
             var activeOperation = activeOperations?.FirstOrDefault();
@@ -726,9 +670,13 @@ public partial class MainWindow : Window
                 "; uptime: " + uptime + "; restarts: " + restartCount + "; hard recoveries: " + hardRecoveryCount + "\n" +
                 "ZOS-API files: " + (apiFiles ? "found" : root == null ? "remote endpoint" : "missing") +
                 "; loaded: " + (apiLoaded ? "yes" : "not yet") +
-                "; OpticStudio connected: " + (apiConnected ? "yes" : "not yet") +
-                "; license: " + licenseStatus + "\n" +
+                "; OpticStudio connected: " + (apiConnected ? "yes" : (workerBusy && !lastKnownStatus ? "unknown while busy" : "not yet")) +
+                "; license: " + licenseStatus +
+                "; status: " + (statusFresh ? "fresh" : workerBusy ? "cached while Worker is busy" : "last known / unavailable") +
+                (statusAge.HasValue ? " (validated " + Math.Round(statusAge.Value).ToString(System.Globalization.CultureInfo.InvariantCulture) + "s ago)" : " (never validated)") + "\n" +
                 "Security: " + (authenticationRequired ? "Bearer token required" : "no token") +
+                "; network encryption: " + TransportSecurityDisplay.Explain(
+                    endpoint,health["tlsEnabled"]?.Value<bool>()==true) +
                 "; Origin validation: " + (originValidationEnabled ? "enabled" : "not reported") +
                 "; lens access: " + (readOnly ? "read-only" : "read/write with pre-change snapshots") + "\n" +
                 "Snapshot folder: " + (string.IsNullOrWhiteSpace(snapshotDirectory) ? "not reported" : snapshotDirectory) +
@@ -740,12 +688,18 @@ public partial class MainWindow : Window
                 (string.IsNullOrWhiteSpace(lastServerError) ? "" : "\nLast MCP server error: " + lastServerError) +
                 (localBridge ? "\nLocal launcher bridge process: running" : "");
             var ready = bridgeRunning && serverRunning && apiConnected;
-            ConnectionSummary.Text = (ready ? "Ready" : "Needs attention — check the status cards above") + " · " +
+            ConnectionSummary.Text = (workerBusy
+                ? "OpticStudio busy — " + (lastKnownStatus ? "last verified status shown" : "live license check deferred")
+                : ready ? "Ready" : "Needs attention — check the status cards above") + " · " +
                 (authenticationRequired ? "Token protected" : "No access token required") + " · " +
                 (readOnly ? "Read-only access" : "Lens changes allowed");
             if (bridgeRunning && serverRunning) SetIndicator(McpStateDot, McpState, "Online · accepting connections", System.Windows.Media.Brushes.SeaGreen);
             else SetIndicator(McpStateDot, McpState, "Endpoint reachable, but a service is not running", System.Windows.Media.Brushes.DarkOrange);
-            if (apiConnected) SetIndicator(ZosStateDot, ZosState, "Connected to OpticStudio", System.Windows.Media.Brushes.SeaGreen);
+            if (workerBusy && !lastKnownStatus)
+                SetIndicator(ZosStateDot, ZosState, "OpticStudio busy — connection status pending", System.Windows.Media.Brushes.DarkOrange);
+            else if (apiConnected) SetIndicator(ZosStateDot, ZosState, workerBusy
+                ? "OpticStudio busy — previously connected" : "Connected to OpticStudio",
+                System.Windows.Media.Brushes.SeaGreen);
             else if (apiLoaded) SetIndicator(ZosStateDot, ZosState, "ZOS-API loaded — waiting for OpticStudio", System.Windows.Media.Brushes.DarkOrange);
             else if (root == null) SetIndicator(ZosStateDot, ZosState, "Checked on the remote Zemax computer", System.Windows.Media.Brushes.SlateGray);
             else if (apiFiles) SetIndicator(ZosStateDot, ZosState, "Files found — not loaded yet", System.Windows.Media.Brushes.DarkOrange);
@@ -757,7 +711,7 @@ public partial class MainWindow : Window
         {
             _healthReachable = false;
             TaskCenterSummary.Text = "Service offline; Job information unavailable.";
-            _taskHistory.Clear();
+            _taskCenter.Update(null,null);
             RefreshTasksPage();
             ConnectionSummary.Text = "Offline — MCP endpoint is not reachable\n" + endpoint;
             _fullDiagnostics = "MCP endpoint: not reachable\n" +
@@ -857,66 +811,16 @@ public partial class MainWindow : Window
         var tooltip = name + ": " + statusText.ToLowerInvariant();
         if (!string.Equals(dot.ToolTip as string, tooltip, StringComparison.Ordinal)) dot.ToolTip = tooltip;
     }
-    private static string FormatClientName(string? identity)
-    {
-        if (string.IsNullOrWhiteSpace(identity)) return "AI client";
-        if (identity!.StartsWith("token:", StringComparison.OrdinalIgnoreCase)) return "authenticated client";
-        var name = identity.StartsWith("client:", StringComparison.OrdinalIgnoreCase) ? identity.Substring(7) : identity;
-        var suffix = name.IndexOfAny(new[] { '@', '|' });
-        if (suffix >= 0) name = name.Substring(0, suffix);
-        return string.IsNullOrWhiteSpace(name) || name.Equals("unknown", StringComparison.OrdinalIgnoreCase) ? "AI client" : name;
-    }
+    private static string FormatClientName(string? name) =>
+        StatusPresentation.FormatClientName(name);
     private static string FormatTimeAgo(TimeSpan age) =>
-        age.TotalSeconds < 10 ? "just now" :
-        age.TotalMinutes < 1 ? (int)Math.Max(0, age.TotalSeconds) + "s ago" :
-        age.TotalHours < 1 ? (int)age.TotalMinutes + "m ago" :
-        age.TotalDays < 1 ? (int)age.TotalHours + "h ago" :
-        (int)age.TotalDays + "d ago";
-    private static string FormatUptime(long? totalSeconds)
-    {
-        if (totalSeconds == null) return "unknown";
-        var value = TimeSpan.FromSeconds(Math.Max(0, totalSeconds.Value));
-        return value.TotalDays >= 1 ? ((int)value.TotalDays) + "d " + value.ToString(@"hh\:mm\:ss") : value.ToString(@"hh\:mm\:ss");
-    }
-    private static string FormatZemaxPaths(ZemaxInstallation? installation, string? remoteRoot, JObject? remoteApi, JObject? loadedApi, string? runtimeData)
-    {
-        if (installation != null)
-        {
-            var lines = new List<string>
-            {
-                "OpticStudio folder: " + installation.Root + " (" + installation.DiscoverySource + ")",
-                "ZOS-API: " + installation.ZosApiPath,
-                "NetHelper: " + installation.NetHelperPath,
-                "Detected Zemax data: " + (string.IsNullOrWhiteSpace(installation.DataDirectory) ? "not found" : installation.DataDirectory + " (" + installation.DataDirectorySource + ")")
-            };
-            AddLoadedApiPaths(lines, loadedApi);
-            if (!string.IsNullOrWhiteSpace(runtimeData) && runtimeData != "Not reported") lines.Add("Runtime Zemax data: " + runtimeData);
-            lines.Add("License setup: " + installation.LicenseEvidence);
-            return string.Join("\n", lines);
-        }
-        if (!string.IsNullOrWhiteSpace(remoteRoot))
-        {
-            var lines = new List<string>
-            {
-                "Remote OpticStudio folder: " + remoteRoot,
-                "Remote ZOS-API: " + (remoteApi?["zosApi"]?.ToString() ?? "not found"),
-                "Remote NetHelper: " + (remoteApi?["netHelper"]?.ToString() ?? "not found")
-            };
-            AddLoadedApiPaths(lines, loadedApi);
-            lines.Add("Remote Zemax data: " + (string.IsNullOrWhiteSpace(runtimeData) ? "not reported" : runtimeData));
-            return string.Join("\n", lines);
-        }
-        return "OpticStudio and ZOS-API paths are reported by the Zemax computer after its bridge is updated.";
-    }
-    private static void AddLoadedApiPaths(ICollection<string> lines, JObject? loadedApi)
-    {
-        if (loadedApi == null) return;
-        foreach (var item in new[] { ("Loaded ZOS-API", "zosApi"), ("Loaded Interfaces", "interfaces"), ("Loaded NetHelper", "netHelper") })
-        {
-            var path = loadedApi[item.Item2]?.ToString();
-            if (!string.IsNullOrWhiteSpace(path)) lines.Add(item.Item1 + ": " + path);
-        }
-    }
+        StatusPresentation.FormatTimeAgo(age);
+    private static string FormatUptime(long? seconds) =>
+        StatusPresentation.FormatUptime(seconds);
+    private static string FormatZemaxPaths(ZemaxInstallation? local,
+        string? root,JObject? remote,JObject? loaded,string? runtimeData) =>
+        StatusPresentation.FormatZemaxPaths(local,root,remote,loaded,runtimeData);
+
     private static JObject GetHealth(string endpoint, string accessToken) =>
         GetEndpointJson(endpoint, accessToken, "/health", 5000);
 
@@ -974,7 +878,8 @@ public partial class MainWindow : Window
     {
         var setup = new JObject { ["endpoint"] = Url, ["accessToken"] = _localAccessToken }.ToString(Newtonsoft.Json.Formatting.None);
         System.Windows.Clipboard.SetText(setup);
-        Report("Secure connection setup copied. Treat it like a password and paste it into the Secure setup field on the AI computer.");
+        Report("Connection setup copied. Treat the Bearer token like a password." +
+            (ShareOnLan.IsChecked == true ? " WARNING: plaintext LAN HTTP does not encrypt tokens or optical data." : ""));
     }
     private void RegenerateToken_Click(object sender, RoutedEventArgs e)
     {
@@ -1004,7 +909,10 @@ public partial class MainWindow : Window
             _remoteAccessToken = token!;
             RemoteSecureSetup.Text = "";
             UpdateRemoteSetupStatus();
-            Report("Secure connection setup accepted for " + _remoteEndpoint + ".");
+            Report("Connection setup accepted for " + _remoteEndpoint + "." +
+                (uri.Scheme == Uri.UriSchemeHttp && !uri.IsLoopback
+                    ? " WARNING: remote HTTP sends the Bearer token and optical data unencrypted; use HTTPS."
+                    : ""));
             return true;
         }
         catch { return false; }
@@ -1019,9 +927,13 @@ public partial class MainWindow : Window
             return;
         }
         var endpoint = new Uri(_remoteEndpoint);
-        RemoteSetupDot.Fill = System.Windows.Media.Brushes.SeaGreen;
-        RemoteSetupStatus.Foreground = System.Windows.Media.Brushes.SeaGreen;
-        RemoteSetupStatus.Text = "Remote endpoint active: " + endpoint.Host + ":" + endpoint.Port + " · token protected for this Windows user.";
+        var unencrypted = endpoint.Scheme == Uri.UriSchemeHttp && !endpoint.IsLoopback;
+        RemoteSetupDot.Fill = unencrypted ? System.Windows.Media.Brushes.DarkOrange : System.Windows.Media.Brushes.SeaGreen;
+        RemoteSetupStatus.Foreground = unencrypted ? System.Windows.Media.Brushes.DarkOrange : System.Windows.Media.Brushes.SeaGreen;
+        RemoteSetupStatus.Text = "Remote endpoint: " + endpoint.Host + ":" + endpoint.Port +
+            (unencrypted ? " · WARNING: plaintext HTTP exposes the Bearer token in transit; use HTTPS." :
+             endpoint.Scheme == Uri.UriSchemeHttps ? " · TLS encrypted (verify certificate trust)." :
+             " · local loopback HTTP.");
     }
     private static string GenerateAccessToken()
     {
@@ -1043,135 +955,43 @@ public partial class MainWindow : Window
         var token = McpToken;
         TestConnectionButton.IsEnabled = false;
         TestConnectionButton.Content = "Testing…";
-        Report("Testing connection, authentication and read-only MCP tools...");
-        try
-        {
-            var health = await Task.Run(() => CheckConnectionHealth(endpoint, token));
-            Report(health);
-            Report(await Task.Run(() => TestMcpFunctionality(endpoint, token)));
-        }
-        catch (Exception ex) { Report("Connection / MCP test failed: " + ex.Message); }
+        Report("Checking Host, authentication, Worker, OpticStudio and license status...");
+        try { Report(await Task.Run(() => CheckConnectionHealth(endpoint, token))); }
+        catch (Exception ex) { Report("Connection check failed: " + ex.Message); }
         finally
         {
-            TestConnectionButton.Content = "Test connection";
+            TestConnectionButton.Content = "Check connection";
             TestConnectionButton.IsEnabled = true;
         }
         await RefreshStatusAsync();
     }
 
-    private static string CheckConnectionHealth(string endpoint, string accessToken)
+    private async void TestMcpTools_Click(object sender, RoutedEventArgs e)
     {
-        var healthEndpoint = endpoint.TrimEnd('/') + "/health";
-        var request = (HttpWebRequest)WebRequest.Create(healthEndpoint);
-        request.Method = "GET";
-        request.Accept = "application/json";
-        request.Timeout = 105000; // Cold Worker/ZOS-API bootstrap may legitimately take up to 90s.
-        AddAuthorization(request, accessToken);
-        using var response = (HttpWebResponse)request.GetResponse();
-        using var reader = new StreamReader(response.GetResponseStream());
-        var result = JObject.Parse(reader.ReadToEnd());
-        var bridge = result["bridgeRunning"]?.Value<bool>() == true;
-        var worker = result["mcpServerRunning"]?.Value<bool>() == true;
-        var zos = result["zosApiConnected"]?.Value<bool>() == true;
-        var loaded = result["zosApiLoaded"]?.Value<bool>() == true;
-        var licensed = result["licenseValidForApi"]?.Value<bool?>();
-        if (!bridge) throw new InvalidOperationException("Host is reachable but reports bridgeRunning=false.");
-        return "Connection check — Host: reachable; authentication: accepted; Worker: " +
-            (worker ? "running" : "unavailable") + "; ZOS-API: " +
-            (loaded ? "loaded" : "not loaded") + "; OpticStudio: " +
-            (zos ? "connected" : "disconnected") + "; license: " +
-            (result["licenseStatus"]?.ToString() ?? "not reported") +
-            "; API license valid: " + (licensed.HasValue ? licensed.Value.ToString() : "not reported") +
-            ". This is a health check, not a tool execution test.";
-    }
-
-    private static JObject SendMcpJsonRpc(string endpoint, string accessToken,
-        string method, JObject parameters, string? routingName = null)
-    {
-        // 2026-07-28 stateless MCP transport: no optical edits.
-        var meta = new JObject
+        if (!TestMcpToolsButton.IsEnabled) return;
+        var endpoint = McpUrl;
+        var token = McpToken;
+        TestMcpToolsButton.IsEnabled = false;
+        TestMcpToolsButton.Content = "Testing…";
+        Report("Testing actual MCP tools/list, a read-only tool call and official Tasks discovery...");
+        try { Report(await Task.Run(() => TestMcpFunctionality(endpoint, token))); }
+        catch (Exception ex) { Report("MCP functional test failed: " + ex.Message); }
+        finally
         {
-            ["io.modelcontextprotocol/protocolVersion"] = "2026-07-28",
-            ["io.modelcontextprotocol/clientInfo"] = new JObject
-            {
-                ["name"] = "zemax-launcher",
-                ["version"] = ProductVersion
-            },
-            ["io.modelcontextprotocol/clientCapabilities"] = new JObject
-            {
-                ["extensions"] = new JObject { ["io.modelcontextprotocol/tasks"] = new JObject() }
-            }
-        };
-        parameters["_meta"] = meta;
-        var message = new JObject
-        {
-            ["jsonrpc"] = "2.0",
-            ["id"] = 2741,
-            ["method"] = method,
-            ["params"] = parameters
-        };
-        var request = (HttpWebRequest)WebRequest.Create(endpoint);
-        request.Method = "POST";
-        request.ContentType = "application/json";
-        request.Accept = "application/json, text/event-stream";
-        request.Timeout = method == "tools/call" ? 105000 : 20000;
-        request.Headers["MCP-Protocol-Version"] = "2026-07-28";
-        request.Headers["Mcp-Method"] = method;
-        if (!string.IsNullOrEmpty(routingName)) request.Headers["Mcp-Name"] = routingName;
-        AddAuthorization(request, accessToken);
-        var bytes = Encoding.UTF8.GetBytes(message.ToString(Newtonsoft.Json.Formatting.None));
-        using (var stream = request.GetRequestStream()) stream.Write(bytes, 0, bytes.Length);
-        using var response = (HttpWebResponse)request.GetResponse();
-        using var reader = new StreamReader(response.GetResponseStream());
-        var raw = reader.ReadToEnd();
-        if (response.ContentType?.StartsWith("text/event-stream", StringComparison.OrdinalIgnoreCase) == true)
-        {
-            raw = SelectMcpSseResponse(raw, message["id"]!).ToString(Newtonsoft.Json.Formatting.None);
+            TestMcpToolsButton.Content = "Test MCP tools";
+            TestMcpToolsButton.IsEnabled = true;
         }
-        var rpc = JObject.Parse(raw);
-        if (rpc["error"] is JToken error)
-            throw new InvalidOperationException("MCP " + method + ": " +
-                (error["message"]?.ToString() ?? "JSON-RPC error"));
-        return rpc;
     }
 
-    private static JObject SelectMcpSseResponse(string raw, JToken requestId)
-    {
-        foreach (var frame in raw.Replace("\r\n", "\n").Split(new[] { "\n\n" }, StringSplitOptions.RemoveEmptyEntries))
-        {
-            var data = string.Join("\n", frame.Split('\n')
-                .Where(line => line.StartsWith("data:", StringComparison.Ordinal))
-                .Select(line => line.Substring(5).TrimStart()));
-            if (string.IsNullOrWhiteSpace(data)) continue;
-            var candidate = JObject.Parse(data);
-            if (candidate["method"] == null && JToken.DeepEquals(candidate["id"], requestId) &&
-                (candidate["result"] != null || candidate["error"] != null)) return candidate;
-        }
-        throw new InvalidDataException("MCP SSE contained no response matching the request ID.");
-    }
+    private static string CheckConnectionHealth(string endpoint,string token) =>
+        McpDiagnosticsClient.CheckConnectionHealth(endpoint,token);
 
-    private static string TestMcpFunctionality(string endpoint, string accessToken)
-    {
-        var list = SendMcpJsonRpc(endpoint, accessToken, "tools/list", new JObject());
-        var tools = list["result"]?["tools"] as JArray ??
-            throw new InvalidDataException("tools/list returned no tool array.");
-        if (tools.Count == 0 || !tools.Any(t => t["name"]?.ToString() == "zemax_status"))
-            throw new InvalidDataException("MCP has no discoverable read-only zemax_status tool.");
-        var status = SendMcpJsonRpc(endpoint, accessToken, "tools/call",
-            new JObject { ["name"] = "zemax_status", ["arguments"] = new JObject() }, "zemax_status");
-        if (status["result"]?["isError"]?.Value<bool>() == true ||
-            !(status["result"]?["content"] is JArray content) || content.Count == 0)
-            throw new InvalidDataException("Actual MCP zemax_status call returned no successful tool result.");
+    private static JObject SendMcpJsonRpc(string endpoint,string token,
+        string method,JObject parameters,string? routingName=null) =>
+        McpDiagnosticsClient.SendMcpJsonRpc(endpoint,token,method,parameters,routingName);
 
-        // Modern discovery is stateless; initialize belongs to legacy protocols.
-        // No optical Task is started by this capability probe.
-        var discovery = SendMcpJsonRpc(endpoint, accessToken, "server/discover", new JObject());
-        var tasks = discovery["result"]?["capabilities"]?["extensions"]?["io.modelcontextprotocol/tasks"] != null;
-        return "MCP functional test PASS — tools/list: " + tools.Count +
-            " tools; real read-only zemax_status: result returned; 2026-07-28 server/discover: success; " +
-            "official Tasks advertised: " + (tasks ? "yes" : "no") +
-            ". A completed Task result requires an owned Task ID in the Tasks page; this test does not start an optical Job.";
-    }
+    private static string TestMcpFunctionality(string endpoint,string token) =>
+        McpDiagnosticsClient.TestMcpFunctionality(endpoint,token);
 
     private async void TasksPageGetTask_Click(object sender, RoutedEventArgs e)
     {
@@ -1358,6 +1178,9 @@ public partial class MainWindow : Window
             ShareOnLan.IsChecked = settings["shareOnLan"]?.Value<bool>() ?? false;
             ReadOnlyMode.IsChecked = settings["readOnly"]?.Value<bool>() ?? false;
             OfficialTasks.IsChecked = OfficialTasksSettings.IsEnabled(settings["enableOfficialTasks"]);
+            EnableTls.IsChecked = settings["enableTls"]?.Value<bool>() ?? false;
+            TlsPfxPath.Text = settings["tlsPfxPath"]?.ToString() ?? "";
+            TlsPfxPassword.Password = UnprotectSecret(settings["tlsPfxPasswordProtected"]?.ToString());
             SelectToolsetProfile(settings["toolsetProfile"]?.ToString());
             StartOnLogin.IsChecked = settings["startOnLogin"]?.Value<bool>() ?? false;
             _clientSetupPrompted = settings["clientSetupPrompted"]?.Value<bool>() ?? false;
@@ -1387,6 +1210,9 @@ public partial class MainWindow : Window
                 ["shareOnLan"] = ShareOnLan.IsChecked == true,
                 ["readOnly"] = ReadOnlyMode.IsChecked == true,
                 ["enableOfficialTasks"] = OfficialTasks.IsChecked == true,
+                ["enableTls"] = LocalTlsEnabled,
+                ["tlsPfxPath"] = LocalTlsPfxPath,
+                ["tlsPfxPasswordProtected"] = ProtectSecret(TlsPfxPassword.Password),
                 ["toolsetProfile"] = SelectedToolsetProfile,
                 ["startOnLogin"] = StartOnLogin.IsChecked == true,
                 ["windowMaterial"] = "mica",
@@ -1470,296 +1296,4 @@ internal static class FirewallRule
         }
         catch { return false; }
     }
-}
-
-internal static class Configurator
-{
-    private static string UserProfile => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-    private static string AppData => Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-    private static string LocalAppData => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-    private static string EnvironmentPathOrDefault(string variable, string fallback)
-    {
-        var configured = Environment.GetEnvironmentVariable(variable);
-        return string.IsNullOrWhiteSpace(configured) ? fallback : Environment.ExpandEnvironmentVariables(configured.Trim().Trim('"'));
-    }
-    private static string CodexHome => EnvironmentPathOrDefault("CODEX_HOME", Path.Combine(UserProfile, ".codex"));
-    private static string CodexPath => Path.Combine(CodexHome, "config.toml");
-    private static string ClaudeDesktopPath => Path.Combine(AppData, "Claude", "claude_desktop_config.json");
-    private static string CursorPath => Path.Combine(UserProfile, ".cursor", "mcp.json");
-    // Antigravity's current global configuration location is documented as
-    // ~/.gemini/config/mcp_config.json. Keep the former location in the
-    // candidate list so an established installation is updated in place.
-    private static readonly string[] AntigravityConfigPaths =
-    {
-        Path.Combine(UserProfile, ".gemini", "config", "mcp_config.json"),
-        Path.Combine(UserProfile, ".gemini", "antigravity", "mcp_config.json")
-    };
-    private static string AntigravityPath => AntigravityConfigPaths.FirstOrDefault(File.Exists) ?? AntigravityConfigPaths[0];
-    private static string KimiHome => EnvironmentPathOrDefault("KIMI_CODE_HOME", Path.Combine(UserProfile, ".kimi-code"));
-    private static string KimiPath => Path.Combine(KimiHome, "mcp.json");
-    private static string WorkBuddyPath => Path.Combine(UserProfile, ".workbuddy", "mcp.json");
-    private static string VsCodeDefaultPath => Path.Combine(AppData, "Code", "User", "mcp.json");
-    public static readonly string[] KnownAliases = { "codex", "claude", "cursor", "antigravity", "gemini", "kimi", "workbuddy", "codebuddy", "vscode", "visual studio", "copilot" };
-
-    public static void ConfigureClaudeDesktop(string url) => ConfigureClaudeDesktop(url, "");
-    public static void ConfigureClaudeDesktop(string url, string token)
-    {
-        ValidateUrl(url);
-        var proxy = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZemaxMCP.ClientProxy.exe");
-        if (!File.Exists(proxy)) throw new FileNotFoundException("The release package is missing ZemaxMCP.ClientProxy.exe, which Claude Desktop needs for a private HTTP/LAN endpoint.", proxy);
-        ConfigureStdioProxyJson(ClaudeDesktopPath, proxy, url, token);
-    }
-    public static void ConfigureCursor(string url) => ConfigureCursor(url, "");
-    public static void ConfigureCursor(string url, string token) => ConfigureJson(CursorPath, "mcpServers", url, token);
-    public static void ConfigureAntigravity(string url) => ConfigureAntigravity(url, "");
-    public static void ConfigureAntigravity(string url, string token)
-    {
-        ValidateUrl(url);
-        ConfigureAntigravityJson(AntigravityPath, url, token);
-    }
-    public static void ConfigureKimi(string url) => ConfigureKimi(url, "");
-    public static void ConfigureKimi(string url, string token) => ConfigureJson(KimiPath, "mcpServers", url, token, false, true);
-    public static void ConfigureWorkBuddy(string url) => ConfigureWorkBuddy(url, "");
-    public static void ConfigureWorkBuddy(string url, string token) => ConfigureJson(WorkBuddyPath, "mcpServers", url, token, false, false);
-
-    public static List<ClientConfigurationStatus> GetClientStatuses(string expectedUrl) => GetClientStatuses(expectedUrl, "");
-    public static List<ClientConfigurationStatus> GetClientStatuses(string expectedUrl, string expectedToken)
-    {
-        var vsCodePaths = GetVsCodeConfigPaths().ToArray();
-        return new List<ClientConfigurationStatus>
-        {
-            new ClientConfigurationStatus("Codex", new[] { "codex" }, Directory.Exists(CodexHome), IsCodexConfigured(expectedUrl, expectedToken), CodexPath, ConfigureCodex),
-            new ClientConfigurationStatus("Claude Desktop", new[] { "claude" }, Directory.Exists(Path.Combine(AppData, "Claude")), IsClaudeConfigured(expectedUrl, expectedToken), ClaudeDesktopPath, ConfigureClaudeDesktop),
-            new ClientConfigurationStatus("Cursor", new[] { "cursor" }, Directory.Exists(Path.Combine(UserProfile, ".cursor")) || Directory.Exists(Path.Combine(AppData, "Cursor")) || Directory.Exists(Path.Combine(LocalAppData, "Cursor")), IsJsonConfigured(CursorPath, "mcpServers", expectedUrl, expectedToken), CursorPath, ConfigureCursor),
-            new ClientConfigurationStatus("Google Antigravity", new[] { "antigravity", "gemini" }, Directory.Exists(Path.Combine(UserProfile, ".gemini")), IsAntigravityConfigured(expectedUrl, expectedToken), AntigravityPath, ConfigureAntigravity),
-            new ClientConfigurationStatus("Kimi Code", new[] { "kimi" }, Directory.Exists(KimiHome), IsJsonConfigured(KimiPath, "mcpServers", expectedUrl, expectedToken), KimiPath, ConfigureKimi),
-            new ClientConfigurationStatus("WorkBuddy", new[] { "workbuddy", "codebuddy" }, Directory.Exists(Path.Combine(UserProfile, ".workbuddy")) || Directory.Exists(Path.Combine(AppData, "WorkBuddy")) || Directory.Exists(Path.Combine(LocalAppData, "WorkBuddy")), IsJsonConfigured(WorkBuddyPath, "mcpServers", expectedUrl, expectedToken), WorkBuddyPath, ConfigureWorkBuddy),
-            new ClientConfigurationStatus("VS Code / Copilot", new[] { "vscode", "visual studio", "copilot" }, Directory.Exists(Path.Combine(AppData, "Code")) || Directory.Exists(Path.Combine(LocalAppData, "Programs", "Microsoft VS Code")), vsCodePaths.Any(x => IsJsonConfigured(x, "servers", expectedUrl, expectedToken)), string.Join("; ", vsCodePaths), null)
-        };
-    }
-
-    public static string GenericHttpJson(string url, string token) => new JObject
-    {
-        ["mcpServers"] = new JObject { ["zemax-mcp"] = CreateHttpEntry(url, token, true) }
-    }.ToString();
-
-    public static void ConfigureVsCode(string url, string token)
-    {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var endpoint) ||
-            (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps))
-            throw new ArgumentException("The MCP endpoint must be an absolute HTTP or HTTPS address.", nameof(url));
-
-        // VS Code owns user-profile and workspace configuration locations. Its documented
-        // installation URI opens the native review/trust flow and prevents this launcher
-        // from overwriting an unknown profile's mcp.json file.
-        var server = new JObject
-        {
-            ["name"] = "zemax-mcp",
-            ["type"] = "http",
-            ["url"] = endpoint.AbsoluteUri
-        };
-        AddHeaders(server, token);
-        var installUri = "vscode:mcp/install?" + Uri.EscapeDataString(server.ToString(Newtonsoft.Json.Formatting.None));
-        Process.Start(new ProcessStartInfo(installUri) { UseShellExecute = true });
-    }
-
-    public static void ConfigureJson(string path, string property, string url, string token, bool includeType = true, bool includeKimiTimeouts = false)
-    {
-        ValidateUrl(url);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var root = File.Exists(path) ? JObject.Parse(File.ReadAllText(path)) : new JObject();
-        var servers = root[property] as JObject;
-        if (servers == null)
-        {
-            servers = new JObject();
-            root[property] = servers;
-        }
-        var entry = CreateHttpEntry(url, token, includeType);
-        if (includeKimiTimeouts)
-        {
-            entry["startupTimeoutMs"] = 60000;
-            entry["toolTimeoutMs"] = 300000;
-        }
-        servers["zemax-mcp"] = entry;
-        WriteAtomically(path, root.ToString());
-    }
-
-    private static void ConfigureAntigravityJson(string path, string url, string token)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var root = File.Exists(path) ? JObject.Parse(File.ReadAllText(path)) : new JObject();
-        var servers = root["mcpServers"] as JObject;
-        if (servers == null)
-        {
-            servers = new JObject();
-            root["mcpServers"] = servers;
-        }
-
-        // Google Antigravity uses serverUrl for every remote MCP transport.
-        // Do not write url/httpUrl: those legacy fields are explicitly rejected.
-        var entry = new JObject { ["serverUrl"] = url };
-        AddHeaders(entry, token);
-        servers["zemax-mcp"] = entry;
-        WriteAtomically(path, root.ToString());
-    }
-
-    private static void ConfigureStdioProxyJson(string path, string proxyPath, string url, string token)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var root = File.Exists(path) ? JObject.Parse(File.ReadAllText(path)) : new JObject();
-        var servers = root["mcpServers"] as JObject;
-        if (servers == null)
-        {
-            servers = new JObject();
-            root["mcpServers"] = servers;
-        }
-        servers["zemax-mcp"] = new JObject
-        {
-            ["command"] = proxyPath,
-            ["args"] = new JArray("--url", url),
-            ["env"] = string.IsNullOrWhiteSpace(token) ? new JObject() : new JObject { ["ZEMAX_MCP_TOKEN"] = token }
-        };
-        WriteAtomically(path, root.ToString());
-    }
-
-    public static void ConfigureCodex(string url) => ConfigureCodex(url, "");
-    public static void ConfigureCodex(string url, string token)
-    {
-        ValidateUrl(url);
-        var path = CodexPath;
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var content = File.Exists(path) ? File.ReadAllText(path) : "";
-        var block = "[mcp_servers.zemax]\r\nurl = \"" + url + "\"\r\n" +
-                    (string.IsNullOrWhiteSpace(token) ? "" : "http_headers = { Authorization = \"Bearer " + EscapeToml(token) + "\" }\r\n");
-        content = Regex.Replace(content, @"(?ms)^\[mcp_servers\.zemax\].*?(?=^\[|\z)", block);
-        if (!content.Contains("[mcp_servers.zemax]")) content += (content.EndsWith("\n") || content.Length == 0 ? "" : "\r\n") + block;
-        WriteAtomically(path, content);
-    }
-
-    private static JObject CreateHttpEntry(string url, string token, bool includeType)
-    {
-        var entry = new JObject { ["url"] = url };
-        if (includeType) entry.AddFirst(new JProperty("type", "http"));
-        AddHeaders(entry, token);
-        return entry;
-    }
-    private static void AddHeaders(JObject entry, string token)
-    {
-        if (!string.IsNullOrWhiteSpace(token)) entry["headers"] = new JObject { ["Authorization"] = "Bearer " + token };
-    }
-    private static bool HasExpectedToken(JToken? entry, string expectedToken)
-    {
-        if (string.IsNullOrWhiteSpace(expectedToken)) return true;
-        return string.Equals(entry?["headers"]?["Authorization"]?.ToString(), "Bearer " + expectedToken, StringComparison.Ordinal);
-    }
-    private static bool IsJsonConfigured(string path, string property, string expectedUrl, string expectedToken)
-    {
-        try
-        {
-            var entry = File.Exists(path) ? JObject.Parse(File.ReadAllText(path))[property]?["zemax-mcp"] : null;
-            return entry != null && UrlsEqual(entry["url"]?.ToString(), expectedUrl) && HasExpectedToken(entry, expectedToken);
-        }
-        catch { return false; }
-    }
-    private static bool IsAntigravityConfigured(string expectedUrl, string expectedToken)
-    {
-        foreach (var path in AntigravityConfigPaths)
-        {
-            try
-            {
-                var entry = File.Exists(path) ? JObject.Parse(File.ReadAllText(path))["mcpServers"]?["zemax-mcp"] : null;
-                if (entry != null && UrlsEqual(entry["serverUrl"]?.ToString(), expectedUrl) && HasExpectedToken(entry, expectedToken))
-                    return true;
-            }
-            catch { }
-        }
-        return false;
-    }
-    private static bool IsClaudeConfigured(string expectedUrl, string expectedToken)
-    {
-        try
-        {
-            var entry = File.Exists(ClaudeDesktopPath) ? JObject.Parse(File.ReadAllText(ClaudeDesktopPath))["mcpServers"]?["zemax-mcp"] : null;
-            var args = entry?["args"] as JArray;
-            var configuredToken = entry?["env"]?["ZEMAX_MCP_TOKEN"]?.ToString();
-            var tokenMatches = string.IsNullOrWhiteSpace(expectedToken) ||
-                string.Equals(configuredToken, expectedToken, StringComparison.Ordinal);
-            return entry != null && string.Equals(Path.GetFileName(entry["command"]?.ToString()), "ZemaxMCP.ClientProxy.exe", StringComparison.OrdinalIgnoreCase) &&
-                   args != null && args.Any(x => UrlsEqual(x?.ToString(), expectedUrl)) && tokenMatches;
-        }
-        catch { return false; }
-    }
-    private static bool IsCodexConfigured(string expectedUrl, string expectedToken)
-    {
-        try
-        {
-            if (!File.Exists(CodexPath)) return false;
-            var match = Regex.Match(File.ReadAllText(CodexPath), @"(?ms)^\[mcp_servers\.zemax\]\s*(.*?)(?=^\[|\z)");
-            if (!match.Success) return false;
-            var url = Regex.Match(match.Groups[1].Value, "(?m)^url\\s*=\\s*[\"']([^\"']+)[\"']").Groups[1].Value;
-            if (!UrlsEqual(url, expectedUrl)) return false;
-            if (string.IsNullOrWhiteSpace(expectedToken)) return true;
-            var authorization = Regex.Match(match.Groups[1].Value, "Authorization\\s*=\\s*[\"']Bearer\\s+([^\"']+)[\"']").Groups[1].Value;
-            return string.Equals(authorization, expectedToken, StringComparison.Ordinal);
-        }
-        catch { return false; }
-    }
-    private static IEnumerable<string> GetVsCodeConfigPaths()
-    {
-        yield return VsCodeDefaultPath;
-        var profiles = Path.Combine(AppData, "Code", "User", "profiles");
-        if (!Directory.Exists(profiles)) yield break;
-        string[] profileFolders;
-        try { profileFolders = Directory.GetDirectories(profiles); }
-        catch { yield break; }
-        foreach (var folder in profileFolders) yield return Path.Combine(folder, "mcp.json");
-    }
-    private static bool UrlsEqual(string? left, string? right)
-    {
-        if (!Uri.TryCreate(left, UriKind.Absolute, out var a) || !Uri.TryCreate(right, UriKind.Absolute, out var b)) return false;
-        return a.AbsoluteUri.TrimEnd('/').Equals(b.AbsoluteUri.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
-    }
-    private static void ValidateUrl(string url)
-    {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var endpoint) || (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps))
-            throw new ArgumentException("The MCP endpoint must be an absolute HTTP or HTTPS address.", nameof(url));
-    }
-    private static string EscapeToml(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
-
-    private static void WriteAtomically(string path, string content)
-    {
-        var temporary = path + ".zemaxmcp-" + Guid.NewGuid().ToString("N") + ".tmp";
-        try
-        {
-            File.WriteAllText(temporary, content);
-            if (File.Exists(path))
-            {
-                var backup = path + ".zemaxmcp.bak";
-                try { File.Replace(temporary, path, backup, true); }
-                catch (PlatformNotSupportedException)
-                {
-                    File.Copy(path, backup, true);
-                    File.Delete(path);
-                    File.Move(temporary, path);
-                }
-            }
-            else File.Move(temporary, path);
-        }
-        finally
-        {
-            try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
-        }
-    }
-}
-
-internal sealed class ClientConfigurationStatus
-{
-    public ClientConfigurationStatus(string name, string[] aliases, bool detected, bool configured, string configPath, Action<string, string>? configure)
-    { Name = name; Aliases = aliases; Detected = detected || configured; Configured = configured; ConfigPath = configPath; Configure = configure; }
-    public string Name { get; }
-    public string[] Aliases { get; }
-    public bool Detected { get; }
-    public bool Configured { get; }
-    public string ConfigPath { get; }
-    public Action<string, string>? Configure { get; }
 }
