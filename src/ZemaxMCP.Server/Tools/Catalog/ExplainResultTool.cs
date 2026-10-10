@@ -10,7 +10,7 @@ public sealed class ExplainResultTool
         OpticalResultInterpreter.Interpretation? Explanation);
 
     [ZemaxTool(Name="zemax_explain_result")]
-    [Description("Explain a completed successful result JSON from zemax_energy_budget, zemax_ray_footprint, zemax_get_nsc_detector, zemax_nsc_energy_budget or zemax_system_summary. Emits grounded metrics, physical caveats and follow-up tools. No model access or fabricated physical interpretations.")]
+    [Description("Explain a completed successful result JSON from zemax_energy_budget, zemax_ray_footprint, zemax_get_nsc_detector, zemax_nsc_energy_budget, completed zemax_run_nsc_ray_trace with sameTraceEnergy, or zemax_system_summary. Emits grounded metrics, physical caveats and follow-up tools. No model access or fabricated physical interpretations.")]
     public Task<Result> ExecuteAsync(
         [Description("Exact supported MCP tool name that produced this result.")] string toolName,
         [Description("Full successful JSON result payload from that tool (max 128 KiB).")] string resultJson,
