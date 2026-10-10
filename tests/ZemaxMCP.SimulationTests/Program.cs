@@ -29,6 +29,7 @@ internal static class Program
             VerifyNativeDetectorTiles();
             VerifyDetectorCsvExport();
             VerifySameTraceLedger();
+            VerifyZrdPathEnergyCore();
             VerifyModelSummaryDiff();
             VerifyModelPreflight();
             VerifyPurposePreflight();
@@ -114,6 +115,46 @@ internal static class Program
         var unknown=SystemSummaryComparer.Compare(first,unmatched);
         Assert(unknown.ChangedProperties==0 && unknown.Warnings.Any(x=>x.Contains("UNKNOWN")),
             "Unmatched bounded sample must not imply a verified surface deletion.");
+    }
+
+    private static void VerifyZrdPathEnergyCore()
+    {
+        var segments=new[]{
+            new ZrdPathEnergyCore.Segment(7,0,-1,10,1,false),
+            new ZrdPathEnergyCore.Segment(7,1,0,4,4,true),
+            new ZrdPathEnergyCore.Segment(7,2,0,3,7,false),
+            new ZrdPathEnergyCore.Segment(7,3,2,2,8,true),
+            new ZrdPathEnergyCore.Segment(8,0,-1,5,2,false)
+        };
+        var audit=ZrdPathEnergyCore.Audit(segments);
+        Assert(audit.Rays==2 && audit.Segments==5 && audit.Branches==1 &&
+               Math.Abs(audit.RootIntensitySum-15)<1e-12 &&
+               Math.Abs(audit.PositiveUnexplainedTransitionDifference-4)<1e-12 &&
+               audit.NegativeTransitionDifferenceMagnitude==0 &&
+               Math.Abs(audit.LeafIntensitySum-11)<1e-12 &&
+               audit.DetectorHitEvents==2 &&
+               !audit.PhysicalCoatingMaterialClippingAttributionKnown &&
+               !audit.DetectorHitEnergyDisjoint &&
+               !audit.PhysicalEnergyClosureEstablished,
+            "ZRD branch accounting invented physical conservation or incorrectly summed split-ray intensity.");
+        AssertThrows<ArgumentException>(()=>ZrdPathEnergyCore.Audit(new[]{
+            new ZrdPathEnergyCore.Segment(1,0,-1,1,1,false),
+            new ZrdPathEnergyCore.Segment(1,1,4,0.5,2,false)
+        }),"Missing ZRD ray parent was accepted.");
+        AssertThrows<ArgumentException>(()=>ZrdPathEnergyCore.Audit(new[]{
+            new ZrdPathEnergyCore.Segment(1,0,-1,1,1,false),
+            new ZrdPathEnergyCore.Segment(1,0,-1,1,1,false)
+        }),"Duplicate ZRD child node was accepted.");
+        AssertThrows<ArgumentException>(()=>ZrdPathEnergyCore.Audit(new[]{
+            new ZrdPathEnergyCore.Segment(1,0,-1,double.NaN,1,false)
+        }),"Nonfinite physical power was accepted.");
+        var gain=ZrdPathEnergyCore.Audit(new[]{
+            new ZrdPathEnergyCore.Segment(1,0,-1,1,1,false),
+            new ZrdPathEnergyCore.Segment(1,1,0,2,2,false)
+        });
+        Assert(gain.NegativeTransitionDifferenceMagnitude==1 &&
+               !gain.PhysicalEnergyClosureEstablished,
+            "Intensity gain was hidden or renormalized away.");
     }
 
     private static void VerifySameTraceLedger()

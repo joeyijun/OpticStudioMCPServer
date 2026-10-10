@@ -516,3 +516,25 @@ Detector `fractionOfDeclaredSource` therefore remains NULL unless
 verified against the actual source set. The source sum does not
 reclassify missing power as coating absorption, bulk absorption or CAD
 clipping.
+
+### ZRD branch topology and why source-to-detector closure remains gated
+
+The pure `ZrdPathEnergyCore` now checks finite ray/segment IDs,
+unique parent links, branching, positive/negative parent→children
+intensity differences and leaf energy across a BOUNDED input graph.
+It explicitly labels ALL such differences `unexplained` and
+keeps detector hits as non-additive observations, not energy sinks.
+It rejects missing parents, duplicates, nonfinite intensities and
+algebraic inconsistencies. This preparatory core is regression-tested
+without ZOS-API.
+
+The ZOS-API 2026 `IZRDReaderResults` exposes `ReadNextResult`,
+`ReadNextSegment`, `SegmentParent`, `Intensity`,
+`HitObject` and reflection/scatter flags; see the official
+[ZRD documentation](https://developer.synopsys.com/docs/zemax-opticstudio-zos-api-2026-r1/reference/interface_z_o_s_a_p_i_1_1_tools_1_1_ray_trace_1_1_i_z_r_d_reader_results.md).
+These raw fields STILL need a verified adapter handling splitting,
+parent semantics, material interfaces, and detector revisits before
+classifying interface R/T/A or absorption.
+We have NOT enabled ray-file recording or imported ZRD into this
+read-only core: large ZRD file IO and permissions require separate
+HighImpact authorization and retention/cleanup design.
