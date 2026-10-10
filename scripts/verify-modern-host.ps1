@@ -188,7 +188,7 @@ if ($privateRpcTest -notmatch '2026-07-28' -or $privateRpcTest -notmatch 'io\.mo
     $privateRpcTest -notmatch 'Send2026ListToolsAsync' -or $privateRpcTest -match '"initialize"') {
   throw "The E2E suite must cover stateless discovery, manifest mismatch, event dispatch, and distinct same-info client instances."
 }
-if ($schemaTest -notmatch 'StaticToolManifest\.All\.Count != 139' -or $schemaTest -notmatch 'zemax_open_file' -or
+if ($schemaTest -notmatch 'StaticToolManifest\.All\.Count != 140' -or $schemaTest -notmatch 'zemax_open_file' -or
     $schemaTest -notmatch 'zemax_set_fields' -or $schemaTest -notmatch 'zemax_optimize' -or
     $schemaTest -notmatch 'unresolved opaque object contracts') {
   throw "Generated manifest regressions must verify count, policy metadata, required parameters, nested records, defaults, and absence of opaque contracts."
