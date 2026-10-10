@@ -51,7 +51,8 @@ public sealed class GetNscDetectorTool
         int? RoiPeakColumn = null,
         NscDetectorTilePreview.Plan? NativeTilePlan = null,
         double[][]? RoiMeanHeatmap = null,
-        string? RoiMeanHeatmapCaveat = null);
+        string? RoiMeanHeatmapCaveat = null,
+        NscPixelCalibration.Peak? UserCalibratedPeakLocalPosition = null);
 
     [ZemaxTool(Name = "zemax_get_nsc_detector")]
     [Description("Read NSC detector dimensions, total incident flux, ray hits and optionally a bounded ROI flux/irradiance pixel matrix. Pixel values are native OpticStudio data (not automatically power-normalized). Use after tracing and verify source-power units.")]
@@ -67,10 +68,15 @@ public sealed class GetNscDetectorTool
         [Description("Return up to 64 tiles per page (each <=4096 native pixels) to reconstruct a large detector with multiple bounded ROI calls.")] bool includeTilePlan = false,
         [Description("0-based page of the native row-major tile plan.")] int tilePlanPage = 0,
         [Description("Optional mean-binned heatmap size 2..16, only with includePixels=true. 0 disables heatmap.")] int heatmapBins = 0,
+        [Description("Optional signed native COLUMN→detector LOCAL X axis mapping, -1 or +1, user-calibrated with a physical landmark. 0 means unknown. Must be supplied with calibratedRowYSign.")] int calibratedColumnXSign = 0,
+        [Description("Optional signed native ROW→detector LOCAL Y axis mapping, -1 or +1, user-calibrated with a physical landmark. 0 means unknown. Must be supplied with calibratedColumnXSign.")] int calibratedRowYSign = 0,
         CancellationToken cancellationToken = default)
     {
         if (objectNumber < 1)
             return new Result(false, "objectNumber must be at least 1.", objectNumber, null, null, 0, 0, 0, null);
+        if ((calibratedColumnXSign!=0 || calibratedRowYSign!=0) &&
+            (calibratedColumnXSign is not (-1 or 1) || calibratedRowYSign is not (-1 or 1) || !includePixels))
+            return new Result(false,"Calibrated axis signs must both be -1/+1 and require includePixels=true.",objectNumber,null,null,0,0,0,null);
         if (tilePlanPage < 0 || heatmapBins != 0 && (heatmapBins < 2 || heatmapBins > 16) ||
             heatmapBins > 0 && !includePixels)
             return new Result(false, "tilePlanPage must be nonnegative and heatmapBins is 0 or 2..16 with includePixels=true.",
@@ -168,7 +174,7 @@ public sealed class GetNscDetectorTool
                         pitchX = 2d * rect.XHalfWidth / nx;
                         pitchY = 2d * rect.YHalfWidth / ny;
                         pixelArea = pitchX * pitchY;
-                        orientation = "native lower-left (-X,-Y); +column is +X, +row is +Y; not screen-image orientation";
+                        orientation = "native row-major index ordering only; row/column to detector local X/Y SIGN and display orientation are NOT independently calibrated";
                     }
                 }
 
@@ -237,6 +243,16 @@ public sealed class GetNscDetectorTool
                         throw new InvalidOperationException("ROI normalization is non-finite; verify source and detector flux scales.");
                 }
 
+                NscPixelCalibration.Peak? calibratedPeak=null;
+                if(calibratedColumnXSign!=0 && peakRow.HasValue && peakColumn.HasValue)
+                {
+                    if(!pitchX.HasValue||!pitchY.HasValue)
+                        throw new ArgumentException("Signed pixel calibration requires a rectangular detector with known physical pitch.");
+                    calibratedPeak=NscPixelCalibration.ConvertPeak(peakRow.Value,peakColumn.Value,
+                        checked((int)rows),checked((int)columns),pitchX.Value,pitchY.Value,
+                        calibratedColumnXSign,calibratedRowYSign);
+                }
+
                 double? detectorLaunchedFraction = launchedFlux.HasValue && totalFlux.HasValue
                     ? totalFlux.Value / launchedFlux.Value : null;
                 if (detectorLaunchedFraction.HasValue &&
@@ -264,7 +280,8 @@ public sealed class GetNscDetectorTool
                     tilePlan,
                     pixelGrid != null && heatmapBins > 0
                         ? NscDetectorTilePreview.MeanHeatmap(pixelGrid, heatmapBins) : null,
-                    heatmapBins > 0 ? "Native ROI ordering, per-bin arithmetic MEAN of pixel values; not a detector-power integral, RGB visualization, or physical orientation calibration." : null);
+                    heatmapBins > 0 ? "Native ROI ordering, per-bin arithmetic MEAN of pixel values; not a detector-power integral, RGB visualization, or physical orientation calibration." : null,
+                    calibratedPeak);
             }, cancellationToken);
         }
         catch (OperationCanceledException)

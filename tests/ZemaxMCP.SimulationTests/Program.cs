@@ -28,6 +28,7 @@ internal static class Program
             VerifyUserCoatingRta();
             VerifyNativeCoatingReflection();
             VerifyNativeDetectorTiles();
+            VerifySignedPixelCalibration();
             VerifyDetectorCsvExport();
             VerifySameTraceLedger();
             VerifyZrdPathEnergyCore();
@@ -259,6 +260,25 @@ internal static class Program
                 "A cancelled/failed export left a temporary or replaced CSV.");
         }
         finally { Directory.Delete(dir,true); }
+    }
+
+    private static void VerifySignedPixelCalibration()
+    {
+        var peak=NscPixelCalibration.ConvertPeak(0,0,4,6,0.1,0.2,1,-1);
+        Assert(Math.Abs(peak.LocalX+0.25)<1e-12 &&
+               Math.Abs(peak.LocalY-0.3)<1e-12 &&
+               peak.Evidence.Contains("USER-declared"),
+            "Native detector coordinate calibration invented axis conventions.");
+        var flipped=NscPixelCalibration.ConvertPeak(0,0,4,6,0.1,0.2,-1,1);
+        Assert(Math.Abs(flipped.LocalX-0.25)<1e-12 &&
+               Math.Abs(flipped.LocalY+0.3)<1e-12,
+            "Calibrated detector signed axis mapping failed.");
+        AssertThrows<ArgumentException>(()=>NscPixelCalibration.ConvertPeak(
+            0,0,4,6,0.1,0.2,0,1),
+            "Uncalibrated native detector column orientation was accepted.");
+        AssertThrows<ArgumentException>(()=>NscPixelCalibration.ConvertPeak(
+            4,0,4,6,0.1,0.2,1,1),
+            "Out-of-detector peak row was accepted.");
     }
 
     private static void VerifyNativeDetectorTiles()

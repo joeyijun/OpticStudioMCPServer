@@ -18,6 +18,7 @@
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\CoatingRtaAudit.cs" Link="Server\CoatingRtaAudit.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\CoatingPerformanceReflection.cs" Link="Server\CoatingPerformanceReflection.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscDetectorTilePreview.cs" Link="Server\NscDetectorTilePreview.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscPixelCalibration.cs" Link="Server\NscPixelCalibration.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscDetectorCsvExport.cs" Link="Server\NscDetectorCsvExport.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscSameTraceLedger.cs" Link="Server\NscSameTraceLedger.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\ZrdPathEnergyCore.cs" Link="Server\ZrdPathEnergyCore.cs" />

@@ -590,3 +590,19 @@ paths rather than watts. A ZRD hash is never treated as evidence that
 its contents came from the same execution as an NSC detector snapshot.
 Neither explanation closes the energy budget or multiplies separately
 estimated optical coating losses into already traced detector flux.
+
+### E3 explicit native detector pixel-axis orientation (no implicit handedness)
+
+For rectangular NSC detectors with physical X/Y pitch, native
+`GetDetectorData` is interpreted as a **row-major pixel index**.
+That *does not* prove the sign or handedness of detector-local
+coordinates or screen display orientation. The previous unqualified
+"native lower-left" statement has been removed.
+`zemax_get_nsc_detector` optionally accepts a pair of **USER-calibrated**
+signs `calibratedColumnXSign` and `calibratedRowYSign` (each -1/+1),
+with `includePixels:true`. When supplied, it returns the native ROI
+peak mapped to the local pixel center, with explicit human-calibration
+provenance; without both signs no local peak position is asserted.
+This does **not** infer global XYZ orientation, verify a ZOS release's
+pixel raster direction or establish native irradiance unit calibration.
+Use a known physical landmark and live detector comparison for E3.

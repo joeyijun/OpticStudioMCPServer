@@ -84,7 +84,7 @@ internal static class StaticToolManifestAssertions
             throw new InvalidOperationException("Filesystem-writing NSC CSV export must be privileged and explicitly bounded.");
 
         var detectorSchema = StaticToolManifest.GetRequired("zemax_get_nsc_detector").InputSchema.GetProperty("properties");
-        foreach (var field in new[] { "includePixels", "dataType", "startRow", "startColumn", "rowCount", "columnCount" })
+        foreach (var field in new[] { "includePixels", "dataType", "startRow", "startColumn", "rowCount", "columnCount", "calibratedColumnXSign", "calibratedRowYSign" })
             if (!detectorSchema.TryGetProperty(field, out _))
                 throw new InvalidOperationException("Detector ROI tool is missing the published field " + field);
 
