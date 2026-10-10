@@ -362,6 +362,10 @@ internal static class Program
                         worker.TryGetCachedStatus(out status);
                     }
                 }
+                var validatedAt = status != null ? worker.LastValidatedStatusAt : null;
+                var statusAgeSeconds = validatedAt.HasValue
+                    ? Math.Max(0, (DateTimeOffset.UtcNow - validatedAt.Value).TotalSeconds)
+                    : (double?)null;
                 var profile = httpContext.User.FindFirst("zemax-mcp-auth-profile")?.Value;
                 if (credentialStore != null)
                 {
@@ -392,6 +396,8 @@ internal static class Program
                         workerBusy,
                         foregroundRpcBusy,
                         statusFresh,
+                        statusValidatedAt = validatedAt,
+                        statusAgeSeconds,
                         lastKnownStatus = status != null,
                         zosApiLoaded = status?.ZosApiLoaded ?? false,
                         zosApiConnected = status?.Connected ?? false,
