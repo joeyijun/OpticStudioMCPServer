@@ -24,6 +24,7 @@ internal static class Program
             VerifyGlobalMechanicalPolygon();
             VerifyFiniteRaySegmentBoundary();
             VerifyCadMultistopFirstBlocker();
+            VerifyCadTriangleMeshFirstHit();
             VerifyUserCoatingRta();
             VerifyNativeCoatingReflection();
             VerifyNativeDetectorTiles();
@@ -338,6 +339,45 @@ internal static class Program
         AssertThrows<ArgumentException>(()=>CoatingRtaAudit.Evaluate(1,
             new[]{new[]{double.NaN,0.5,0.2}},new[]{false}),
             "Non-finite coating accepted.");
+    }
+
+    private static void VerifyCadTriangleMeshFirstHit()
+    {
+        static GlobalFootprintProjection.Point3 P(double x,double y,double z)=>new(x,y,z);
+        static GlobalRaySegmentBoundary.Segment Segment(double x,double y,double z1,double z2)=>
+            new(P(x,y,z1),P(x,y,z2));
+        var faces=new[]{
+            new CadTriangleMeshAudit.Triangle(new[]{
+                new[]{-2d,-2d,5d},new[]{2d,-2d,5d},new[]{0d,2d,5d}},101),
+            new CadTriangleMeshAudit.Triangle(new[]{
+                new[]{-2d,-2d,8d},new[]{2d,-2d,8d},new[]{0d,2d,8d}},202)
+        };
+        var rays=new List<IReadOnlyList<GlobalRaySegmentBoundary.Segment?>>{
+            new GlobalRaySegmentBoundary.Segment?[]{Segment(0,0,0,10)},
+            new GlobalRaySegmentBoundary.Segment?[]{Segment(4,4,0,10)},
+            new GlobalRaySegmentBoundary.Segment?[]{null},
+            new GlobalRaySegmentBoundary.Segment?[]{Segment(0,0,6,10)}
+        };
+        var outcome=CadTriangleMeshAudit.Assess(faces,rays);
+        Assert(outcome.SampledRays==4 && outcome.FirstBlockedRays==2 &&
+               outcome.UnblockedRays==1 && outcome.UnknownRays==1 &&
+               outcome.Parts.Single(x=>x.PartId==101).FirstBlockedRays==1 &&
+               outcome.Parts.Single(x=>x.PartId==202).FirstBlockedRays==1 &&
+               outcome.FirstCriticalHit==P(0,0,5),
+            "Mesh audit must attribute at most one earliest first-hit per ray/part.");
+        var reversed=CadTriangleMeshAudit.Assess(faces,new List<IReadOnlyList<GlobalRaySegmentBoundary.Segment?>>{
+            new GlobalRaySegmentBoundary.Segment?[]{Segment(0,0,10,0)}
+        });
+        Assert(reversed.Parts.Single(x=>x.PartId==202).FirstBlockedRays==1,
+            "Reverse propagation must hit the physically first mesh surface.");
+        AssertThrows<ArgumentException>(()=>CadTriangleMeshAudit.Assess(new[]{
+            new CadTriangleMeshAudit.Triangle(new[]{
+                new[]{0d,0d,0d},new[]{1d,1d,1d},new[]{2d,2d,2d}},1)
+        },rays),"Degenerate opaque triangles must be rejected.");
+        AssertThrows<ArgumentException>(()=>CadTriangleMeshAudit.Assess(new[]{
+            new CadTriangleMeshAudit.Triangle(new[]{
+                new[]{0d,0d,double.NaN},new[]{1d,0d,0d},new[]{0d,1d,0d}},1)
+        },rays),"Nonfinite triangles must be rejected.");
     }
 
     private static void VerifyCadMultistopFirstBlocker()

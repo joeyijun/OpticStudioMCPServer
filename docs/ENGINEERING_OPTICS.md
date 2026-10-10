@@ -538,3 +538,21 @@ classifying interface R/T/A or absorption.
 We have NOT enabled ray-file recording or imported ZRD into this
 read-only core: large ZRD file IO and permissions require separate
 HighImpact authorization and retention/cleanup design.
+
+### E4 opaque triangulated CAD mesh (bounded first-hit audit)
+
+`zemax_ray_footprint` supports `cadOpaqueMeshTriangles` as up to 256
+explicit global XYZ triangles (3 vertices per face) and optional matching
+`cadOpaqueMeshPartIds`. Request consecutive increasing LDE `surfaces`
+(2..24) so real traced local XYZ surface hits can be independently
+transformed and joined into finite ray chords. Unlike the clear-opening
+plane stop mode, triangles are assumed **two-sided opaque CAD surfaces**.
+For each pupil ray, the tool attributes a potential obstruction only to
+the *earliest* triangle hit along its ordered optical path and counts the
+first blocked part once. Missing ray segments, coplanar ambiguous chords,
+and invalid global geometry never become a fabricated transmission loss.
+
+These triangles can be nonplanar *as a collection*, but the tool does not
+certify watertightness, import CAD solid files, assign material transmission,
+or calculate full power conservation. This is a bounded CAD surface
+intersection diagnostic, not solid B-rep collision physics.

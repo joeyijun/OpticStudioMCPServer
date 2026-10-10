@@ -14,6 +14,7 @@
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\GlobalPlanarMechanicalBoundary.cs" Link="Server\GlobalPlanarMechanicalBoundary.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\GlobalRaySegmentBoundary.cs" Link="Server\GlobalRaySegmentBoundary.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\CadMultiSegmentAudit.cs" Link="Server\CadMultiSegmentAudit.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\CadTriangleMeshAudit.cs" Link="Server\CadTriangleMeshAudit.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\CoatingRtaAudit.cs" Link="Server\CoatingRtaAudit.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\CoatingPerformanceReflection.cs" Link="Server\CoatingPerformanceReflection.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscDetectorTilePreview.cs" Link="Server\NscDetectorTilePreview.cs" />

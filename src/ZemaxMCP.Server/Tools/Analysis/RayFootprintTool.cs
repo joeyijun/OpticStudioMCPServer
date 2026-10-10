@@ -32,7 +32,8 @@ public sealed class RayFootprintTool
         int Wavelength, double Hx, double Hy, int GridSize, string PositionUnit,
         IReadOnlyList<SurfaceFootprint> Surfaces,
         int? MostCriticalVignettingSurface, string Interpretation,
-        CadMultiSegmentAudit.Report? MultiStopCadPath = null);
+        CadMultiSegmentAudit.Report? MultiStopCadPath = null,
+        CadTriangleMeshAudit.Report? OpaqueCadMeshPath = null);
 
     [ZemaxTool(Name = "zemax_ray_footprint")]
     [Description("Trace a bounded real-ray pupil grid to selected sequential LDE surfaces. Return per-surface LOCAL X/Y footprint envelope, centroid/RMS, effective explicit circular aperture boundary, first-vignette signatures, clipping and trace-error counts; optionally sample points for plotting. Optical semi-diameter is informational, not a guaranteed clear aperture.")]
@@ -51,7 +52,9 @@ public sealed class RayFootprintTool
         [Description("Maximum absolute separation of a surviving global XYZ ray intercept from the global mechanical polygon plane, in lens units. Default 0.01; rays farther away are UNKNOWN, not cut.")] double mechanicalPlaneTolerance = 0.01,
         [Description("For mechanicalGlobalPolygon, choose surface (default) or preceding-segment (finite chord from immediately previous LDE surface).")] string globalMechanicalMode = "surface",
         [Description("Optional up to 12 separate global XYZ planar clear-aperture polygons, one per CAD stop. Used with cadStopAfterSurfaces and an explicitly supplied consecutive increasing surfaces array (at least 2); first physical blocker per ray, never double-count downstream stops. Cannot combine with other mechanical outlines.")] double[][][]? cadStopGlobalPolygons = null,
-        [Description("For each cadStopGlobalPolygons entry, LDE surface index BEFORE the stop. The stop must lie on the finite segment from this index to the NEXT consecutive LDE surface. Same index can contain multiple physical planes.")] int[]? cadStopAfterSurfaces = null,
+        [Description("For each cadStopGlobalPolygons entry, LDE surface index BEFORE the stop.")] int[]? cadStopAfterSurfaces = null,
+        [Description("Optional global XYZ opaque two-sided triangle mesh: up to 256 triangles, each [[x,y,z],[x,y,z],[x,y,z]]. Requires consecutive surfaces; mutually exclusive with planar mechanical outlines/stops. Open sheet meshes do not prove inside/outside solids.")] double[][][]? cadOpaqueMeshTriangles = null,
+        [Description("Optional positive CAD part ID for every mesh triangle. Omitted means all triangles belong to part 1.")] int[]? cadOpaqueMeshPartIds = null,
         CancellationToken cancellationToken = default)
     {
         const string note = "User mechanical outlines are assessed only against surviving clear rays, not entrance-pupil throughput. Local user vertices and intercepts must share the same target LOCAL coordinate frame. Optional user GLOBAL planar polygon vertices are evaluated with actual traced local Z, official LDE GetGlobalMatrix and explicit plane separation tolerance. Ray samples that do not coincide with the measured global plane are UNKNOWN, not obstructed; globalMechanicalMode=surface is coincident-intercept-only; preceding-segment intersects the exact finite ray chord between immediately adjacent traced LDE surfaces with a user planar stop in 3D. This is NOT full arbitrary solid CAD tracing or a physical transmitted-power measurement. No aperture changes. Optional global intercepts use traced local Z and OpticStudio's LDE GetGlobalMatrix. Local LDE coordinates vary across coordinate breaks and folded systems. Explicit circular apertures are geometry; semi-diameter alone does not cut rays. VignetteCode identifies the reported blocking surface; ray-trace errors are not geometric clipping. Clear-ray centroid/RMS exclude blocked and invalid rays.";
@@ -64,6 +67,15 @@ public sealed class RayFootprintTool
             if (outlineCount > 1)
                 throw new ArgumentException("Specify only one of mechanicalRectangle, mechanicalPolygon or mechanicalGlobalPolygon.");
             var multiStops=cadStopGlobalPolygons is {Length:>0};
+            var meshRequested=cadOpaqueMeshTriangles is {Length:>0};
+            if(cadOpaqueMeshTriangles!=null &&
+                (!meshRequested || cadOpaqueMeshTriangles.Length>256 ||
+                 outlineCount>0 || multiStops))
+                throw new ArgumentException("An opaque triangle mesh requires 1..256 triangles and is mutually exclusive with planar CAD outlines/stops.");
+            if(cadOpaqueMeshPartIds!=null &&
+                (!meshRequested || cadOpaqueMeshPartIds.Length!=cadOpaqueMeshTriangles!.Length ||
+                 cadOpaqueMeshPartIds.Any(id=>id<1)))
+                throw new ArgumentException("CAD mesh group IDs must be positive and match triangles.");
             if ((cadStopAfterSurfaces!=null || cadStopGlobalPolygons!=null) &&
                 (!multiStops || cadStopAfterSurfaces==null ||
                  cadStopAfterSurfaces.Length!=cadStopGlobalPolygons!.Length ||
@@ -81,7 +93,7 @@ public sealed class RayFootprintTool
             if (mechanical != null) MechanicalFootprintBoundary.Validate(mechanical);
             if (outlineCount == 0 && mechanicalSurface != 0)
                 throw new ArgumentException("mechanicalSurface requires an outline.");
-            if (multiStops && (surfaces is not {Length:>=2 and <=24} ||
+            if ((multiStops || meshRequested) && (surfaces is not {Length:>=2 and <=24} ||
                 surfaces.Zip(surfaces.Skip(1),(a,b)=>b==a+1).Any(ok=>!ok)))
                 throw new ArgumentException("Multistop CAD requires explicit, consecutive, strictly increasing LDE surfaces covering the entire physical ray path.");
             if (wavelength < 1 || gridSize is < 5 or > 51 ||
@@ -100,7 +112,9 @@ public sealed class RayFootprintTool
                     ["mechanicalPlaneTolerance"] = mechanicalPlaneTolerance,
                     ["globalMechanicalMode"] = globalMechanicalMode,
                     ["cadStopGlobalPolygons"] = cadStopGlobalPolygons,
-                    ["cadStopAfterSurfaces"] = cadStopAfterSurfaces
+                    ["cadStopAfterSurfaces"] = cadStopAfterSurfaces,
+                    ["cadOpaqueMeshTriangles"] = cadOpaqueMeshTriangles,
+                    ["cadOpaqueMeshPartIds"] = cadOpaqueMeshPartIds
                 }, system =>
                 {
                     if (system.Mode != SystemType.Sequential)
@@ -186,7 +200,7 @@ public sealed class RayFootprintTool
                             GlobalFootprintProjection.Result? global = null;
                             GlobalPlanarMechanicalBoundary.Assessment? globalMechanical = null;
                             GlobalRaySegmentBoundary.Assessment? globalSegment = null;
-                            if (includeGlobalCoordinates || multiStops ||
+                            if (includeGlobalCoordinates || multiStops || meshRequested ||
                                 (mechanicalGlobalPolygon != null && target == comparisonSurface))
                             {
                                 if (!system.LDE.GetGlobalMatrix(target,
@@ -199,7 +213,7 @@ public sealed class RayFootprintTool
                                     new[] { r21,r22,r23 }, new[] { r31,r32,r33 } };
                                 var origin = new[] { originX,originY,originZ };
                                 var localHits = clear.Select(ray => (ray.X,ray.Y,ray.Z)).ToArray();
-                                if(multiStops)
+                                if(multiStops || meshRequested)
                                 {
                                     var positions=new GlobalFootprintProjection.Point3?[rays.Length];
                                     for(var i=0;i<rays.Length;i++)
@@ -262,7 +276,8 @@ public sealed class RayFootprintTool
                     finally { trace.Close(); }
 
                     CadMultiSegmentAudit.Report? multiStopReport=null;
-                    if(multiStops)
+                    CadTriangleMeshAudit.Report? meshReport=null;
+                    if(multiStops || meshRequested)
                     {
                         var paths=new List<IReadOnlyList<GlobalRaySegmentBoundary.Segment?>>();
                         for(var ray=0;ray<pupil.Length;ray++)
@@ -277,13 +292,21 @@ public sealed class RayFootprintTool
                             }
                             paths.Add(chain);
                         }
-                        multiStopReport=CadMultiSegmentAudit.Assess(
-                            targets[0],multiStopSpecs!,paths);
+                        if(multiStops)
+                            multiStopReport=CadMultiSegmentAudit.Assess(
+                                targets[0],multiStopSpecs!,paths);
+                        if(meshRequested)
+                        {
+                            var faces=cadOpaqueMeshTriangles!.Select((face,i)=>
+                                new CadTriangleMeshAudit.Triangle(face,
+                                    cadOpaqueMeshPartIds==null?1:cadOpaqueMeshPartIds[i])).ToArray();
+                            meshReport=CadTriangleMeshAudit.Assess(faces,paths);
+                        }
                     }
                     var worst = output.OrderByDescending(x => x.FirstVignettingCodeRays ?? 0)
                         .FirstOrDefault(x => x.FirstVignettingCodeRays > 0);
                     return new Result(true, null, wavelength, hx, hy, gridSize, "lens units",
-                        output, worst?.Surface, note,multiStopReport);
+                        output, worst?.Surface, note,multiStopReport,meshReport);
                 }, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
