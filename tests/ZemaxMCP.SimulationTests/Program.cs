@@ -20,6 +20,7 @@ internal static class Program
             VerifySpectralWeights();
             VerifyMechanicalFootprint();
             VerifyGlobalFootprint();
+            VerifyGlobalMechanicalPolygon();
             VerifyUserCoatingRta();
             VerifyNativeDetectorTiles();
             VerifyDetectorCsvExport();
@@ -185,6 +186,40 @@ internal static class Program
         AssertThrows<ArgumentException>(()=>CoatingRtaAudit.Evaluate(1,
             new[]{new[]{double.NaN,0.5,0.2}},new[]{false}),
             "Non-finite coating accepted.");
+    }
+
+    private static void VerifyGlobalMechanicalPolygon()
+    {
+        var polygon=new[]{new[]{-2d,-1d,5d},new[]{2d,-1d,5d},
+            new[]{2d,1d,5d},new[]{-2d,1d,5d}};
+        var identity=new[]{new[]{1d,0d,0d},new[]{0d,1d,0d},new[]{0d,0d,1d}};
+        var local=new (double X,double Y,double Z)[]{
+            (0,0,5),(3,0,5),(0,0,5.1),(-2,0,5)};
+        var result=GlobalPlanarMechanicalBoundary.Assess(polygon,identity,
+            new[]{0d,0d,0d},local,0.01);
+        Assert(result.SurvivingRays==4 && result.PlaneMatchedRays==3 &&
+               result.PlaneUnmatchedRays==1 && result.OutsideRays==1 &&
+               Math.Abs(result.MinimumSignedEdgeClearance!.Value+1)<1e-12 &&
+               Math.Abs(result.OutsideFractionOfPlaneMatched!.Value-1d/3)<1e-12,
+            "Global planar mechanical result confused outside rays and rays off the boundary plane.");
+        var folded=new[]{new[]{0d,-1d,0d},new[]{1d,0d,0d},new[]{0d,0d,1d}};
+        var rotated=GlobalPlanarMechanicalBoundary.Assess(polygon,folded,
+            new[]{0d,0d,0d},new (double X,double Y,double Z)[]{(0,0,5),(0,-3,5)},0.01);
+        Assert(rotated.OutsideRays==1 && rotated.PlaneMatchedRays==2,
+            "Global CAD classification failed under a folded rotated LDE frame.");
+        AssertThrows<ArgumentException>(()=>GlobalPlanarMechanicalBoundary.Assess(
+            new[]{new[]{0d,0d,0d},new[]{1d,0d,0d},
+                new[]{1d,1d,0d},new[]{0d,1d,1d}},
+            identity,new[]{0d,0d,0d},local,0.01),
+            "Noncoplanar CAD polygon was flattened silently.");
+        AssertThrows<ArgumentException>(()=>GlobalPlanarMechanicalBoundary.Assess(
+            polygon,identity,new[]{0d,0d,0d},local,0),
+            "Zero plane matching tolerance was accepted.");
+        var none=GlobalPlanarMechanicalBoundary.Assess(polygon,identity,
+            new[]{0d,0d,0d},new (double X,double Y,double Z)[]{(0,0,7)},0.01);
+        Assert(none.PlaneMatchedRays==0 && none.MinimumSignedEdgeClearance==null &&
+               none.OutsideFractionOfPlaneMatched==null,
+            "Unmatched ray intercepts were reported as mechanical clipping.");
     }
 
     private static void VerifyGlobalFootprint()

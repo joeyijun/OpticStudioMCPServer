@@ -100,6 +100,28 @@ Example:
 - A requested point limit affects only **returned plotted samples**; all
   sampled rays still contribute to the numerical envelope and clipping count.
 
+### Global XYZ planar mechanical outlines
+
+For a measured clear aperture that is described directly in OpticStudio's
+**global XYZ lens-unit coordinate system**, set `mechanicalGlobalPolygon`
+with 3–64 coplanar [x,y,z] vertices. This is mutually exclusive with
+`mechanicalRectangle` / `mechanicalPolygon`. Specify
+`mechanicalSurface` for multi-surface analysis, and select an explicit
+`mechanicalPlaneTolerance` (default **0.01 lens units**). The tool uses
+actual traced local X/Y/Z and the official LDE `GetGlobalMatrix` to
+classify only *surviving rays whose intercepts lie within that distance of
+the CAD polygon plane*. Output reports `planeMatchedRays`,
+`planeUnmatchedRays`, `outsideRays`, `minimumSignedEdgeClearance`
+and `outsideFractionOfPlaneMatched`. For a curved optical surface or a
+physically separate mechanical stop, a ray may be far from the CAD plane;
+those rays are **unknown** and are never labeled cut. Noncoplanar,
+self-intersecting or invalid CAD polygons are rejected, not flattened.
+
+This feature does **not** solve arbitrary solid-model intersections or trace
+a ray to a separate CAD plane. A noncoincident 3D edge needs a
+ray–plane / ray–solid intersection at the correct optical propagation path,
+which remains an independent engineering feature.
+
 ### User-declared mechanical outlines (new)
 
 `zemax_ray_footprint` can compare **surviving ray intercepts** against one

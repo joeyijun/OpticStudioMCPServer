@@ -75,11 +75,8 @@ public static class GlobalPlanarMechanicalBoundary
             localRayIntersections,0);
         var compared=0;var outside=0;var minimum=double.PositiveInfinity;
         var maximumPlaneDeviation=0d;
-        foreach(var point in globals.SamplePoints)
-        {
-            // SamplePoints is deliberately bounded; assess ALL below instead.
-            _=point;
-        }
+        // The projection above validates all traced local coordinates.
+        // Classification below deliberately iterates every surviving ray.
         foreach(var local in localRayIntersections)
         {
             var x=origin[0]+rotation[0][0]*local.X+rotation[0][1]*local.Y+rotation[0][2]*local.Z;
@@ -96,6 +93,8 @@ public static class GlobalPlanarMechanicalBoundary
             if(clearance<0)outside++;
             minimum=Math.Min(minimum,clearance);
         }
+        if(globals.SurvivingRayCount!=localRayIntersections.Count)
+            throw new InvalidDataException("Global point projection changed the ray count.");
         return new Assessment(localRayIntersections.Count,compared,
             localRayIntersections.Count-compared,compared-outside,outside,
             compared==0?null:minimum,compared==0?null:(double)outside/compared,
