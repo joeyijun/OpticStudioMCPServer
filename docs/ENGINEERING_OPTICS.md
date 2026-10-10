@@ -461,3 +461,27 @@ Full per-interaction energy conservation requires separately verifiable
 same-trace ray path/absorption provenance (e.g., validated ZRD), which
 is NOT produced by this trace tool. This bounded design deliberately
 avoids fabricating a complete optical energy ledger from incomplete data.
+
+### Multi-stop CAD path (first blocker, no repeated geometric losses)
+
+`zemax_ray_footprint` additionally accepts arrays
+`cadStopGlobalPolygons` (1..12 separate planar clear openings, global XYZ)
+and `cadStopAfterSurfaces` (one LDE surface ID BEFORE each stop),
+plus an explicit **strictly consecutive increasing** `surfaces` array
+covering every physical segment under analysis. It uses the same
+normalized pupil and selected field/wavelength for ALL LDE surfaces,
+transforms real local XYZ hits through each LDE GetGlobalMatrix and
+tests only the finite chords between adjacent surfaces. Traced rays
+blocked or invalid at an endpoint are `uncertainRays`. Other rays
+are attributed to the FIRST CAD opening they would fail, sorted by
+actual crossing location even for two stops within one LDE interval.
+`multiStopCadPath.stops[i].firstBlockedRays` counts each ray **once**,
+not once per downstream CAD stop. `firstBlockedRays + uncertainRays +
+fullyCheckedUnblockedRays = sampledPupilRays`.
+
+This remains a conditional geometric *proxy* on surviving sequential
+rays, not an input-to-detector power balance. Do not add these losses
+to ZOS-native ray intensity or native NSC detector flux, both of which
+can already include physical aperture interactions. All chosen stops
+are user-supplied opaque plane plates with a clear polygonal opening;
+it does not intersect arbitrary solids or curved CAD.

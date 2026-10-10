@@ -23,6 +23,7 @@ internal static class Program
             VerifyGlobalFootprint();
             VerifyGlobalMechanicalPolygon();
             VerifyFiniteRaySegmentBoundary();
+            VerifyCadMultistopFirstBlocker();
             VerifyUserCoatingRta();
             VerifyNativeCoatingReflection();
             VerifyNativeDetectorTiles();
@@ -269,6 +270,49 @@ internal static class Program
         AssertThrows<ArgumentException>(()=>CoatingRtaAudit.Evaluate(1,
             new[]{new[]{double.NaN,0.5,0.2}},new[]{false}),
             "Non-finite coating accepted.");
+    }
+
+    private static void VerifyCadMultistopFirstBlocker()
+    {
+        static double[][] Rect(double z) => new[]{
+            new[]{-1d,-1d,z},new[]{1d,-1d,z},
+            new[]{1d,1d,z},new[]{-1d,1d,z}};
+        static GlobalFootprintProjection.Point3 Point(double x,double z) =>
+            new(x,0,z);
+        var stops=new[]{
+            new CadMultiSegmentAudit.Stop(2,Rect(5),0.01),
+            new CadMultiSegmentAudit.Stop(3,Rect(15),0.01),
+            new CadMultiSegmentAudit.Stop(2,Rect(8),0.01)
+        };
+        var rays=new List<IReadOnlyList<GlobalRaySegmentBoundary.Segment?>>{
+            new GlobalRaySegmentBoundary.Segment?[]{
+                new(Point(2,0),Point(2,10)),new(Point(2,10),Point(2,20))
+            },
+            new GlobalRaySegmentBoundary.Segment?[]{
+                new(Point(0,0),Point(0,10)),new(Point(2,10),Point(2,20))
+            },
+            new GlobalRaySegmentBoundary.Segment?[]{
+                null,new(Point(2,10),Point(2,20))
+            },
+            new GlobalRaySegmentBoundary.Segment?[]{
+                new(Point(0,0),Point(0,10)),new(Point(0,10),Point(0,20))
+            }
+        };
+        var audit=CadMultiSegmentAudit.Assess(2,stops,rays);
+        Assert(audit.SampledPupilRays==4 && audit.FirstBlockedRays==2 &&
+               audit.FullyCheckedUnblockedRays==1 && audit.UncertainRays==1 &&
+               audit.Stops[0].FirstBlockedRays==1 &&
+               audit.Stops[1].FirstBlockedRays==1 &&
+               audit.Stops[2].FirstBlockedRays==0,
+            "Multiple CAD stops double-counted blocked rays or credited untraceable rays.");
+        var order=CadMultiSegmentAudit.Assess(2,new[]{
+            new CadMultiSegmentAudit.Stop(2,Rect(8),0.01),
+            new CadMultiSegmentAudit.Stop(2,Rect(5),0.01)
+        },new List<IReadOnlyList<GlobalRaySegmentBoundary.Segment?>>{
+            new GlobalRaySegmentBoundary.Segment?[]{new(Point(2,0),Point(2,10))}
+        });
+        Assert(order.Stops[1].FirstBlockedRays==1 && order.Stops[0].FirstBlockedRays==0,
+            "Same-chord mechanical stops must be ordered by real crossing location.");
     }
 
     private static void VerifyFiniteRaySegmentBoundary()

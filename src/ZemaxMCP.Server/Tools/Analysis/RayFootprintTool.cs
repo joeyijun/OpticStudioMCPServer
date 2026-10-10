@@ -31,7 +31,8 @@ public sealed class RayFootprintTool
     public sealed record Result(bool Success, string? Error,
         int Wavelength, double Hx, double Hy, int GridSize, string PositionUnit,
         IReadOnlyList<SurfaceFootprint> Surfaces,
-        int? MostCriticalVignettingSurface, string Interpretation);
+        int? MostCriticalVignettingSurface, string Interpretation,
+        CadMultiSegmentAudit.Report? MultiStopCadPath = null);
 
     [ZemaxTool(Name = "zemax_ray_footprint")]
     [Description("Trace a bounded real-ray pupil grid to selected sequential LDE surfaces. Return per-surface LOCAL X/Y footprint envelope, centroid/RMS, effective explicit circular aperture boundary, first-vignette signatures, clipping and trace-error counts; optionally sample points for plotting. Optical semi-diameter is informational, not a guaranteed clear aperture.")]
@@ -48,7 +49,9 @@ public sealed class RayFootprintTool
         [Description("Also return real 3D global-coordinate envelope/centroid and up to maxPointsPerSurface transformed clear rays. Uses actual traced local Z (surface sag) and official LDE GetGlobalMatrix; not a tangent-plane approximation.")] bool includeGlobalCoordinates = false,
         [Description("Optional measured PLANAR 3D global XYZ mechanical polygon [[x,y,z],...], 3..64 coplanar vertices. Exclusive with local rectangle/polygon; compared only with rays coincident with this LDE surface, not a separate plane intersection.")] double[][]? mechanicalGlobalPolygon = null,
         [Description("Maximum absolute separation of a surviving global XYZ ray intercept from the global mechanical polygon plane, in lens units. Default 0.01; rays farther away are UNKNOWN, not cut.")] double mechanicalPlaneTolerance = 0.01,
-        [Description("For mechanicalGlobalPolygon, choose surface (default: classify intercepts already on the same CAD plane) or preceding-segment (intersect finite global rays from the immediately PRECEDING LDE surface to the selected surface, using actual transformed XYZ endpoints). This analyzes a separate stop BETWEEN the two surfaces, without extrapolation. Requires mechanicalSurface >=2.")] string globalMechanicalMode = "surface",
+        [Description("For mechanicalGlobalPolygon, choose surface (default) or preceding-segment (finite chord from immediately previous LDE surface).")] string globalMechanicalMode = "surface",
+        [Description("Optional up to 12 separate global XYZ planar clear-aperture polygons, one per CAD stop. Used with cadStopAfterSurfaces and an explicitly supplied consecutive increasing surfaces array (at least 2); first physical blocker per ray, never double-count downstream stops. Cannot combine with other mechanical outlines.")] double[][][]? cadStopGlobalPolygons = null,
+        [Description("For each cadStopGlobalPolygons entry, LDE surface index BEFORE the stop. The stop must lie on the finite segment from this index to the NEXT consecutive LDE surface. Same index can contain multiple physical planes.")] int[]? cadStopAfterSurfaces = null,
         CancellationToken cancellationToken = default)
     {
         const string note = "User mechanical outlines are assessed only against surviving clear rays, not entrance-pupil throughput. Local user vertices and intercepts must share the same target LOCAL coordinate frame. Optional user GLOBAL planar polygon vertices are evaluated with actual traced local Z, official LDE GetGlobalMatrix and explicit plane separation tolerance. Ray samples that do not coincide with the measured global plane are UNKNOWN, not obstructed; globalMechanicalMode=surface is coincident-intercept-only; preceding-segment intersects the exact finite ray chord between immediately adjacent traced LDE surfaces with a user planar stop in 3D. This is NOT full arbitrary solid CAD tracing or a physical transmitted-power measurement. No aperture changes. Optional global intercepts use traced local Z and OpticStudio's LDE GetGlobalMatrix. Local LDE coordinates vary across coordinate breaks and folded systems. Explicit circular apertures are geometry; semi-diameter alone does not cut rays. VignetteCode identifies the reported blocking surface; ray-trace errors are not geometric clipping. Clear-ray centroid/RMS exclude blocked and invalid rays.";
@@ -60,6 +63,12 @@ public sealed class RayFootprintTool
                 (mechanicalGlobalPolygon==null?0:1);
             if (outlineCount > 1)
                 throw new ArgumentException("Specify only one of mechanicalRectangle, mechanicalPolygon or mechanicalGlobalPolygon.");
+            var multiStops=cadStopGlobalPolygons is {Length:>0};
+            if ((cadStopAfterSurfaces!=null || cadStopGlobalPolygons!=null) &&
+                (!multiStops || cadStopAfterSurfaces==null ||
+                 cadStopAfterSurfaces.Length!=cadStopGlobalPolygons!.Length ||
+                 cadStopAfterSurfaces.Length>12 || outlineCount>0))
+                throw new ArgumentException("Multistop CAD requires 1..12 matching polygons and after-surface IDs, exclusive with legacy mechanical outlines.");
             if (globalMechanicalMode is not ("surface" or "preceding-segment"))
                 throw new ArgumentException("globalMechanicalMode must be surface or preceding-segment.");
             if (globalMechanicalMode=="preceding-segment" && mechanicalGlobalPolygon==null)
@@ -72,6 +81,9 @@ public sealed class RayFootprintTool
             if (mechanical != null) MechanicalFootprintBoundary.Validate(mechanical);
             if (outlineCount == 0 && mechanicalSurface != 0)
                 throw new ArgumentException("mechanicalSurface requires an outline.");
+            if (multiStops && (surfaces is not {Length:>=2 and <=24} ||
+                surfaces.Zip(surfaces.Skip(1),(a,b)=>b==a+1).Any(ok=>!ok)))
+                throw new ArgumentException("Multistop CAD requires explicit, consecutive, strictly increasing LDE surfaces covering the entire physical ray path.");
             if (wavelength < 1 || gridSize is < 5 or > 51 ||
                 maxPointsPerSurface is < 0 or > 128 ||
                 (surfaces != null && (surfaces.Length > 24 || surfaces.Distinct().Count() != surfaces.Length)))
@@ -86,7 +98,9 @@ public sealed class RayFootprintTool
                     ["includeGlobalCoordinates"] = includeGlobalCoordinates,
                     ["mechanicalGlobalPolygon"] = mechanicalGlobalPolygon,
                     ["mechanicalPlaneTolerance"] = mechanicalPlaneTolerance,
-                    ["globalMechanicalMode"] = globalMechanicalMode
+                    ["globalMechanicalMode"] = globalMechanicalMode,
+                    ["cadStopGlobalPolygons"] = cadStopGlobalPolygons,
+                    ["cadStopAfterSurfaces"] = cadStopAfterSurfaces
                 }, system =>
                 {
                     if (system.Mode != SystemType.Sequential)
@@ -107,6 +121,8 @@ public sealed class RayFootprintTool
                         throw new ArgumentException("mechanicalSurface must match an inspected LDE target surface.");
                     if (globalMechanicalMode=="preceding-segment" && comparisonSurface<2)
                         throw new ArgumentException("A finite preceding LDE segment requires mechanicalSurface >=2 (target and immediately previous physical LDE surface).");
+                    if(multiStops && cadStopAfterSurfaces!.Any(x=>x<targets[0] || x>=targets[^1]))
+                        throw new ArgumentException("Each CAD stop must lie between consecutive inspected LDE surfaces.");
                     var pupil = SequentialPupilSampler.CircularGrid(gridSize);
                     if ((long)pupil.Length * (targets.Length +
                         (globalMechanicalMode=="preceding-segment"?1:0)) > 45000)
@@ -114,6 +130,10 @@ public sealed class RayFootprintTool
                     var trace = system.Tools.OpenBatchRayTrace()
                         ?? throw new InvalidOperationException("Batch ray trace is unavailable.");
                     var output = new List<SurfaceFootprint>();
+                    var pathSamples=new Dictionary<int,GlobalFootprintProjection.Point3?[]>();
+                    var multiStopSpecs=multiStops ? cadStopGlobalPolygons!.Select((poly,i)=>
+                        new CadMultiSegmentAudit.Stop(cadStopAfterSurfaces![i],poly,
+                            mechanicalPlaneTolerance)).ToArray() : null;
                     try
                     {
                         foreach (var target in targets)
@@ -166,7 +186,7 @@ public sealed class RayFootprintTool
                             GlobalFootprintProjection.Result? global = null;
                             GlobalPlanarMechanicalBoundary.Assessment? globalMechanical = null;
                             GlobalRaySegmentBoundary.Assessment? globalSegment = null;
-                            if (includeGlobalCoordinates ||
+                            if (includeGlobalCoordinates || multiStops ||
                                 (mechanicalGlobalPolygon != null && target == comparisonSurface))
                             {
                                 if (!system.LDE.GetGlobalMatrix(target,
@@ -179,6 +199,18 @@ public sealed class RayFootprintTool
                                     new[] { r21,r22,r23 }, new[] { r31,r32,r33 } };
                                 var origin = new[] { originX,originY,originZ };
                                 var localHits = clear.Select(ray => (ray.X,ray.Y,ray.Z)).ToArray();
+                                if(multiStops)
+                                {
+                                    var positions=new GlobalFootprintProjection.Point3?[rays.Length];
+                                    for(var i=0;i<rays.Length;i++)
+                                    {
+                                        if((i&63)==0)cancellationToken.ThrowIfCancellationRequested();
+                                        if(rays[i].Clear)
+                                            positions[i]=GlobalFootprintProjection.Transform(
+                                                rotation,origin,rays[i].X,rays[i].Y,rays[i].Z);
+                                    }
+                                    pathSamples.Add(target,positions);
+                                }
                                 if (includeGlobalCoordinates)
                                     global = GlobalFootprintProjection.Project(rotation, origin,
                                         localHits, maxPointsPerSurface);
@@ -229,10 +261,29 @@ public sealed class RayFootprintTool
                     }
                     finally { trace.Close(); }
 
+                    CadMultiSegmentAudit.Report? multiStopReport=null;
+                    if(multiStops)
+                    {
+                        var paths=new List<IReadOnlyList<GlobalRaySegmentBoundary.Segment?>>();
+                        for(var ray=0;ray<pupil.Length;ray++)
+                        {
+                            var chain=new GlobalRaySegmentBoundary.Segment?[targets.Length-1];
+                            for(var index=0;index<chain.Length;index++)
+                            {
+                                var start=pathSamples[targets[index]][ray];
+                                var end=pathSamples[targets[index+1]][ray];
+                                if(start!=null && end!=null)
+                                    chain[index]=new GlobalRaySegmentBoundary.Segment(start,end);
+                            }
+                            paths.Add(chain);
+                        }
+                        multiStopReport=CadMultiSegmentAudit.Assess(
+                            targets[0],multiStopSpecs!,paths);
+                    }
                     var worst = output.OrderByDescending(x => x.FirstVignettingCodeRays ?? 0)
                         .FirstOrDefault(x => x.FirstVignettingCodeRays > 0);
                     return new Result(true, null, wavelength, hx, hy, gridSize, "lens units",
-                        output, worst?.Surface, note);
+                        output, worst?.Surface, note,multiStopReport);
                 }, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
