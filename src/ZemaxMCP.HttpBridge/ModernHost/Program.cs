@@ -379,26 +379,14 @@ internal static class Program
                 var observed = workerClient.GetObservedJobStatuses();
                 // Prefer latest coalesced Worker progress for a Job ID; normal
                 // cached Job lists fill missing elapsed/queue information.
-                var merged = cached.ToDictionary(job => job.JobId, StringComparer.Ordinal);
-                foreach (var job in observed)
-                {
-                    if (merged.TryGetValue(job.JobId, out var older))
-                        merged[job.JobId] = new WorkerJobStatus {
-                            JobId = job.JobId, ToolName = job.ToolName,
-                            State = job.State, Fraction = job.Fraction ?? older.Fraction,
-                            QueuePosition = job.QueuePosition,
-                            Message = job.Message ?? older.Message,
-                            ElapsedSeconds = older.ElapsedSeconds
-                        };
-                    else merged[job.JobId] = job;
-                }
+                var merged = McpJobTaskDeltaMonitor.MergeStatuses(cached, observed);
                 var tasks = scoped && taskLedger != null
                     ? taskLedger.ListOwnedMetadata(owner, 25) : Array.Empty<object>();
                 var delta = jobTaskDelta.GetDelta(owner, scoped, cursor,
                     generation, workerClient.HasForegroundTool ||
                         controlLease.HasActiveBackgroundJobs,
                     statusAvailable || observed.Count > 0,
-                    merged.Values.ToArray(), tasks,
+                    merged, tasks,
                     id => jobOwners.IsOwned(owner, id, generation));
                 return Results.Json(delta);
             });

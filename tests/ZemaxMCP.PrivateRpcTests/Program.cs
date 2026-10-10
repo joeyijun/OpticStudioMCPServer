@@ -313,6 +313,16 @@ internal static class Program
     private static void VerifyJobsDeltaOwnership()
     {
         var monitor = new McpJobTaskDeltaMonitor();
+        var completed = new WorkerJobStatus { JobId="same",State="Completed",ToolName="zemax_run_nsc_ray_trace" };
+        var delayed = new WorkerJobStatus { JobId="same",State="Running",ToolName="zemax_run_nsc_ray_trace" };
+        var terminalMerge=McpJobTaskDeltaMonitor.MergeStatuses(
+            new[]{completed},new[]{delayed});
+        Assert(terminalMerge.Single().State=="Completed",
+            "Late Worker progress event downgraded a confirmed terminal Job.");
+        var eventMerge=McpJobTaskDeltaMonitor.MergeStatuses(
+            new[]{delayed},new[]{completed});
+        Assert(eventMerge.Single().State=="Completed",
+            "Terminal Worker event did not override a stale cached Running state.");
         var jobs = new[] {
             new WorkerJobStatus { JobId="job-alice",ToolName="zemax_run_nsc_ray_trace",State="Running",Fraction=0.25,Message="alice-private" },
             new WorkerJobStatus { JobId="job-bob",ToolName="zemax_global_search",State="Completed",Message="bob-private" }

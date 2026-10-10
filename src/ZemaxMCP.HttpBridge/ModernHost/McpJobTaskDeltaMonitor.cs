@@ -23,6 +23,39 @@ internal sealed class McpJobTaskDeltaMonitor
 
     internal sealed record Delta(string Cursor, bool Changed, Snapshot? Snapshot);
 
+    internal static IReadOnlyList<WorkerJobStatus> MergeStatuses(
+        IReadOnlyList<WorkerJobStatus> cached, IReadOnlyList<WorkerJobStatus> observed)
+    {
+        static bool Terminal(string state) =>
+            state.Equals("Completed",StringComparison.OrdinalIgnoreCase) ||
+            state.Equals("Cancelled",StringComparison.OrdinalIgnoreCase) ||
+            state.Equals("Failed",StringComparison.OrdinalIgnoreCase);
+        // Idempotent over duplicate cached/observed records: malformed
+        // duplicate IDs do not crash the diagnostic endpoint.
+        var merged=new Dictionary<string,WorkerJobStatus>(StringComparer.Ordinal);
+        foreach(var job in cached)
+            if(!string.IsNullOrWhiteSpace(job.JobId)) merged[job.JobId]=job;
+        foreach(var eventStatus in observed)
+        {
+            if(string.IsNullOrWhiteSpace(eventStatus.JobId)) continue;
+            if(merged.TryGetValue(eventStatus.JobId,out var existing))
+            {
+                // An older, delayed progress event must NEVER downgrade an
+                // already confirmed terminal Job to "Running".
+                if(Terminal(existing.State) && !Terminal(eventStatus.State)) continue;
+                merged[eventStatus.JobId]=new WorkerJobStatus {
+                    JobId=eventStatus.JobId,ToolName=eventStatus.ToolName,
+                    State=eventStatus.State,Fraction=eventStatus.Fraction??existing.Fraction,
+                    QueuePosition=eventStatus.QueuePosition,
+                    Message=eventStatus.Message??existing.Message,
+                    ElapsedSeconds=existing.ElapsedSeconds
+                };
+            }
+            else merged[eventStatus.JobId]=eventStatus;
+        }
+        return merged.Values.ToArray();
+    }
+
     internal Delta GetDelta(string owner, bool scoped, string? previousCursor,
         long generation, bool busy, bool statusAvailable, IReadOnlyList<WorkerJobStatus> reportedJobs,
         IReadOnlyList<object> ownerTasks, Func<string, bool> isOwned)
