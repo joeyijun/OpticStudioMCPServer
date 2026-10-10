@@ -116,10 +116,6 @@ public sealed class GetNscDetectorTool
                         objectNumber, row.TypeName, row.Comment, columns, rows, totalPixels, row.TypeData.DetectorShowAs.ToString());
                 }
 
-                NscDetectorTilePreview.Plan? tilePlan = null;
-                if (includeTilePlan)
-                    tilePlan = NscDetectorTilePreview.MakePlan(rows, columns, tilePlanPage);
-
                 if (includePixels && (row.Type is ZOSAPI.Editors.NCE.ObjectType.DetectorColor or
                     ZOSAPI.Editors.NCE.ObjectType.DetectorPolar))
                     return new Result(false, "Color/polar detectors require their dedicated NSC detector-data API; generic flux pixels are not interpreted as irradiance.",
@@ -175,6 +171,10 @@ public sealed class GetNscDetectorTool
                         orientation = "native lower-left (-X,-Y); +column is +X, +row is +Y; not screen-image orientation";
                     }
                 }
+
+                NscDetectorTilePreview.Plan? tilePlan = null;
+                if (includeTilePlan)
+                    tilePlan = NscDetectorTilePreview.MakePlan(rows, columns, tilePlanPage);
 
                 double[][]? pixelGrid = null;
                 double? roiSum = null, roiIntegral = null, roiDetectorFraction = null,
