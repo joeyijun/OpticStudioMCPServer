@@ -718,7 +718,7 @@ public partial class MainWindow : Window
         {
             _healthReachable = false;
             TaskCenterSummary.Text = "Service offline; Job information unavailable.";
-            _taskHistory.Clear();
+            _taskCenter.Update(null,null);
             RefreshTasksPage();
             ConnectionSummary.Text = "Offline — MCP endpoint is not reachable\n" + endpoint;
             _fullDiagnostics = "MCP endpoint: not reachable\n" +
