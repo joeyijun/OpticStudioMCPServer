@@ -223,6 +223,12 @@ public sealed class GetNscDetectorTool
                         throw new InvalidOperationException("ROI normalization is non-finite; verify source and detector flux scales.");
                 }
 
+                double? detectorLaunchedFraction = launchedFlux.HasValue && totalFlux.HasValue
+                    ? totalFlux.Value / launchedFlux.Value : null;
+                if (detectorLaunchedFraction.HasValue &&
+                    (double.IsNaN(detectorLaunchedFraction.Value) || double.IsInfinity(detectorLaunchedFraction.Value)))
+                    throw new InvalidOperationException("Detector/source normalization is non-finite; verify the launched-flux unit and magnitude.");
+
                 return new Result(
                     true, null, objectNumber, row.TypeName, row.Comment,
                     columns, rows, totalPixels, row.TypeData.DetectorShowAs.ToString(),
@@ -233,7 +239,7 @@ public sealed class GetNscDetectorTool
                     pitchX, pitchY, pixelArea, pitchX.HasValue ? "lens units" : null,
                     orientation, roiSum, roiIntegral, roiDetectorFraction,
                     launchedFlux, roiLaunchedFraction,
-                    launchedFlux.HasValue && totalFlux.HasValue ? totalFlux.Value / launchedFlux.Value : null,
+                    detectorLaunchedFraction,
                     null,
                     "Detector hit counts may include repeated or split ray hits; total rays that missed the detector cannot be inferred from them. " +
                     "ROI pixel summation is incoherent. source normalization requires identical units, sources and trace. " +
