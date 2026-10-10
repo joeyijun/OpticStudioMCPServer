@@ -130,6 +130,9 @@ public static class NativeZrdProbe
             {
                 results.Add(Read(system,archived,"archive/default-filter",false));
                 results.Add(Read(system,archived,"archive/empty-filter",true));
+                var archivedModel=Path.ChangeExtension(archived,".ZMX");
+                if(File.Exists(archivedModel) && system.LoadFile(archivedModel,false))
+                    results.Add(Read(system,archived,"archive/matching-model/empty-filter",true));
             }
             return results;
         }
