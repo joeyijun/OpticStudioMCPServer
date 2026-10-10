@@ -79,6 +79,8 @@ internal static class Program
             builder.Services.AddSingleton(controlLease);
             var activity = new McpActivityMonitor();
             builder.Services.AddSingleton(activity);
+            var jobTaskDelta = new McpJobTaskDeltaMonitor();
+            builder.Services.AddSingleton(jobTaskDelta);
             var mcpBuilder = builder.Services
                 .AddMcpServer(server => server.ServerInfo = new()
                 {
@@ -357,6 +359,48 @@ internal static class Program
                     profile.StartsWith("scoped:", StringComparison.Ordinal)
                     ? "token:" + profile : "";
                 return Results.Json(activity.GetDelta(owner, cursor, scoped));
+            });
+
+            // Cached status + coalesced progress events provide fast Job/Task
+            // updates with NO Worker RPC (and therefore no COM lock queue).
+            // Scope is derived solely from authenticated middleware claims.
+            app.MapGet(options.McpPath + "/jobs-delta", (HttpContext httpContext, string? cursor) =>
+            {
+                var profile = httpContext.User.FindFirst("zemax-mcp-auth-profile")?.Value;
+                var scoped = credentialStore != null;
+                var owner = scoped && profile != null &&
+                    profile.StartsWith("scoped:", StringComparison.Ordinal)
+                    ? "token:" + profile : "";
+                if (scoped && owner.Length == 0)
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
+                var generation = workerClient.CurrentGeneration;
+                var statusAvailable = workerClient.TryGetCachedStatus(out var current);
+                var cached = current?.Jobs ?? Array.Empty<WorkerJobStatus>();
+                var observed = workerClient.GetObservedJobStatuses();
+                // Prefer latest coalesced Worker progress for a Job ID; normal
+                // cached Job lists fill missing elapsed/queue information.
+                var merged = cached.ToDictionary(job => job.JobId, StringComparer.Ordinal);
+                foreach (var job in observed)
+                {
+                    if (merged.TryGetValue(job.JobId, out var older))
+                        merged[job.JobId] = new WorkerJobStatus {
+                            JobId = job.JobId, ToolName = job.ToolName,
+                            State = job.State, Fraction = job.Fraction ?? older.Fraction,
+                            QueuePosition = job.QueuePosition,
+                            Message = job.Message ?? older.Message,
+                            ElapsedSeconds = older.ElapsedSeconds
+                        };
+                    else merged[job.JobId] = job;
+                }
+                var tasks = scoped && taskLedger != null
+                    ? taskLedger.ListOwnedMetadata(owner, 25) : Array.Empty<object>();
+                var delta = jobTaskDelta.GetDelta(owner, scoped, cursor,
+                    generation, workerClient.HasForegroundTool ||
+                        controlLease.HasActiveBackgroundJobs,
+                    statusAvailable || observed.Count > 0,
+                    merged.Values.ToArray(), tasks,
+                    id => jobOwners.IsOwned(owner, id, generation));
+                return Results.Json(delta);
             });
 
             app.MapGet(options.McpPath + "/health", async (HttpContext httpContext, CancellationToken cancellationToken) =>

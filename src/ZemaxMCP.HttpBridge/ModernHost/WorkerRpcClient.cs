@@ -167,6 +167,19 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     }
 
     /// <summary>Read-only, non-blocking diagnostic status from this Worker generation.</summary>
+    internal IReadOnlyList<WorkerJobStatus> GetObservedJobStatuses()
+    {
+        // Only return events from the CURRENT Worker generation. A restarted
+        // Worker may reuse an operation ID; never mix generations.
+        var generation = CurrentGeneration;
+        if (generation <= 0) return Array.Empty<WorkerJobStatus>();
+        return _eventJobs.Where(pair =>
+                _eventJobGenerations.TryGetValue(pair.Key, out var observedGeneration) &&
+                observedGeneration == generation)
+            .Select(pair => pair.Value)
+            .Take(256).ToArray();
+    }
+
     public bool TryGetCachedStatus(out WorkerStatus? status)
     {
         lock (_connectionGate)

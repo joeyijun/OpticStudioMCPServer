@@ -24,7 +24,7 @@ internal sealed class McpJobTaskDeltaMonitor
     internal sealed record Delta(string Cursor, bool Changed, Snapshot? Snapshot);
 
     internal Delta GetDelta(string owner, bool scoped, string? previousCursor,
-        long generation, bool busy, IReadOnlyList<WorkerJobStatus> reportedJobs,
+        long generation, bool busy, bool statusAvailable, IReadOnlyList<WorkerJobStatus> reportedJobs,
         IReadOnlyList<object> ownerTasks, Func<string, bool> isOwned)
     {
         if (generation < 0) throw new ArgumentOutOfRangeException(nameof(generation));
@@ -41,7 +41,7 @@ internal sealed class McpJobTaskDeltaMonitor
         // Shared/local diagnostics never expose someone else's official Task
         // IDs. Only scoped bearer credentials have owner-scoped Task metadata.
         var tasks = scoped ? ownerTasks.Take(25).ToArray() : Array.Empty<object>();
-        var snapshot = new Snapshot(generation, busy, reportedJobs != null, jobs, tasks);
+        var snapshot = new Snapshot(generation, busy, statusAvailable, jobs, tasks);
 
         // A random process-local HMAC key prevents offline probing of a tiny
         // state space such as "queued"/"completed". Scoped cursors are unique
