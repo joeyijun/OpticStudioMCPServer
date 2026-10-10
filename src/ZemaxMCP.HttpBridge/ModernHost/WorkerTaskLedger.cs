@@ -152,7 +152,16 @@ internal sealed class WorkerTaskLedger
             {
                 TaskId = x.TaskId, Owner = x.Owner, JobId = x.JobId,
                 Generation = x.Generation, Sequence = x.Sequence,
-                State = x.State, Message = x.Message.Length > 512 ? x.Message.Substring(0, 512) : x.Message,
+                State = x.State,
+                // Diagnostic payloads may contain lens paths or private data;
+                // the persistent journal stores status categories only.
+                Message = x.State switch
+                {
+                    "completed" => "Completed; result not persisted.",
+                    "cancelled" => "Cancelled.",
+                    "failed" => "Failed; inspect live logs for the original reason.",
+                    _ => "Working at previous Host shutdown."
+                },
                 CancelRequested = x.CancelRequested, ResultExpired = x.ResultExpired,
                 CreatedAt = x.CreatedAt, UpdatedAt = x.UpdatedAt
             }).ToArray();
