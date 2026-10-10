@@ -95,6 +95,17 @@ Example:
   pixel pitch; values that cannot be derived safely stay `null`.
 - `roiFluxIntegral` integrates dataType 0 directly, and dataType 1 over
   physical pixel area **only** if detector geometry supports it.
+- For a requested ROI, `roiPixelMin`, `roiPixelMax`,
+  `roiPixelMean`, `roiNonzeroPixelCount`, `roiPeakRow` and
+  `roiPeakColumn` describe the native **per-pixel** values and location
+  (0-based detector coordinates). They are intended for spot diagnostics
+  and heatmap annotation, **not** instrument throughput. Peak intensity
+  is never substituted for `roiFluxIntegral`.
+- If detector data overflow finite arithmetic or its explicit
+  normalization produces NaN/Infinity, the request fails rather than
+  publishing a misleading flux/efficiency. For DetectorVolume with
+  `dataType:1`, a launched-flux ratio describes **absorption**, not the
+  collection efficiency inferred from incident-flux pixels.
 - `totalIncidentFlux` is read separately from the detector's official
   summary slot; `roiFractionOfDetectorFlux` compares ROI to this total.
   `roiFractionOfLaunchedFlux` and
