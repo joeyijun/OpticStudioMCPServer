@@ -1,6 +1,6 @@
 # Engineering optical diagnostics (post-v1.5.0 draft)
 
-This document describes **unreleased** engineering additions on PR #38. They
+This document describes **unreleased** engineering additions on PR #40. They
 are read-only interfaces (except for the explicitly existing NSC tracing tool).
 Windows CI proves registration/safety/build. Numerical claims and OpticStudio
 version compatibility require the later dedicated **licensed** acceptance gate.
@@ -81,6 +81,31 @@ Example:
 - A requested point limit affects only **returned plotted samples**; all
   sampled rays still contribute to the numerical envelope and clipping count.
 
+### User-declared mechanical outlines (new)
+
+`zemax_ray_footprint` can compare **surviving ray intercepts** against one
+user-measured physical outline **in the local coordinate frame of that LDE surface**.
+For example, a 6 mm × 4 mm opening centered at the surface origin:
+
+```json
+{
+  "surfaces": [4],
+  "mechanicalRectangle": [-3, -2, 3, 2],
+  "maxPointsPerSurface": 24
+}
+```
+
+For nonrectangular polished flats, use `mechanicalPolygon` instead:
+`[[x1,y1], [x2,y2], ...]` with 3..64 non-self-crossing local XY vertices.
+When querying several LDE surfaces, supply `mechanicalSurface` identifying
+which target matches the supplied outline. A polygon is user evidence:
+the tool does not change Zemax apertures, infer CAD-to-LDE transforms or
+assume optical `SemiDiameter` equals the mechanical clear boundary.
+Returned `userMechanicalBoundary.minimumSignedClearance` is positive
+inside and negative for sampled surviving intercepts outside. Its
+`outsideFractionOfSurvivors` denominator excludes already-vignetted and
+failed rays; **it must never be reported as the full-source cutting loss**.
+
 ## NSC: `zemax_get_nsc_detector` and `zemax_nsc_energy_budget`
 
 Example:
@@ -102,6 +127,16 @@ Example:
   source-power units); `dataType:1`: surface/rectangle flux per area,
   but **volume detector absorbed flux**. Sum and physical integral are
   reported separately. Pixel values are NOT normalized to display maximum.
+- For **large arrays**, request `includeTilePlan: true` and
+  `tilePlanPage: 0` in a dimensions-only call. The `nativeTilePlan`
+  returns at most 64 native row-major tiles per page (each at most 64×64
+  pixels); request further pages, then call `zemax_get_nsc_detector`
+  separately for each returned `startRow`, `startColumn`, `rowCount`,
+  `columnCount`. The client may assemble/export those tiles, preserving native
+  row/column orientation. No unbounded single RPC or implicit file write.
+- With `includePixels: true`, setting `heatmapBins: 2..16` returns
+  `roiMeanHeatmap` as a small matrix of per-bin **mean native pixel values**,
+  not detector power, physical image orientation or flux integral.
 - ROI is bounded to 4096 native pixels per call; rectangular detector
   pitch derives from actual X/Y half-width and X/Y pixel counts, not a
   guessed default. Pixel #1 is at local (-X,-Y), columns increase +X and
@@ -149,6 +184,19 @@ Run `zemax_tool_catalog` with one of these task keys:
 The catalog lists operations hidden by the selected profile separately.
 These are planning hints, **not** permission grants or an automatic mutating
 macro.
+
+### Model design difference check
+
+`zemax_system_summary` accepts optional `baselineSummaryJson` containing
+a previous **successful** `zemax_system_summary` JSON result (up to 96 KB).
+It then compares the current live model metadata to the previous snapshot
+**without opening or switching files**. The additional
+`baselineComparison.differences` covers units, mode, aperture, sampled
+surfaces, fields and wavelengths. Numerical JSON `10` vs `10.0`
+is treated as the same number; omitted LDE rows are marked **unknown**, not
+silently classified as unchanged, added or removed. This comparison does NOT
+establish which design is optically better: confirm any changes with PSF/MTF,
+real ray footprints, throughput, source/detector flux or tolerance analysis.
 
 ## Launcher monitoring and smoke checks
 

@@ -68,6 +68,19 @@ internal static class StaticToolManifestAssertions
             if (!detectorSchema.TryGetProperty(field, out _))
                 throw new InvalidOperationException("Detector ROI tool is missing the published field " + field);
 
+        var footprintInputs = StaticToolManifest.GetRequired("zemax_ray_footprint").InputSchema.GetProperty("properties");
+        if (!footprintInputs.TryGetProperty("mechanicalRectangle", out _) ||
+            !footprintInputs.TryGetProperty("mechanicalPolygon", out _) ||
+            !footprintInputs.TryGetProperty("mechanicalSurface", out _))
+            throw new InvalidOperationException("Footprint tool must advertise explicit local mechanical boundary controls.");
+        var detectorInputs = StaticToolManifest.GetRequired("zemax_get_nsc_detector").InputSchema.GetProperty("properties");
+        if (!detectorInputs.TryGetProperty("includeTilePlan", out _) ||
+            !detectorInputs.TryGetProperty("tilePlanPage", out _) ||
+            !detectorInputs.TryGetProperty("heatmapBins", out _))
+            throw new InvalidOperationException("Detector tool must advertise paged native tile/mean-map controls.");
+        if (!StaticToolManifest.GetRequired("zemax_system_summary").InputSchema.GetProperty("properties").TryGetProperty("baselineSummaryJson", out _))
+            throw new InvalidOperationException("System summary must expose bounded prior-design comparison.");
+
         if (!StaticToolManifest.GetRequired("zemax_energy_budget").InputSchema.GetProperty("properties").TryGetProperty("relativeSourceSpectralWeights", out _))
             throw new InvalidOperationException("Sequential energy budgeting must expose explicitly supplied source spectral weights.");
         if (!StaticToolManifest.GetRequired("zemax_energy_budget").InputSchema.GetProperty("properties").TryGetProperty("startSurface", out _))
