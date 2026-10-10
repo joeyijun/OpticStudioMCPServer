@@ -44,18 +44,24 @@ internal static class Program
 
         try
         {
+            // Windows Schannel cannot serve TLS with an ephemeral private key.
+            // Use a current-user key container (not machine-wide, exportable or
+            // PersistKeySet); disposal releases the temporary imported key.
+            // Keep the certificate alive until Kestrel has finished serving.
+            using var tlsCertificate = options.TlsEnabled
+                ? X509CertificateLoader.LoadPkcs12FromFile(
+                    options.TlsPfxPath, Environment.GetEnvironmentVariable(options.TlsPasswordEnvironmentVariable),
+                    OperatingSystem.IsWindows() ? X509KeyStorageFlags.UserKeySet : X509KeyStorageFlags.EphemeralKeySet)
+                : null;
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = Array.Empty<string>() });
             builder.WebHost.UseUrls(options.TransportScheme + "://" + options.Host + ":" + options.Port);
             if (options.TlsEnabled)
             {
                 // Never place a private-key password in CLI arguments or logs.
-                var certificate = X509CertificateLoader.LoadPkcs12FromFile(
-                    options.TlsPfxPath, Environment.GetEnvironmentVariable(options.TlsPasswordEnvironmentVariable),
-                    X509KeyStorageFlags.EphemeralKeySet);
-                if (!certificate.HasPrivateKey)
+                if (!tlsCertificate!.HasPrivateKey)
                     throw new InvalidOperationException("TLS PFX must contain a private key.");
                 builder.WebHost.ConfigureKestrel(server =>
-                    server.ConfigureHttpsDefaults(https => https.ServerCertificate = certificate));
+                    server.ConfigureHttpsDefaults(https => https.ServerCertificate = tlsCertificate));
             }
             else if (options.Host is not ("127.0.0.1" or "localhost" or "::1" or "[::1]"))
             {

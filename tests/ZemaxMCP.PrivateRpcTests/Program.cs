@@ -16,7 +16,7 @@ using ZemaxMCP.ToolManifest;
 
 namespace ZemaxMCP.PrivateRpcTests;
 
-internal static class Program
+internal static partial class Program
 {
     private static readonly JsonSerializerOptions PrivateRpcJson = new(JsonSerializerDefaults.Web);
 
@@ -30,6 +30,11 @@ internal static class Program
 
         try
         {
+            if (args.Length == 1 && args[0] == "--https-test")
+            {
+                await VerifyHttpsEndToEndAsync();
+                return 0;
+            }
             VerifyActivityOwnership();
             VerifyJobsDeltaOwnership();
             VerifyLauncherDeltaCredentialScope();
@@ -37,6 +42,7 @@ internal static class Program
             VerifyStructuredToolOutcomes();
             VerifyOfficialTasksDefaults();
             VerifyTlsOptions();
+            await VerifyHttpsEndToEndAsync();
             VerifyTaskPlanningCatalog();
             VerifyOriginBoundary();
             await VerifyBackgroundJobLeaseRetentionAsync().ConfigureAwait(false);
