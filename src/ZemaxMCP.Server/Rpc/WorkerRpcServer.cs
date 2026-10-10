@@ -109,6 +109,14 @@ internal sealed class WorkerRpcServer
         {
             await WriteErrorAsync(writer, message.RequestId, message.OperationId, "cancelled", "The OpticStudio operation was cancelled.").ConfigureAwait(false);
         }
+        catch (ArgumentException ex)
+        {
+            await WriteErrorAsync(writer, message.RequestId, message.OperationId, "invalid_argument", ex.Message).ConfigureAwait(false);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            await WriteErrorAsync(writer, message.RequestId, message.OperationId, "not_found", ex.Message).ConfigureAwait(false);
+        }
         catch (Exception ex)
         {
             await WriteErrorAsync(writer, message.RequestId, message.OperationId, "worker_error", ex.Message).ConfigureAwait(false);
@@ -120,7 +128,7 @@ internal sealed class WorkerRpcServer
         var invocation = message.Payload.Deserialize<ToolInvocationRequest>(_jsonOptions)
             ?? throw new InvalidOperationException("Tool invocation payload is missing.");
         if (string.IsNullOrWhiteSpace(invocation.Command) || !_tools.Tools.ContainsKey(invocation.Command))
-            throw new InvalidOperationException("Unknown OpticStudio tool: " + invocation.Command);
+            throw new KeyNotFoundException("Unknown OpticStudio tool: " + invocation.Command);
         if (!StaticToolManifest.IsAllowed(invocation.Toolset, invocation.Command, invocation.ReadOnly))
             throw new InvalidOperationException("The selected toolset/read-only policy does not permit " + invocation.Command + ".");
 

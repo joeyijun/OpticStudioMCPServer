@@ -20,6 +20,11 @@ namespace ZemaxMCP.HttpBridge.ModernHost;
 /// </summary>
 internal sealed class WorkerRpcClient : IAsyncDisposable
 {
+    private sealed class WorkerCommandException : InvalidOperationException
+    {
+        internal string Code { get; }
+        internal WorkerCommandException(string code, string message) : base(message) => Code = code;
+    }
     private readonly HostOptions _options;
     private readonly SemaphoreSlim _executionGate = new(1, 1);
     private readonly SemaphoreSlim _writeGate = new(1, 1);
@@ -142,8 +147,17 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
                 ReadOnly = _options.ReadOnly,
                 Toolset = _options.Toolset
             };
-            return await SendAsync<CallToolResult>(ZemaxRpcProtocol.InvokeTool, invocation, operationId, cancellationToken,
-                ownsGenerationRecovery: true).ConfigureAwait(false);
+            try
+            {
+                return await SendAsync<CallToolResult>(ZemaxRpcProtocol.InvokeTool, invocation, operationId, cancellationToken,
+                    ownsGenerationRecovery: true).ConfigureAwait(false);
+            }
+            catch (WorkerCommandException ex) when (ex.Code is "invalid_argument" or "not_found")
+            {
+                // These are recoverable, typed tool-domain failures. Do not
+                // swallow protocol, handshake, transport or recovery faults.
+                return ToolOutcome.Failure(ex.Code, ex.Message);
+            }
         }
         finally
         {
@@ -255,7 +269,8 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
             if (string.Equals(response.Kind, ZemaxRpcProtocol.Error, StringComparison.Ordinal))
             {
                 var error = response.Payload.Deserialize<ZemaxRpcError>(_jsonOptions);
-                throw new InvalidOperationException(error?.Message ?? "Worker command failed.");
+                throw new WorkerCommandException(error?.Code ?? "worker_error",
+                    error?.Message ?? "Worker command failed.");
             }
             return response.Payload.Deserialize<T>(_jsonOptions) ?? throw new InvalidOperationException("Worker returned an empty response.");
         }

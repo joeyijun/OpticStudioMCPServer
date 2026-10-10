@@ -121,7 +121,8 @@ internal static class Program
 
     private static void VerifyStructuredToolOutcomes()
     {
-        Assert(ToolOutcome.Classify("Result expired") == "expired" &&
+        Assert(ToolOutcome.InvalidArgument == "invalid_argument" &&
+               ToolOutcome.Classify("Result expired") == "expired" &&
                ToolOutcome.Classify("Job not found") == "not_found" &&
                ToolOutcome.Classify("background Job is active") == "conflict" &&
                ToolOutcome.Classify("RPC transport closed") == "transport_error",

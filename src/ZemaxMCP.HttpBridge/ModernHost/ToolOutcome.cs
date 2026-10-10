@@ -12,6 +12,7 @@ namespace ZemaxMCP.HttpBridge.ModernHost;
 internal static class ToolOutcome
 {
     internal const string DomainError = "domain_error";
+    internal const string InvalidArgument = "invalid_argument";
     internal const string NotFound = "not_found";
     internal const string Conflict = "conflict";
     internal const string Expired = "expired";
