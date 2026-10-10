@@ -132,6 +132,17 @@ Copy-Item "$root\src\ZemaxMCP.Launcher\Assets\ZemaxMCP.ico" "$publish\ZemaxMCP.i
 Copy-Item "$root\installer\Start-Zemax-MCP.cmd" "$publish\Start-Zemax-MCP.cmd" -Force
 Copy-Item "$root\LICENSE" "$publish\LICENSE" -Force
 Copy-Item "$root\THIRD_PARTY_NOTICES.md" "$publish\THIRD_PARTY_NOTICES.md" -Force
+# Offline native comparison uses only the user's installed ZOS-API, not
+# redistributed vendor DLLs. Keep the complete runner together in one folder.
+$diagnostics = Join-Path $publish "Diagnostics"
+New-Item $diagnostics -ItemType Directory -Force | Out-Null
+foreach ($file in "Run-ZrdDiagnostics.cmd", "Run-ZrdDiagnostics.ps1", "NativeZrdProbe.cs") {
+  Copy-Item -LiteralPath (Join-Path $root "scripts\$file") -Destination (Join-Path $diagnostics $file)
+}
+Copy-Item -LiteralPath (Join-Path $root "docs\ZRD_HTTPS_FIX_20261010.md") -Destination (Join-Path $diagnostics "README.md")
+$sourceCommit = & git -C $root rev-parse HEAD
+if ($LASTEXITCODE -ne 0) { throw "Could not determine package source commit." }
+Set-Content -LiteralPath (Join-Path $publish "BUILD_COMMIT.txt") -Value $sourceCommit -Encoding UTF8
 $forbiddenReleaseFiles = @(Get-ChildItem $publish -Recurse -File | Where-Object {
   $_.Extension -in ".pdb", ".log" -or $_.Name -like "ZOSAPI*.dll" -or $_.Name -in "ZemaxMCP.HttpBridge.exe", "ZemaxMCP.Server.exe"
 })
