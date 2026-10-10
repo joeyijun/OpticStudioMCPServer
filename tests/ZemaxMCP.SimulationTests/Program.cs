@@ -24,6 +24,8 @@ internal static class Program
             VerifyDetectorCsvExport();
             VerifyModelSummaryDiff();
             VerifyModelPreflight();
+            VerifyPurposePreflight();
+            VerifyOpticalResultExplanation();
             VerifyGlassCatalogSafety();
             await VerifyStaDispatcherAsync();
             await VerifyJobManagerAsync();
@@ -37,6 +39,40 @@ internal static class Program
             Console.Error.WriteLine(exception);
             return 1;
         }
+    }
+
+    private static void VerifyPurposePreflight()
+    {
+        const string nsc = "{\"success\":true,\"mode\":\"NonSequential\",\"numberOfNscObjects\":1,\"numberOfWavelengths\":1,\"filePath\":\"case.zos\"}";
+        var check=ModelWorkflowValidator.Assess(nsc,"imaging");
+        Assert(!check.ModeApplicable && !check.NoIdentifiedMetadataBlockers &&
+            check.Findings.Any(f=>f.Code=="incompatible_mode"),"NSC imaging was incorrectly approved.");
+        check=ModelWorkflowValidator.Assess(nsc,"straylight");
+        Assert(check.ModeApplicable && check.NoIdentifiedMetadataBlockers &&
+            check.RequiredNextChecks.Any(x=>x.Contains("detector",StringComparison.OrdinalIgnoreCase)),
+            "Straylight preflight should require explicit NSC detector verification.");
+        AssertThrows<ArgumentException>(()=>ModelWorkflowValidator.Assess(nsc,"autorun"),
+            "Unrecognized AI workflow was accepted.");
+    }
+
+    private static void VerifyOpticalResultExplanation()
+    {
+        const string detector = "{\"success\":true,\"totalIncidentFlux\":5.0,\"roiFluxIntegral\":2.5,\"launchedFlux\":null}";
+        var result=OpticalResultInterpreter.Explain("zemax_get_nsc_detector",detector);
+        Assert(result.Metrics.Count==2 &&
+            result.Caveats.Any(c=>c.Contains("launched")) &&
+            !result.Metrics.Any(m=>m.Name.Contains("efficiency")),
+            "Unnormalized detector readings became false efficiency claims.");
+        const string footprint = "{\"success\":true,\"surfaces\":[{\"vignettedRays\":4,\"traceErrorRays\":2,\"userMechanicalBoundary\":{\"minimumSignedClearance\":-0.5}}]}";
+        var image=OpticalResultInterpreter.Explain("zemax_ray_footprint",footprint);
+        Assert(image.Metrics.Any(x=>x.Value==-0.5 && x.Unit=="lens units") &&
+               image.Caveats.Any(x=>x.Contains("local",StringComparison.OrdinalIgnoreCase)),
+            "Signed local mechanical clearance was not honestly explained.");
+        AssertThrows<ArgumentException>(()=>OpticalResultInterpreter.Explain("zemax_energy_budget",
+            "{\"success\":false,\"cases\":[]}"),
+            "Failed optical results were interpreted as numerical evidence.");
+        AssertThrows<ArgumentException>(()=>OpticalResultInterpreter.Explain("zemax_set_surface",
+            "{\"success\":true}"),"Mutating tool output was accepted as read-only analysis.");
     }
 
     private static void VerifyModelPreflight()

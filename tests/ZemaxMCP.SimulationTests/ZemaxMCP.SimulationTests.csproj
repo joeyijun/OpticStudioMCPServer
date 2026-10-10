@@ -15,6 +15,8 @@
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscDetectorCsvExport.cs" Link="Server\NscDetectorCsvExport.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\SystemSummaryComparer.cs" Link="Server\SystemSummaryComparer.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\ModelPreflightChecks.cs" Link="Server\ModelPreflightChecks.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\ModelWorkflowValidator.cs" Link="Server\ModelWorkflowValidator.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\OpticalResultInterpreter.cs" Link="Server\OpticalResultInterpreter.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Session\IZosSystemSnapshot.cs" Link="Core\IZosSystemSnapshot.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Session\ZemaxOperationMetadata.cs" Link="Core\ZemaxOperationMetadata.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Session\ZemaxOperationSafety.cs" Link="Core\ZemaxOperationSafety.cs" />

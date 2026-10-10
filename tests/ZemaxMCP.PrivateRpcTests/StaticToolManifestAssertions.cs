@@ -9,8 +9,8 @@ internal static class StaticToolManifestAssertions
     [ModuleInitializer]
     internal static void VerifyStaticToolManifestContract()
     {
-        if (StaticToolManifest.All.Count != 142)
-            throw new InvalidOperationException("Static Host tool manifest must contain all 142 Worker commands.");
+        if (StaticToolManifest.All.Count != 144)
+            throw new InvalidOperationException("Static Host tool manifest must contain all 144 Worker commands.");
         if (StaticToolManifest.ContractFingerprint.Length != 64 ||
             StaticToolManifest.ContractFingerprint.Any(character => !Uri.IsHexDigit(character)))
             throw new InvalidOperationException("Static tool contract fingerprint must be a SHA-256 hex digest.");
@@ -37,11 +37,11 @@ internal static class StaticToolManifestAssertions
 
         var expectedProfileCounts = new Dictionary<string, int>(StringComparer.Ordinal)
         {
-            ["basic-viewing"] = 39,
-            ["sequential-design"] = 84,
-            ["nonsequential-stray-light"] = 28,
-            ["optimization-tolerance"] = 71,
-            ["full-expert"] = 142
+            ["basic-viewing"] = 41,
+            ["sequential-design"] = 86,
+            ["nonsequential-stray-light"] = 30,
+            ["optimization-tolerance"] = 73,
+            ["full-expert"] = 144
         };
         foreach (var pair in expectedProfileCounts)
         {
@@ -137,6 +137,20 @@ internal static class StaticToolManifestAssertions
             if (!summaryProperties.TryGetProperty(pair.Item1, out var setting) ||
                 setting.GetProperty("default").GetInt32() != pair.Item2)
                 throw new InvalidOperationException("Bounded model summary lost its required safe default: " + pair.Item1);
+
+        foreach (var aiName in new[] { "zemax_validate_model","zemax_explain_result" })
+        {
+            var ai = StaticToolManifest.GetRequired(aiName);
+            if (ai.DomainId != "system" || ai.Impact != "ReadOnly" ||
+                !StaticToolManifest.IsAllowed("basic-viewing",aiName,true) ||
+                !StaticToolManifest.IsAllowed("nonsequential-stray-light",aiName,true) ||
+                !StaticToolManifest.IsAllowed("optimization-tolerance",aiName,true))
+                throw new InvalidOperationException("AI explain/validation tools must remain read-only in all profiles.");
+        }
+        if (!StaticToolManifest.GetRequired("zemax_explain_result").InputSchema.GetProperty("properties").TryGetProperty("resultJson",out _))
+            throw new InvalidOperationException("AI explanation must require an explicit user-provided result payload.");
+        if (!StaticToolManifest.GetRequired("zemax_validate_model").InputSchema.GetProperty("properties").TryGetProperty("purpose",out _))
+            throw new InvalidOperationException("AI preflight must expose purpose-specific checks.");
 
         var aiPlanner = StaticToolManifest.GetRequired("zemax_task_plan");
         if (aiPlanner.DomainId != "system" || aiPlanner.Impact != "ReadOnly" ||

@@ -269,3 +269,21 @@ returned summary includes native pixel count, min/max/sum and a SHA-256
 digest of the resulting CSV. Color/polar detectors are not supported by this
 generic scalar API. Data type 1 is *absorbed flux* for DetectorVolume, not
 irradiance, and absolute orientation is not inferred from the display.
+
+### Standalone AI preflight and result explanation tools
+
+`zemax_validate_model` accepts `purpose`:
+`model-review`, `imaging`, `clipping`, `energy`, `straylight`.
+It reuses the bounded serialized `zemax_system_summary` and returns
+purpose-specific blocking metadata findings plus concrete next checks.
+`noIdentifiedMetadataBlockers` is **not** physical validation, not a lease,
+not a permission to edit, and not a guarantee that ray tracing will succeed.
+
+`zemax_explain_result` accepts an explicit completed `toolName` and
+`resultJson` (up to 128 KiB). Supported inputs are
+`zemax_energy_budget`, `zemax_ray_footprint`,
+`zemax_get_nsc_detector`, `zemax_nsc_energy_budget` and
+`zemax_system_summary`. This deterministic whitelist extracts evidence-backed
+numerical metrics, explains native units/denominators and suggests next tools.
+It **never** opens a model, performs ray tracing, ranks one design as optically
+superior, or invents absorption/throughput from missing information.
