@@ -89,6 +89,24 @@ if ($https -notmatch 'HTTPS/TLS' -or $https -match 'UNENCRYPTED' -or
     $remoteHttp -notmatch 'UNENCRYPTED' -or $loopback -notmatch 'loopback') {
     throw 'Transport security UI was derived from upstream Host TLS rather than actual client URI.'
 }
+$statusPresenter = $assembly.GetType('ZemaxMCP.Launcher.StatusPresentation')
+if ($null -eq $statusPresenter) { throw 'Pure status presentation module is missing.' }
+$formatName=$statusPresenter.GetMethod('FormatClientName',$flags)
+$formatUptime=$statusPresenter.GetMethod('FormatUptime',$flags)
+$formatPaths=$statusPresenter.GetMethod('FormatZemaxPaths',$flags)
+if($formatName.Invoke($null,@([string]'token:scoped:owner')) -ne 'authenticated client' -or
+   $formatUptime.Invoke($null,@([long]3661)) -ne '01:01:01') {
+    throw 'Launcher status view model leaked bearer identity or changed uptime formatting.'
+}
+$pathArgs = New-Object object[] 5
+$pathArgs[0]=$null
+$pathArgs[1]='C:\\Zemax'
+$pathArgs[2]=[Newtonsoft.Json.Linq.JObject]::Parse('{"zosApi":"C:/Zemax/ZOSAPI.dll","netHelper":"C:/Zemax/NetHelper.dll"}')
+$pathArgs[3]=$null
+$pathArgs[4]='C:/ZemaxData'
+if($formatPaths.Invoke($null,$pathArgs) -notmatch 'Remote ZOS-API') {
+    throw 'Remote ZOS-API source status was lost by the presentation refactor.'
+}
 $xaml = [IO.File]::ReadAllText((Join-Path $root 'src\ZemaxMCP.Launcher\MainWindow.xaml'))
 if ($xaml -notmatch 'Title="Zemax MCP"') { throw 'Window title must match the product name.' }
 $diagnosticsType = $assembly.GetType('ZemaxMCP.Launcher.McpDiagnosticsClient')
