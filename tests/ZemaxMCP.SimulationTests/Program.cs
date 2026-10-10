@@ -188,6 +188,12 @@ internal static class Program
             (Id:2,Type:"DetectorRectangle",Flux:4.0,Hits:12.0),
             (Id:4,Type:"DetectorRectangle",Flux:3.0,Hits:9.0)
         },true);
+        Assert(ledger.TraceCaptureId.Length==32 &&
+               ledger.CapturedAtUtc!=default &&
+               ledger.TraceCaptureId!=NscSameTraceLedger.Build(null,new[]{
+                   (Id:9,Type:"DetectorRectangle",Flux:1.0,Hits:2.0)
+               },true).TraceCaptureId,
+            "Independently traced captures must have unique timestamped identities.");
         Assert(ledger.SameTraceCaptured && ledger.Detectors.Count==2 &&
             Math.Abs(ledger.Detectors[0].FractionOfDeclaredSource!.Value-0.4)<1e-12 &&
             !ledger.AdditiveSourceToDetectorBalanceValid && ledger.UnassignedEnergy==null &&

@@ -25,7 +25,9 @@ public static class NscSameTraceLedger
         string MechanicalClippingStatus,string Interpretation,
         IReadOnlyList<ConfiguredSource>? ConfiguredSources = null,
         double? ConfiguredSourcePowerSum = null,
-        string ConfiguredSourcePowerInterpretation = "not read; source power is not independently measured");
+        string ConfiguredSourcePowerInterpretation = "not read; source power is not independently measured",
+        string TraceCaptureId = "",
+        DateTimeOffset CapturedAtUtc = default);
 
     internal static Report Build(double? declaredFlux,
         IReadOnlyList<(int Id,string Type,double Flux,double Hits)> detectorReadings,
@@ -78,6 +80,7 @@ public static class NscSameTraceLedger
                 "This is a declared optical model source power SUM, not measured actually emitted or launched flux. " +
                 "Sources with zero configured analysis rays, ignored/disabled sources, imported/special sources, " +
                 "ray filters, source coupling and hidden non-source emitters can prevent treating this sum as a conserved " +
-                "denominator. It is diagnostic only: detector fractions continue to use explicitly user-declared flux.");
+                "denominator. It is diagnostic only: detector fractions continue to use explicitly user-declared flux.",
+            Guid.NewGuid().ToString("N"),DateTimeOffset.UtcNow);
     }
 }

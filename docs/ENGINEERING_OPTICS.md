@@ -616,3 +616,13 @@ from one genuinely touching or traversing the finite triangle in-plane
 intersection test projects to the dominant global 2D plane and
 checks segment–triangle overlap; it does not classify every coplanar
 but distant ray as unknown.
+
+### Provenance marker for NSC energy records
+
+A successful `sameTraceEnergy` payload now includes a unique
+`traceCaptureId` and `capturedAtUtc` created with the post-trace
+detector snapshot. Downstream summaries must not join detector records
+with different trace IDs as though they belong to one source-to-detector
+balance. The marker is a data-correlation safeguard, **not** itself
+proof of launched power, missing-ray detection or physical energy
+conservation.
