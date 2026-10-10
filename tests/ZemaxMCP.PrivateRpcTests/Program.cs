@@ -30,6 +30,7 @@ internal static class Program
         try
         {
             VerifyActivityOwnership();
+            VerifyJobsDeltaOwnership();
             VerifyStructuredToolOutcomes();
             VerifyOfficialTasksDefaults();
             VerifyTlsOptions();
@@ -307,6 +308,51 @@ internal static class Program
         if (registry.IsOwned("scoped:a", "bounded-0", 8) ||
             !registry.IsOwned("scoped:a", "bounded-" + (JobOwnerRegistry.MaximumRecords + 9), 8))
             throw new InvalidOperationException("Bounded job owner history did not drop stale entries safely.");
+    }
+
+    private static void VerifyJobsDeltaOwnership()
+    {
+        var monitor = new McpJobTaskDeltaMonitor();
+        var jobs = new[] {
+            new WorkerJobStatus { JobId="job-alice",ToolName="zemax_run_nsc_ray_trace",State="Running",Fraction=0.25,Message="alice-private" },
+            new WorkerJobStatus { JobId="job-bob",ToolName="zemax_global_search",State="Completed",Message="bob-private" }
+        };
+        var otherOwnerTasks = new object[] { new { taskId="task-alice-private",jobId="job-alice" } };
+        var alice = monitor.GetDelta("token:scoped:alice",true,null,17,false,true,
+            jobs,otherOwnerTasks,id=>id=="job-alice");
+        var encoded = JsonSerializer.Serialize(alice);
+        Assert(alice.Changed && alice.Snapshot?.Jobs.Count==1 &&
+               encoded.Contains("alice-private",StringComparison.Ordinal) &&
+               !encoded.Contains("job-bob",StringComparison.Ordinal) &&
+               !encoded.Contains("bob-private",StringComparison.Ordinal),
+            "Jobs delta must return only the authenticated owner's Job and Task data.");
+        var unchanged = monitor.GetDelta("token:scoped:alice",true,alice.Cursor,17,false,true,
+            jobs,otherOwnerTasks,id=>id=="job-alice");
+        Assert(!unchanged.Changed && unchanged.Snapshot==null,
+            "No-change scoped Jobs delta must suppress its body.");
+        var other = monitor.GetDelta("token:scoped:bob",true,alice.Cursor,17,false,true,
+            jobs,Array.Empty<object>(),id=>id=="job-bob");
+        Assert(other.Cursor!=alice.Cursor && other.Changed &&
+               other.Snapshot?.Jobs.Single().JobId=="job-bob" &&
+               !JsonSerializer.Serialize(other).Contains("task-alice-private",StringComparison.Ordinal),
+            "Owner cursors or tasks leak between scoped bearer credentials.");
+        jobs[1].State="Running";jobs[1].Fraction=0.9;
+        Assert(!monitor.GetDelta("token:scoped:alice",true,alice.Cursor,17,false,true,
+            jobs,otherOwnerTasks,id=>id=="job-alice").Changed,
+            "Foreign Job progress changed Alice's private cursor.");
+        jobs[0].Fraction=0.5;
+        Assert(monitor.GetDelta("token:scoped:alice",true,alice.Cursor,17,false,true,
+            jobs,otherOwnerTasks,id=>id=="job-alice").Changed,
+            "Own Worker progress did not advance the owner's delta cursor.");
+        Assert(monitor.GetDelta("token:scoped:alice",true,alice.Cursor,18,false,false,
+            Array.Empty<WorkerJobStatus>(),Array.Empty<object>(),_=>false).Changed,
+            "Worker restart must invalidate stale generation-bound cursors.");
+        var anon = monitor.GetDelta("",false,null,17,false,true,jobs,
+            otherOwnerTasks,_=>true);
+        Assert(anon.Snapshot?.Jobs.Count==2 && anon.Snapshot.Tasks.Count==0,
+            "Shared/local Job state must not expose official Task IDs.");
+        AssertThrows<InvalidOperationException>(()=>monitor.GetDelta("",true,null,17,false,true,
+            jobs,Array.Empty<object>(),_=>false),"A scoped missing identity was not denied.");
     }
 
     private static void VerifyActivityOwnership()
@@ -1115,6 +1161,43 @@ internal static class Program
                     parsed.RootElement.GetProperty("changed").GetBoolean() ||
                     parsed.RootElement.GetProperty("activity").ValueKind != JsonValueKind.Null)
                     throw new InvalidOperationException("Activity delta did not suppress unchanged owner data: " + body);
+            }
+
+            string ownerJobCursor;
+            using (var firstJobs = await SendScopedGetAsync(client,
+                       new Uri(endpoint, endpoint.AbsolutePath.TrimEnd('/') + "/jobs-delta"),
+                       otherWriter).ConfigureAwait(false))
+            {
+                var body=await firstJobs.Content.ReadAsStringAsync().ConfigureAwait(false);
+                using var parsed=JsonDocument.Parse(body);
+                var root=parsed.RootElement;
+                ownerJobCursor=root.GetProperty("cursor").GetString() ?? "";
+                if(!firstJobs.IsSuccessStatusCode || ownerJobCursor.Length!=64 ||
+                    !root.GetProperty("changed").GetBoolean() ||
+                    !body.Contains("fake-owned-job",StringComparison.Ordinal) ||
+                    body.Contains("private-unknown-result",StringComparison.Ordinal) ||
+                    body.Contains("private-job-result",StringComparison.Ordinal) ||
+                    body.Contains("C:\\\\Fake",StringComparison.Ordinal))
+                    throw new InvalidOperationException("Scoped Jobs delta failed to filter secrets: "+body);
+            }
+            using (var noJobsChange=await SendScopedGetAsync(client,
+                       new Uri(endpoint,endpoint.AbsolutePath.TrimEnd('/') +
+                           "/jobs-delta?cursor="+ownerJobCursor),otherWriter).ConfigureAwait(false))
+            {
+                var body=await noJobsChange.Content.ReadAsStringAsync().ConfigureAwait(false);
+                using var parsed=JsonDocument.Parse(body);
+                if(!noJobsChange.IsSuccessStatusCode || parsed.RootElement.GetProperty("changed").GetBoolean() ||
+                   parsed.RootElement.GetProperty("snapshot").ValueKind!=JsonValueKind.Null)
+                    throw new InvalidOperationException("Jobs delta repeated identical owned data: "+body);
+            }
+            using (var foreignJobs=await SendScopedGetAsync(client,
+                       new Uri(endpoint,endpoint.AbsolutePath.TrimEnd('/') + "/jobs-delta"),writer).ConfigureAwait(false))
+            {
+                var body=await foreignJobs.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if(!foreignJobs.IsSuccessStatusCode ||
+                   body.Contains("fake-owned-job",StringComparison.Ordinal) ||
+                   body.Contains("private-job-result",StringComparison.Ordinal))
+                    throw new InvalidOperationException("Foreign credential saw owner jobs in delta: "+body);
             }
 
             using (var ownerCancel = await SendScopedAsync(client, endpoint, 114, "tools/call", "zemax_job_cancel", otherWriter,
