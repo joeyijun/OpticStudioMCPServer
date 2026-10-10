@@ -6,6 +6,7 @@ using ZemaxMCP.Server.Tooling;
 using ZOSAPI;
 using ZOSAPI.Tools;
 using ZOSAPI.Tools.RayTrace;
+using ZOSAPI.Editors.LDE;
 
 namespace ZemaxMCP.Server.Tools.NonSequential;
 
@@ -24,7 +25,11 @@ public sealed class AuditNativeZrdTool
     public sealed record Result(bool Success,string? Error,string? ZrdSha256,
         int NativeRayRecords,int NativeSegmentRecords,
         ZrdPathEnergyCore.Report? Topology,
-        string Interpretation);
+        string Interpretation, ReaderDiagnostics? Diagnostics = null);
+
+    public sealed record ReaderDiagnostics(string SystemMode, bool MixedMode,
+        long FileBytes, string PreviousFilter, string AppliedFilter,
+        string NativeRunStatus, string? NativeError, bool ResultsValid);
 
     [ZemaxTool(Name="zemax_audit_native_zrd")]
     [Description("PRIVILEGED local file READ: read an explicitly named LOCAL OpticStudio .ZRD ray database (sensitive user optical data), using the official native ZRD reader. Cap 1024 rays/8192 segments/128 MiB, verify file integrity and parent indexes, report only algebraic branch energy topology. It does NOT prove that the ZRD belongs to the most recent trace, derive coating/bulk absorption, or close a source-detector energy balance.")]
@@ -34,6 +39,8 @@ public sealed class AuditNativeZrdTool
         CancellationToken cancellationToken=default)
     {
         const string note="Read-only parse of an EXPLICIT EXISTING local .ZRD using ZOS-API OpenRayDatabaseReader and GetResults. RayNumber and parent semantics are version-sensitive; native segment-parent indexes are validated and never silently repaired. File hash identifies input but cannot prove it came from the same previous detector trace. The graph audit certifies only algebraic linkage. Detector-hit double-counting, native source-launched flux, polarized/coating/material/CAD category attribution and physical watts remain UNKNOWN.";
+        ReaderDiagnostics? diagnostics = null;
+        string? checksum = null;
         try
         {
             if(string.IsNullOrWhiteSpace(zrdPath)||!FrameworkCompatibility.IsFullyQualifiedPath(zrdPath) ||
@@ -47,7 +54,6 @@ public sealed class AuditNativeZrdTool
             var originalLength=info.Length;var modified=info.LastWriteTimeUtc;
             // Hash while NO native reader is open. On Windows, the ZRD
             // reader may hold an exclusive native file handle until Close.
-            string checksum;
             using(var stream=File.OpenRead(fullPath))
                 checksum=FrameworkCompatibility.Sha256Hex(stream);
             return await _session.ExecuteAsync("AuditNativeZrd",
@@ -55,13 +61,25 @@ public sealed class AuditNativeZrdTool
                     ["zrdPath"]=fullPath,["timeoutSeconds"]=timeoutSeconds
                 },system=>{
                     cancellationToken.ThrowIfCancellationRequested();
-                    if(system.Mode!=SystemType.NonSequential)
-                        throw new InvalidOperationException("Native ZRD analysis requires NonSequential mode.");
+                    // Official ZRDs may originate in a mixed sequential/NSC
+                    // group. Do not reject those solely by System.Mode.
+                    var mixed = system.Mode == SystemType.Sequential &&
+                        Enumerable.Range(1, system.LDE.NumberOfSurfaces - 1)
+                            .Any(i => system.LDE.GetSurfaceAt(i).Type == SurfaceType.NonSequential);
+                    if(system.Mode!=SystemType.NonSequential && !mixed)
+                        throw new InvalidOperationException("Native ZRD analysis requires an NSC system or a sequential system containing an NSC group.");
                     var reader=system.Tools.OpenRayDatabaseReader()
                         ?? throw new NotSupportedException("Installed ZOS-API lacks the native ZRD reader.");
                     try
                     {
                         reader.ZRDFile=fullPath;
+                        var previousFilter = reader.Filter ?? "";
+                        // Never inherit a viewer/model filter: this tool has
+                        // no filter input and promises an unfiltered audit.
+                        reader.Filter = "";
+                        diagnostics = new ReaderDiagnostics(system.Mode.ToString(), mixed,
+                            originalLength, previousFilter, reader.Filter ?? "",
+                            "NotStarted", null, false);
                         if(!reader.IsValid)
                             throw new InvalidOperationException("ZRD reader rejected the specified native ray database.");
                         if(!reader.Run())
@@ -86,6 +104,8 @@ public sealed class AuditNativeZrdTool
                         if(!reader.Succeeded)
                             throw new InvalidOperationException(reader.ErrorMessage??"Native ZRD reader reported failure.");
                         var native=reader.GetResults();
+                        diagnostics = diagnostics with { NativeRunStatus = reader.Status.ToString(),
+                            NativeError = reader.ErrorMessage, ResultsValid = native?.IsValid == true };
                         if(native==null || !native.IsValid)
                             throw new InvalidOperationException("Native ZRD reader returned invalid results.");
                         var segments=new List<ZrdPathEnergyCore.Segment>();
@@ -94,6 +114,8 @@ public sealed class AuditNativeZrdTool
                             out var wavelengthUm,out var count))
                         {
                             cancellationToken.ThrowIfCancellationRequested();
+                            if(watch.Elapsed.TotalSeconds >= timeoutSeconds)
+                                throw new TimeoutException("Native ZRD enumeration exceeded its wall-clock deadline.");
                             if(++rays>1024 || count is <1 or >8192 ||
                                segments.Count+count>8192 ||
                                !FrameworkCompatibility.IsFinite(wavelengthUm) || wavelengthUm<=0 ||
@@ -101,7 +123,12 @@ public sealed class AuditNativeZrdTool
                                 throw new InvalidDataException("ZRD evidence exceeded 1024 rays / 8192 segments or returned invalid wavelength/segment count.");
                             for(var index=0;index<count;index++)
                             {
-                                if((index&63)==0)cancellationToken.ThrowIfCancellationRequested();
+                                if((index&63)==0)
+                                {
+                                    cancellationToken.ThrowIfCancellationRequested();
+                                    if(watch.Elapsed.TotalSeconds >= timeoutSeconds)
+                                        throw new TimeoutException("Native ZRD segment enumeration exceeded its wall-clock deadline.");
+                                }
                                 if(!native.ReadNextSegmentFull(
                                     out var level,out var parent,out var hitObject,
                                     out var hitFace,out var insideOf,out RayStatus rayStatus,
@@ -125,12 +152,12 @@ public sealed class AuditNativeZrdTool
                             }
                         }
                         if(rays==0)
-                            throw new InvalidDataException("Native ZRD contains no auditable ray records.");
+                            throw new InvalidDataException("The native ZRD reader returned zero ray records with an explicitly empty filter. This does not prove the database is empty; verify the saved format/version with the native Ray Database Viewer or a newly generated uncompressed NSC database. Inspect diagnostics before treating this as a valid zero-result audit.");
                         var audit=ZrdPathEnergyCore.Audit(segments);
                         var check=new FileInfo(fullPath);
                         if(check.Length!=originalLength || check.LastWriteTimeUtc!=modified)
                             throw new IOException("ZRD input changed during the reader session.");
-                        return new Result(true,null,checksum,rays,segments.Count,audit,note);
+                        return new Result(true,null,checksum,rays,segments.Count,audit,note,diagnostics);
                     }
                     finally
                     {
@@ -141,6 +168,6 @@ public sealed class AuditNativeZrdTool
         }
         catch(OperationCanceledException){throw;}
         catch(Exception e)
-        {return new Result(false,e.Message,null,0,0,null,note);}
+        {return new Result(false,e.Message,checksum,0,0,null,note,diagnostics);}
     }
 }

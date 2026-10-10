@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') { throw 'Run with powershell -STA.' }
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing
 $root = Split-Path $PSScriptRoot -Parent
+& (Join-Path $PSScriptRoot 'test-automatic-https.ps1') -Configuration $Configuration
 $assembly = [Reflection.Assembly]::LoadFrom((Join-Path $root "src\ZemaxMCP.Launcher\bin\$Configuration\net48\Start-Zemax-MCP.exe"))
 Add-Type -Path (Join-Path $root "src\ZemaxMCP.Launcher\bin\$Configuration\net48\Newtonsoft.Json.dll")
 $tasksPreference = $assembly.GetType('ZemaxMCP.Launcher.OfficialTasksSettings')

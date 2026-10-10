@@ -255,6 +255,26 @@ public partial class MainWindow : Window
                "Remote clients must trust the certificate and verify its endpoint name.");
     }
 
+    private void AutomaticHttps_Click(object sender, RoutedEventArgs e)
+    {
+        if (!LauncherDialog.Confirm(this, "Set up HTTPS", "Create a private server certificate for this computer? Existing clients need the new HTTPS setup. This does not restart the service or trust any remote certificate.", "Create certificate")) return;
+        try
+        {
+            var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZemaxMCP", "https");
+            var setup = AutomaticHttps.Create(directory, ShareOnLan.IsChecked == true ? GetLanAddress() : "");
+            TlsPfxPath.Text = setup.PfxPath;
+            TlsPfxPassword.Password = setup.Password;
+            EnableTls.IsChecked = true;
+            SaveSettings();
+            RefreshEndpoint();
+            using var certificate = AutomaticHttps.ReadPublic(setup.PublicCertificate);
+            if (LauncherDialog.Confirm(this, "Trust this computer's HTTPS certificate?", "Trust only this server certificate for your Windows user. No administrator rights or global certificate-validation bypass.\n\nSHA-256: " + setup.Fingerprint, "Trust certificate"))
+                AutomaticHttps.TrustCurrentUser(certificate);
+            Report("HTTPS prepared. Stop/Start when no optical Job is active, then copy the new connection setup. Remote users must confirm the same certificate fingerprint. Existing HTTP settings on other computers were not changed.");
+        }
+        catch (Exception ex) { Report("Automatic HTTPS setup failed: " + ex.Message); }
+    }
+
     private void ShareOnLan_Changed(object sender, RoutedEventArgs e)
     {
         if (!_windowLoaded) return;
@@ -876,10 +896,22 @@ public partial class MainWindow : Window
     private void CopyEndpoint_Click(object sender, RoutedEventArgs e) { System.Windows.Clipboard.SetText(McpUrl); Report("MCP address copied: " + McpUrl); }
     private void CopySecureSetup_Click(object sender, RoutedEventArgs e)
     {
-        var setup = new JObject { ["endpoint"] = Url, ["accessToken"] = _localAccessToken }.ToString(Newtonsoft.Json.Formatting.None);
-        System.Windows.Clipboard.SetText(setup);
+        var setup = new JObject { ["endpoint"] = Url, ["accessToken"] = _localAccessToken };
+        if (LocalTlsEnabled)
+        {
+            try
+            {
+                using var certificate = new System.Security.Cryptography.X509Certificates.X509Certificate2(LocalTlsPfxPath, TlsPfxPassword.Password,
+                    System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.EphemeralKeySet);
+                // Share leaf public bytes only, NEVER PFX/password/private key.
+                setup["serverCertificate"] = Convert.ToBase64String(certificate.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Cert));
+                setup["certificateSha256"] = AutomaticHttps.Fingerprint(certificate);
+            }
+            catch (Exception ex) { Report("Could not read HTTPS certificate: " + ex.Message); return; }
+        }
+        System.Windows.Clipboard.SetText(setup.ToString(Newtonsoft.Json.Formatting.None));
         Report("Connection setup copied. Treat the Bearer token like a password." +
-            (ShareOnLan.IsChecked == true ? " WARNING: plaintext LAN HTTP does not encrypt tokens or optical data." : ""));
+            (ShareOnLan.IsChecked == true && !LocalTlsEnabled ? " WARNING: plaintext LAN HTTP does not encrypt tokens or optical data." : ""));
     }
     private void RegenerateToken_Click(object sender, RoutedEventArgs e)
     {
@@ -905,6 +937,19 @@ public partial class MainWindow : Window
             var token = setup["accessToken"]?.ToString();
             if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ||
                 (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) || string.IsNullOrWhiteSpace(token)) return false;
+            if (setup["serverCertificate"] != null)
+            {
+                if (uri.Scheme != Uri.UriSchemeHttps) throw new ArgumentException("Certificate setup requires HTTPS.");
+                using var certificate = AutomaticHttps.ReadPublic(setup["serverCertificate"]!.ToString());
+                var fingerprint = AutomaticHttps.Fingerprint(certificate);
+                if (!string.Equals(fingerprint, setup["certificateSha256"]?.ToString(), StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException("Certificate fingerprint does not match setup.");
+                if (!AutomaticHttps.IsTrusted(certificate))
+                {
+                    if (!LauncherDialog.Confirm(this, "Trust the OpticStudio computer?", "Only accept setup received directly from your trusted OpticStudio computer. Compare this SHA-256 fingerprint on BOTH computers; a matching value in the same JSON alone does not prove identity.\n\nEndpoint: " + uri.GetLeftPart(UriPartial.Authority) + "\nSHA-256: " + fingerprint + "\n\nAdds only this server leaf certificate to your Windows user's trusted store. Client TLS still checks the endpoint name and expiration.", "Trust this server")) return false;
+                    AutomaticHttps.TrustCurrentUser(certificate);
+                }
+            }
             _remoteEndpoint = uri.ToString().TrimEnd('/');
             _remoteAccessToken = token!;
             RemoteSecureSetup.Text = "";

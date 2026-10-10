@@ -167,7 +167,7 @@ The same no-op mutation must succeed and create a verified `.zmx` pre-change sna
 
 ## 5. Functional review order and current status
 
-The 141 public commands are reviewed in stages so release-critical editing/recovery paths are checked before specialized analyses.
+The 146 public commands are reviewed in stages so release-critical editing/recovery paths are checked before specialized analyses.
 
 | Stage | Functional area | Review status | Release focus |
 | --- | --- | --- | --- |
