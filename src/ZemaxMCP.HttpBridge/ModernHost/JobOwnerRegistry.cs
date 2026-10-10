@@ -97,14 +97,8 @@ internal sealed class JobOwnerRegistry
         };
     }
 
-    internal static CallToolResult Denied() => new()
-    {
-        Content = new List<ContentBlock>
-        {
-            new TextContentBlock { Text = "Job not found or not owned by the authenticated client." }
-        },
-        IsError = true
-    };
+    internal static CallToolResult Denied() =>
+        ToolOutcome.Failure("not_found", "Job not found or not owned by the authenticated client.");
 
     internal static CallToolResult ValidateSingleResult(CallToolResult result, string jobId)
     {

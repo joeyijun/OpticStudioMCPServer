@@ -30,6 +30,7 @@ internal static class Program
         try
         {
             VerifyActivityOwnership();
+            VerifyStructuredToolOutcomes();
             VerifyOfficialTasksDefaults();
             VerifyTlsOptions();
             VerifyTaskPlanningCatalog();
@@ -116,6 +117,42 @@ internal static class Program
         try { action(); }
         catch (T) { return; }
         throw new InvalidOperationException(message);
+    }
+
+    private static void VerifyStructuredToolOutcomes()
+    {
+        Assert(ToolOutcome.Classify("Result expired") == "expired" &&
+               ToolOutcome.Classify("Job not found") == "not_found" &&
+               ToolOutcome.Classify("background Job is active") == "conflict" &&
+               ToolOutcome.Classify("RPC transport closed") == "transport_error",
+            "Typed tool failure mapping was regressed.");
+        var error = ToolOutcome.Failure("conflict", "Background Job is active.");
+        var json = System.Text.Json.JsonDocument.Parse(((TextContentBlock)error.Content.Single()).Text);
+        Assert(error.IsError == true &&
+               json.RootElement.GetProperty("code").GetString() == "conflict" &&
+               json.RootElement.GetProperty("success").GetBoolean() == false,
+            "Structured conflict envelope must preserve isError.");
+        var legacy = new CallToolResult
+        {
+            IsError = true,
+            Content = new List<ContentBlock>
+            {
+                new TextContentBlock { Text = "{\"success\":false,\"error\":\"expired\",\"detail\":12}" }
+            }
+        };
+        var normalized = ToolOutcome.Normalize(legacy);
+        using var doc = JsonDocument.Parse(((TextContentBlock)normalized.Content.Single()).Text);
+        Assert(normalized.IsError == true &&
+               doc.RootElement.GetProperty("code").GetString() == "expired" &&
+               doc.RootElement.GetProperty("detail").GetInt32() == 12,
+            "Failed legacy JSON must retain its fields while receiving a machine-readable code.");
+        var success = new CallToolResult
+        {
+            IsError = false,
+            Content = new List<ContentBlock> { new TextContentBlock { Text = "{\"ok\":true}" } }
+        };
+        Assert(ReferenceEquals(ToolOutcome.Normalize(success), success),
+            "Legacy successful tool output must remain byte-for-byte unchanged.");
     }
 
     private static void VerifyOfficialTasksDefaults()

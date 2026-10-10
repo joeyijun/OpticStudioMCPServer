@@ -137,17 +137,8 @@ internal static class Program
                     if (!StaticToolManifest.TryGet(request.Params.Name, out var requestedTool) ||
                         !IsAuthorizedTool(options, request.User, requestedTool))
                     {
-                        return new CallToolResult
-                        {
-                            Content = new List<ContentBlock>
-                            {
-                                new TextContentBlock
-                                {
-                                    Text = "The selected toolset/read-only policy does not permit " + request.Params.Name + "."
-                                }
-                            },
-                            IsError = true
-                        };
+                        return ToolOutcome.Failure("domain_error",
+                            "The selected toolset/read-only policy does not permit " + request.Params.Name + ".");
                     }
 
                     var clientId = ResolveControlIdentity(request);
@@ -199,14 +190,8 @@ internal static class Program
                         var requestedLimit = 50;
                         if (request.Params.Name == "zemax_job_list" &&
                             !JobOwnerRegistry.TryGetRequestedListLimit(request.Params, out requestedLimit))
-                            return new CallToolResult
-                            {
-                                Content = new List<ContentBlock>
-                                {
-                                    new TextContentBlock { Text = "Job list limit must be an integer between 1 and 128." }
-                                },
-                                IsError = true
-                            };
+                            return ToolOutcome.Failure("domain_error",
+                                "Job list limit must be an integer between 1 and 128.");
 
                         var workerRequest = request.Params.Name == "zemax_job_list"
                             ? JobOwnerRegistry.ExpandListRequest(request.Params)
@@ -228,11 +213,7 @@ internal static class Program
                         }
                         catch (ControlLeaseConflictException ex)
                         {
-                            return new CallToolResult
-                            {
-                                Content = new List<ContentBlock> { new TextContentBlock { Text = ex.Message } },
-                                IsError = true
-                            };
+                            return ToolOutcome.Failure("conflict", ex.Message);
                         }
                         using (ownership)
                         {
@@ -265,7 +246,7 @@ internal static class Program
                         IsSuccessfulDisconnect(result))
                         controlLease.ReleaseOwnership(clientId);
 
-                    return result;
+                    return ToolOutcome.Normalize(result);
             }
 
             var app = builder.Build();
