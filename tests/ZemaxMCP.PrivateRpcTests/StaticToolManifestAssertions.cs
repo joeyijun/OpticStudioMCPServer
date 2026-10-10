@@ -83,6 +83,18 @@ internal static class StaticToolManifestAssertions
                 throw new InvalidOperationException("Engineering analysis tool schema/permission contract regressed: " + pair.Name);
         }
 
+        var clipping = StaticToolManifest.GetRequired("zemax_diagnose_clipping");
+        if (clipping.DomainId != "analysis" || clipping.Impact != "ReadOnly" ||
+            !StaticToolManifest.IsAllowed("basic-viewing", clipping.Name, readOnly: true) ||
+            !StaticToolManifest.IsAllowed("sequential-design", clipping.Name, readOnly: true) ||
+            !StaticToolManifest.IsAllowed("optimization-tolerance", clipping.Name, readOnly: true) ||
+            StaticToolManifest.IsAllowed("nonsequential-stray-light", clipping.Name, readOnly: false))
+            throw new InvalidOperationException("One-call clipping diagnosis must preserve ReadOnly semantics and sequential-only profile exposure.");
+        var clippingSchema = clipping.InputSchema.GetProperty("properties");
+        foreach (var field in new[] { "surfaces", "hx", "hy", "wavelength", "gridSize", "maxPointsPerSurface" })
+            if (!clippingSchema.TryGetProperty(field, out _))
+                throw new InvalidOperationException("Clipping diagnosis is missing bounded sampling input: " + field);
+
         var aiPlanner = StaticToolManifest.GetRequired("zemax_task_plan");
         if (aiPlanner.DomainId != "system" || aiPlanner.Impact != "ReadOnly" ||
             !StaticToolManifest.IsAllowed("basic-viewing", aiPlanner.Name, readOnly: true) ||
