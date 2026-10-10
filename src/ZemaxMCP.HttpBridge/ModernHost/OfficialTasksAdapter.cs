@@ -26,6 +26,7 @@ internal sealed class OfficialTasksAdapter
     private readonly WorkerTaskLedger _ledger;
     private readonly WorkerRpcClient _worker;
     private readonly JobOwnerRegistry _owners;
+    private readonly OpticStudioControlLease _controlLease;
     private readonly bool _scoped;
     private readonly Func<JsonRpcRequest, string> _getOwner;
     private readonly Func<RequestContext<CallToolRequestParams>, bool> _isAuthorized;
@@ -34,13 +35,14 @@ internal sealed class OfficialTasksAdapter
 
     internal OfficialTasksAdapter(
         WorkerTaskLedger ledger, WorkerRpcClient worker, JobOwnerRegistry owners,
-        bool scoped, Func<JsonRpcRequest, string> getOwner,
+        OpticStudioControlLease controlLease, bool scoped, Func<JsonRpcRequest, string> getOwner,
         Func<RequestContext<CallToolRequestParams>, bool> isAuthorized,
         Func<RequestContext<CallToolRequestParams>, CancellationToken, Task<CallToolResult>> execute)
     {
         _ledger = ledger;
         _worker = worker;
         _owners = owners;
+        _controlLease = controlLease;
         _scoped = scoped;
         _getOwner = getOwner;
         _isAuthorized = isAuthorized;
@@ -117,7 +119,7 @@ internal sealed class OfficialTasksAdapter
 
         // A terminal Worker event may have arrived before registration.
         if (_worker.TryGetJobStatus(generation, jobId, out var current) && current != null)
-            _ledger.ObserveJob(generation, current);
+            ObserveJob(generation, current);
 
         return ResultOrAlternate<CallToolResult>.FromAlternate(new CreateTaskResult
         {
@@ -128,6 +130,18 @@ internal sealed class OfficialTasksAdapter
             LastUpdatedAt = snapshot.UpdatedAt,
             PollIntervalMs = 1000
         }, McpTasksJsonContext.Default.CreateTaskResult);
+    }
+
+    /// <summary>
+    /// Task polling and Task cancellation can see a terminal Worker result
+    /// before the asynchronous Worker status event. Update the Task ledger
+    /// AND the optical control lease from the same generation-bound evidence.
+    /// In particular, an older cancelled Task must not block the next Job.
+    /// </summary>
+    private void ObserveJob(long generation, WorkerJobStatus job)
+    {
+        _ledger.ObserveJob(generation, job);
+        _controlLease.ObserveJob(generation, job);
     }
 
     private async ValueTask<JsonNode?> GetAsync(JsonRpcRequest request, CancellationToken cancellationToken)
@@ -147,7 +161,7 @@ internal sealed class OfficialTasksAdapter
                 // Host instead; the next unblocked poll fetches the real result.
                 if (_worker.TryGetJobStatus(snapshot.Generation, snapshot.JobId, out var observed) &&
                     observed != null)
-                    _ledger.ObserveJob(snapshot.Generation, observed);
+                    ObserveJob(snapshot.Generation, observed);
             }
             else
             {
@@ -229,7 +243,7 @@ internal sealed class OfficialTasksAdapter
                 throw new McpProtocolException("Worker Job cancellation was not acknowledged.", McpErrorCode.InternalError);
 
             if (TryReadStatus(result, jobId, out var state, out _, out _, out _))
-                _ledger.ObserveJob(snapshot.Generation, new WorkerJobStatus { JobId = jobId, State = state });
+                ObserveJob(snapshot.Generation, new WorkerJobStatus { JobId = jobId, State = state });
         }
         return JsonSerializer.SerializeToNode(new CancelTaskResult(), McpTasksJsonContext.Default.CancelTaskResult);
     }
@@ -264,7 +278,7 @@ internal sealed class OfficialTasksAdapter
                 "The Worker Job status or final payload is unavailable or invalid.");
             return;
         }
-        _ledger.ObserveJob(task.Generation, new WorkerJobStatus
+        ObserveJob(task.Generation, new WorkerJobStatus
         {
             JobId = task.JobId, State = state, Message = message
         });
