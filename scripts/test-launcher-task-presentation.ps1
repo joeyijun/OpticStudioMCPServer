@@ -69,6 +69,12 @@ if ($filtered.Count -ne 1 -or $filtered[0].ToolName -ne 'zemax_pop' -or
 $selectArgs = New-Object object[] 2
 $selectArgs[0]=$filtered
 $selectArgs[1]='task:task-1'
+$boundProperty = $vmType.GetProperty('VisibleJobs', [Reflection.BindingFlags]'Instance,Public')
+$refresh = $vmType.GetMethod('UpdateVisible', $instanceFlags)
+$refresh.Invoke($instance, $filterArgs)
+if ($null -eq $boundProperty -or $boundProperty.GetValue($instance).Count -ne 1) {
+    throw 'Task Center WPF ItemsSource binding does not expose the deduplicated filtered collection.'
+}
 $selected = $select.Invoke($null, $selectArgs)
 if ($selected.TaskId -ne 'task-1' -or $detail.Invoke($null, @($selected)) -notmatch 'Worker generation') {
     throw 'Task Center ViewModel did not preserve selection/detail diagnostic context.'

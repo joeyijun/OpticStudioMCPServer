@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using Newtonsoft.Json.Linq;
 
@@ -7,9 +8,19 @@ namespace ZemaxMCP.Launcher;
 
 /// <summary>Stateful, UI-independent projection for the Task Center.
 /// No WPF controls, network IO, credentials or mutable optical operations.</summary>
-internal sealed class TaskCenterViewModel
+internal sealed class TaskCenterViewModel : INotifyPropertyChanged
 {
+    public event PropertyChangedEventHandler? PropertyChanged;
     private List<BackgroundJobView> _history = new();
+    public IReadOnlyList<BackgroundJobView> VisibleJobs { get; private set; } =
+        Array.Empty<BackgroundJobView>();
+
+    internal IReadOnlyList<BackgroundJobView> UpdateVisible(string? filter,string? query)
+    {
+        VisibleJobs=Visible(filter,query);
+        PropertyChanged?.Invoke(this,new PropertyChangedEventArgs(nameof(VisibleJobs)));
+        return VisibleJobs;
+    }
     internal int Count => _history.Count;
     internal int ActiveCount => _history.Count(item=>item.IsActive);
     internal string Summary => Count==0 ? "No background tasks reported." :

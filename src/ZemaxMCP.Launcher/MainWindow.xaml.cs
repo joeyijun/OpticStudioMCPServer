@@ -50,6 +50,9 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        // WPF ItemsSource observes a real view-model property rather than a
+        // manually assigned ListBox collection on every Job status refresh.
+        TasksPageJobs.DataContext=_taskCenter;
         SourceInitialized += (_, _) => ApplyMaterial();
         SystemEvents.UserPreferenceChanged += AppearancePreferenceChanged;
         SystemEvents.SessionSwitch += AppearanceSessionChanged;
@@ -538,8 +541,7 @@ public partial class MainWindow : Window
         var selected=(TasksPageJobs.SelectedItem as BackgroundJobView)?.SelectionKey;
         var state=(TasksPageFilter?.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() ?? "All";
         var search=TasksPageSearch?.Text ?? "";
-        var visible=_taskCenter.Visible(state,search);
-        TasksPageJobs.ItemsSource=visible;
+        var visible=_taskCenter.UpdateVisible(state,search);
         TasksPageJobs.SelectedItem=TaskCenterViewModel.Select(visible,selected);
         TasksPageSummary.Text=_taskCenter.PageSummary;
         TasksPageEmpty.Visibility=visible.Count==0?Visibility.Visible:Visibility.Collapsed;

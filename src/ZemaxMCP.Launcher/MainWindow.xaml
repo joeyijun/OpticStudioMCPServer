@@ -586,7 +586,7 @@
                          TextChanged="TasksPageSearch_Changed"/>
               </Grid>
               <TextBlock x:Name="TasksPageEmpty" Text="No recent tasks. Start a background operation from your AI client." Style="{StaticResource HelperText}" Margin="0,6,0,10" TextWrapping="Wrap"/>
-              <ListBox x:Name="TasksPageJobs" MinHeight="280" MaxHeight="460" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="TasksPageJobs_Changed" AutomationProperties.Name="Background Job list">
+              <ListBox x:Name="TasksPageJobs" ItemsSource="{Binding VisibleJobs}" MinHeight="280" MaxHeight="460" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="TasksPageJobs_Changed" AutomationProperties.Name="Background Job list">
                 <ListBox.ItemContainerStyle>
                   <Style TargetType="ListBoxItem">
                     <Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,3"/>
