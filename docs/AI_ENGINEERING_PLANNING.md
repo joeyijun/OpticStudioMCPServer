@@ -51,6 +51,60 @@ to live ownership, authorization and user approval.
 For real radiometry, this remains a **geometric and scalar-ray approximation**;
 see `docs/ENGINEERING_OPTICS.md`.
 
+## One-call clipping report
+
+For a sequential off-axis/parabolic mirror or folded spectrometer model:
+
+```json
+{
+  "surfaces": [3, 4, 7, 9, 12],
+  "hx": 0,
+  "hy": 0,
+  "wavelength": 1,
+  "gridSize": 21,
+  "maxPointsPerSurface": 48
+}
+```
+
+Use `zemax_diagnose_clipping` as the first **read-only** clipping analysis.
+It calls the existing `zemax_ray_footprint` and
+`zemax_aperture_throughput` samplers, validates that clear/vignetted/error
+counts are **identical for the same final surface and pupil grid**, and fails
+closed on any disagreement. Output includes ranked vignette-code surfaces,
+sampled geometric throughput, non-traceable ray count, locally defined
+footprint/explicit circular aperture geometry, and reasons for uncertain
+mechanical conclusions. Never infer that an unmodeled aperture is clear, or
+that unmodeled structural clipping has been observed. This does not change
+the loaded lens or move any surface.
+
+Call `zemax_task_plan(task="clipping")` beforehand if there is uncertainty
+about the current model mode or selected analysis tools. For models with
+more than 24 sequential surfaces, select a bounded subset containing the
+destination surface; the report may flag other reported blocking surfaces
+that were not sampled.
+
+## Worker and Tasks reliability
+
+- The ZOS-API STA has a bounded pending queue (default 64) with FIFO order,
+  a clear full-queue error, and immediate cancellation/removal of **queued**
+  operations. A COM call already running on the STA cannot be forcibly
+  interrupted inside the process; Host's Worker-generation hard-recovery
+  remains responsible for a real COM hang.
+- The Host writes an atomic, bounded, **metadata-only** Tasks journal under
+  its current Windows user's LocalAppData/ZemaxMCP/task-journals directory,
+  separated by listener port. It never saves raw optical tool outputs or
+  Worker-provided diagnostic messages that might contain private lens paths.
+- On Host restart, old in-flight Tasks are retained as owner-scoped
+  `failed` entries with an explicit interruption reason. Old terminal
+  Tasks remain visible only to their original owner. Completed results are
+  marked expired rather than reconstructed or fabricated. Neither Job
+  execution nor optical COM state is resumed from disk.
+- Journal corruption/unavailability fails closed for persisted metadata;
+  the live in-memory Task ledger remains authoritative if a disk write
+  fails. Journal is **not encrypted**, and must remain on a private local
+  user profile, not a shared/network-mounted directory. User identity and
+  Task metadata may be sensitive even without result payloads.
+
 ## Observation and control lease semantics
 
 A genuinely ReadOnly tool uses the same serialized Host gate but **does not
