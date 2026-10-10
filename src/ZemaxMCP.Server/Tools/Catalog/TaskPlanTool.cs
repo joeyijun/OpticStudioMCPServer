@@ -29,7 +29,8 @@ public sealed class TaskPlanTool
         new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
             ["clipping"] = new[] { "Confirm active system", "Read target surface", "Inspect physical aperture",
-                "Trace failing rays", "Calculate footprint envelope", "Cross-check geometric pupil fraction" },
+                "Return a ranked, cross-checked clipping diagnosis", "Trace failing rays",
+                "Calculate footprint envelope", "Cross-check geometric pupil fraction" },
             ["imaging"] = new[] { "Read optical system", "Read field sampling", "Measure RMS spot",
                 "Inspect PSF", "Inspect MTF" },
             ["straylight"] = new[] { "Inspect NSC system settings", "Summarize scene",
