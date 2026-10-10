@@ -2,9 +2,9 @@ namespace ZemaxMCP.Server.Tools.Analysis;
 
 /// <summary>Pure local-coordinate geometry supplied by the user. Does not
 /// treat a Zemax semi-diameter as a declared mechanical aperture.</summary>
-internal static class MechanicalFootprintBoundary
+public static class MechanicalFootprintBoundary
 {
-    internal sealed record Assessment(string Type, int SurvivingRayCount,
+    public sealed record Assessment(string Type, int SurvivingRayCount,
         int Inside, int Outside, double? MinimumSignedClearance,
         double? OutsideFractionOfSurvivors, string CoordinateFrame);
 
