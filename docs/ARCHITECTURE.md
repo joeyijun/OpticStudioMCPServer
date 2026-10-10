@@ -51,13 +51,13 @@ The Host may start and answer `tools/list` without starting the Worker. The Work
 
 ### Desktop/package
 
-- `src/ZemaxMCP.Launcher` owns end-user setup, configuration, status and service lifecycle.
+- `src/ZemaxMCP.Launcher` owns end-user setup, configuration, status and service lifecycle. The WPF `MainWindow` owns visible UI state and service-start/stop interactions; `ClientConfigurator` owns per-client config-file formats and detection; `McpDiagnosticsClient` owns HTTP MCP health/protocol smoke probes; `JobActionClient` owns authenticated Job status/cancellation RPC; `TaskPresentation` owns UI-independent Task/Job projections; and `ScopedDeltaCursor` owns credential-bound polling cursors. These are incremental separations, **not yet a complete WPF MVVM conversion**.
 - `src/ZemaxMCP.ClientProxy` adapts stdio-only clients to the public HTTP MCP endpoint and emits a per-process client instance identity.
 - `src/ZemaxMCP.Installer` owns first-install UI and delegates upgrades to `src/ZemaxMCP.Updater`; portable upgrades use the same updater replacement/rollback path when an installed copy exists.
 
 ## Tool contract ownership
 
-Worker tool methods remain the authoring source for tool names, descriptions and parameter shapes. At build time the manifest generator produces a static contract containing all 139 tools. Each entry includes:
+Worker tool methods remain the authoring source for tool names, descriptions and parameter shapes. At build time the manifest generator produces a static contract containing all 144 tools. Each entry includes:
 
 - stable MCP tool name
 - description
@@ -81,7 +81,7 @@ RPC v3 deliberately has no discovery command. Its request/response surface is li
 - `result`
 - `error`
 
-Tool arguments remain manifest-defined JSON between Host and Worker, while RPC infrastructure/status/event envelopes are strongly typed. This avoids maintaining 139 duplicate per-tool RPC DTOs while still providing a compile-time typed infrastructure boundary.
+Tool arguments remain manifest-defined JSON between Host and Worker, while RPC infrastructure/status/event envelopes are strongly typed. This avoids maintaining 144 duplicate per-tool RPC DTOs while still providing a compile-time typed infrastructure boundary.
 
 ## Progress and event dispatch
 
@@ -95,6 +95,20 @@ The Host pipe reader only parses and routes frames. It records snapshot creation
 - correlates a background Job with the Worker operation that created it.
 
 Background jobs that outlive the original MCP request remain observable through job/status state. Queue length, metadata history, and large result-payload history have separate bounds. Cancellation has an independent drain deadline; if a cancelled ZOS-API job cannot stop within that grace period, the Worker generation is terminated so the Host can start cleanly.
+
+## Cached Job/Task delta diagnostics
+
+`GET /mcp/jobs-delta` returns HMAC cursor-based changes for the already
+cached Host Job state and latest generation-bound progress events. It
+does **not** send a new Worker status RPC or block on COM. Scoped
+bearer credentials receive only their authenticated owned Job IDs
+and safe Task metadata; uncached just-registered Jobs have explicit
+`Unknown` state. Global Worker busy/freshness cannot affect another
+scoped owner's cursor. Launcher polls this endpoint at one-second
+cadence, resets the opaque cursor when either endpoint **or bearer
+credential** changes, and falls back to five-second `/health` for
+older Hosts. Never confuse this cached state with a verified fresh
+ZOS-API numeric or physical observation.
 
 ## Long-running optical tools
 
