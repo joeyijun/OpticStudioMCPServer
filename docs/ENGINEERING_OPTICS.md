@@ -14,6 +14,7 @@ Example MCP `tools/call` arguments:
   "fields": [[0, 0], [0, 0.5]],
   "wavelengths": [1, 2],
   "finalSurface": 12,
+  "startSurface": 1,
   "gridSize": 15
 }
 ```
@@ -35,7 +36,14 @@ Example MCP `tools/call` arguments:
   response and a trace-consistent launched flux; NSC is appropriate for
   detector/stray-light work.
 - Calls are bounded to <=6 fields, <=6 wavelengths, <=24 consecutive
-  surfaces starting from surface 1, and <=150000 surface/ray samples.
+  surfaces per call, and <=150000 surface/ray samples. For a long LDE use
+  absolute `startSurface` and `finalSurface`, with **one shared boundary
+  surface** between windows: 1..24, 24..47, 47..70.
+  `finalSurface: 0` means the image plane. Each surface reports cumulative
+  entrance-pupil survival, not window-normalized power; the first row in a
+  window cannot report its transfer from the previous surface.
+  The shared boundary permits first-new-surface transfer in the next window.
+  Never multiply cumulative clear-pupil fractions from separate windows.
 
 ## Sequential: `zemax_ray_footprint`
 

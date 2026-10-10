@@ -7,6 +7,7 @@
   <ItemGroup>
     <Compile Include="..\..\src\ZemaxMCP.Core\Models\AnalysisResults.cs" Link="Core\AnalysisResults.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\MtfSeriesReader.cs" Link="Server\MtfSeriesReader.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\SequentialEnergySurfaceRange.cs" Link="Server\SequentialEnergySurfaceRange.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Session\IZosSystemSnapshot.cs" Link="Core\IZosSystemSnapshot.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Session\ZemaxOperationMetadata.cs" Link="Core\ZemaxOperationMetadata.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Session\ZemaxOperationSafety.cs" Link="Core\ZemaxOperationSafety.cs" />

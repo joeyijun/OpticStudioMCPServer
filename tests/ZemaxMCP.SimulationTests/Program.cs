@@ -2,6 +2,7 @@ using ZemaxMCP.Core.Models;
 using ZemaxMCP.Core.Services.GlassCatalog;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Services.Jobs;
+using ZemaxMCP.Server.Tools.Analysis;
 using ZemaxMCP.Server.Tools.Base;
 
 internal static class Program
@@ -13,12 +14,13 @@ internal static class Program
             VerifyOperationMetadataAndSnapshotBoundary();
             VerifyScientificNumberTruthfulness();
             VerifyStructuredMtf();
+            VerifySequentialEnergyWindows();
             VerifyGlassCatalogSafety();
             await VerifyStaDispatcherAsync();
             await VerifyJobManagerAsync();
             await VerifyJobLimitsAsync();
             await VerifyJobHardRecoveryAsync();
-            Console.WriteLine("Core safety abstraction, scientific-number truthfulness, glass-catalog integrity, STA dispatcher, and bounded server job simulation tests passed.");
+            Console.WriteLine("Core safety abstraction, scientific-number truthfulness, bounded LDE energy windows, glass-catalog integrity, STA dispatcher, and bounded server job simulation tests passed.");
             return 0;
         }
         catch (Exception exception)
@@ -26,6 +28,28 @@ internal static class Program
             Console.Error.WriteLine(exception);
             return 1;
         }
+    }
+
+    private static void VerifySequentialEnergyWindows()
+    {
+        Assert(SequentialEnergySurfaceRange.Resolve(1, 24, 80) == (1, 24, 24),
+            "First bounded LDE window was not 1..24.");
+        Assert(SequentialEnergySurfaceRange.Resolve(24, 47, 80) == (24, 47, 24),
+            "Adjacent windows must use absolute indices with one-surface overlap.");
+        Assert(SequentialEnergySurfaceRange.Resolve(57, 0, 80) == (57, 80, 24),
+            "FinalSurface=0 must mean the image plane.");
+        Assert(SequentialEnergySurfaceRange.Resolve(80, 80, 80) == (80, 80, 1),
+            "One-surface tail window must remain valid.");
+        AssertThrows<ArgumentException>(() => SequentialEnergySurfaceRange.Resolve(1, 0, 80),
+            "Oversized implicit whole-system window was accepted.");
+        AssertThrows<ArgumentException>(() => SequentialEnergySurfaceRange.Resolve(24, 22, 80),
+            "Reversed range was accepted.");
+        AssertThrows<ArgumentOutOfRangeException>(() => SequentialEnergySurfaceRange.Resolve(0, 3, 80),
+            "Surface zero was accepted as start.");
+        AssertThrows<ArgumentOutOfRangeException>(() => SequentialEnergySurfaceRange.Resolve(10, 81, 80),
+            "A final surface outside the LDE was accepted.");
+        AssertThrows<ArgumentOutOfRangeException>(() => SequentialEnergySurfaceRange.Resolve(2, -1, 80),
+            "A negative final surface was accepted.");
     }
 
     private static void VerifyOperationMetadataAndSnapshotBoundary()

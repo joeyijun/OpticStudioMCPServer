@@ -68,6 +68,9 @@ internal static class StaticToolManifestAssertions
             if (!detectorSchema.TryGetProperty(field, out _))
                 throw new InvalidOperationException("Detector ROI tool is missing the published field " + field);
 
+        if (!StaticToolManifest.GetRequired("zemax_energy_budget").InputSchema.GetProperty("properties").TryGetProperty("startSurface", out _))
+            throw new InvalidOperationException("Sequential energy budgeting must advertise bounded startSurface for segmented LDEs.");
+
         foreach (var pair in new[] {
             (Name: "zemax_energy_budget", Domain: "analysis",
                 RequiredField: "gridSize"),
