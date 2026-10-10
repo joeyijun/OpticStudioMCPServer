@@ -34,6 +34,13 @@ $items = $build.Invoke($null, $arguments)
 if ($null -ne $items[3].ProgressFraction -or !$items[3].IsProgressIndeterminate) {
     throw 'Non-finite progress must not become a determinate percentage.'
 }
+$health['tasks'][0]['state'] = 'completed'
+$items = $build.Invoke($null, $arguments)
+if ($items.Count -ne 4 -or $items[3].IsActive -or $null -ne $items[3].ProgressFraction -or
+    $items[3].IsProgressIndeterminate) {
+    throw 'A completed Task must not inherit stale fractional progress from the linked Worker Job.'
+}
+$health['tasks'][0]['state'] = 'working'
 $health['tasks'][0]['generation'] = 4
 $items = $build.Invoke($null, $arguments)
 if ($items.Count -ne 5 -or !$items[4].IsOfficialTask -or $items[4].WorkerGeneration -ne '4') {
