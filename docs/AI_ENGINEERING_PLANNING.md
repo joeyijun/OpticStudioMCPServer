@@ -4,6 +4,32 @@ This documentation covers **unmerged PR #40**, not a change to the signed
 v1.5.1 release. The new tool is a read-only ZOS-API model inspection and
 planning operation. It **does not execute** any proposed step.
 
+## Start with `zemax_system_summary`
+
+```json
+{"maxSurfaces": 12, "maxFields": 8, "maxWavelengths": 8}
+```
+
+This new read-only tool inspects the **current** model in a single serialized
+ZOS-API call and returns the system mode, path/title and unsaved state, native
+lens units, declared field type, aperture type/value, configuration counts,
+bounded field and wavelength metadata, and a **prioritized sample** of LDE
+surfaces. The sample favors object/image, stops, mirrors and Coordinate Breaks.
+It never infers mechanical clear apertures from semi-diameter.
+
+A large LDE is bounded to inspection of the first 512 surfaces and final image
+row, and the response **explicitly warns** that stops/mirrors outside the
+scanned prefix are not ruled out. The return lists have configurable small
+limits, with omitted counts. Wavelength values are in micrometers; field
+coordinates require the included declared field type for interpretation.
+NSC mode reports the object count rather than pretending NCE objects are
+ordinary LDE surfaces. Use `zemax_get_nsc_objects` for scene geometry.
+
+Every seven-task catalog playbook now starts with this bounded inventory.
+The model-aware planner also marks system-summary preflight applicable to
+both NSC and sequential energy investigations. Neither tool grants mutation
+rights nor proves optical correctness.
+
 ## Tool: `zemax_task_plan`
 
 ```json
