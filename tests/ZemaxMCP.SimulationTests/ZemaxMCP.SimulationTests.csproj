@@ -10,6 +10,7 @@
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\SequentialEnergySurfaceRange.cs" Link="Server\SequentialEnergySurfaceRange.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\SpectralWeighting.cs" Link="Server\SpectralWeighting.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\MechanicalFootprintBoundary.cs" Link="Server\MechanicalFootprintBoundary.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\GlobalFootprintProjection.cs" Link="Server\GlobalFootprintProjection.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\CoatingRtaAudit.cs" Link="Server\CoatingRtaAudit.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscDetectorTilePreview.cs" Link="Server\NscDetectorTilePreview.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscDetectorCsvExport.cs" Link="Server\NscDetectorCsvExport.cs" />

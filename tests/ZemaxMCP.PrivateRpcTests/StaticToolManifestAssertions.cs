@@ -81,7 +81,8 @@ internal static class StaticToolManifestAssertions
                 throw new InvalidOperationException("Detector ROI tool is missing the published field " + field);
 
         var footprintInputs = StaticToolManifest.GetRequired("zemax_ray_footprint").InputSchema.GetProperty("properties");
-        if (!footprintInputs.TryGetProperty("mechanicalRectangle", out _) ||
+        if (!footprintInputs.TryGetProperty("includeGlobalCoordinates",out _) ||
+            !footprintInputs.TryGetProperty("mechanicalRectangle", out _) ||
             !footprintInputs.TryGetProperty("mechanicalPolygon", out _) ||
             !footprintInputs.TryGetProperty("mechanicalSurface", out _))
             throw new InvalidOperationException("Footprint tool must advertise explicit local mechanical boundary controls.");

@@ -77,6 +77,15 @@ Example:
 }
 ```
 
+- Optional `includeGlobalCoordinates: true` reads OpticStudio's official
+  `LDE.GetGlobalMatrix(surface)` vertex transform and maps each actually
+  traced **local X/Y/Z ray intercept** to the global 3D frame. Local Z
+  includes curved-surface sag; this is NOT the incorrect flat tangent-plane
+  approximation. Outputs include `globalCoordinates.rotation` and
+  `origin`, global centroid and XYZ min/max of ALL surviving samples,
+  and up to `maxPointsPerSurface` global 3D sample points. If the matrix
+  fails, the tool fails instead of silently returning a guessed transform.
+  Coordinate axes and lens units follow the active model, not arbitrary CAD.
 - Every output X/Y intercept, minimum/maximum envelope, clear-ray centroid,
   RMS, and explicit circular aperture center/radii are in the **local
   coordinate frame of the named LDE surface**, NOT one global 3D coordinate

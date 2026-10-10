@@ -19,6 +19,7 @@ internal static class Program
             VerifySequentialEnergyWindows();
             VerifySpectralWeights();
             VerifyMechanicalFootprint();
+            VerifyGlobalFootprint();
             VerifyUserCoatingRta();
             VerifyNativeDetectorTiles();
             VerifyDetectorCsvExport();
@@ -184,6 +185,27 @@ internal static class Program
         AssertThrows<ArgumentException>(()=>CoatingRtaAudit.Evaluate(1,
             new[]{new[]{double.NaN,0.5,0.2}},new[]{false}),
             "Non-finite coating accepted.");
+    }
+
+    private static void VerifyGlobalFootprint()
+    {
+        var rotation=new[]{new[]{0d,-1d,0d},new[]{1d,0d,0d},new[]{0d,0d,1d}};
+        var origin=new[]{10d,20d,30d};
+        var projection=GlobalFootprintProjection.Project(rotation,origin,
+            new (double X,double Y,double Z)[]{(2,3,4),(0,0,-1)},1);
+        Assert(projection.SurvivingRayCount==2 &&
+               projection.Minimum==new GlobalFootprintProjection.Point3(7,20,29) &&
+               projection.Maximum==new GlobalFootprintProjection.Point3(10,22,34) &&
+               projection.SamplePoints[0]==new GlobalFootprintProjection.Point3(7,22,34) &&
+               projection.PointsTruncated,
+            "Global LDE transform must include actual traced sag/Z and rotation.");
+        AssertThrows<ArgumentException>(()=>GlobalFootprintProjection.Project(
+            new[]{new[]{double.NaN,0d,0d},new[]{0d,1d,0d},new[]{0d,0d,1d}},
+            origin,new (double X,double Y,double Z)[]{(0,0,0)},1),
+            "Nonfinite GetGlobalMatrix transform was accepted.");
+        AssertThrows<InvalidDataException>(()=>GlobalFootprintProjection.Project(
+            rotation,origin,new (double X,double Y,double Z)[]{(0,0,double.NaN)},1),
+            "Nonfinite traced local Z was accepted.");
     }
 
     private static void VerifyMechanicalFootprint()
