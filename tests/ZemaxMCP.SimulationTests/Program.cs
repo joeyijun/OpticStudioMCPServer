@@ -23,6 +23,7 @@ internal static class Program
             VerifyGlobalFootprint();
             VerifyGlobalMechanicalPolygon();
             VerifyUserCoatingRta();
+            VerifyNativeCoatingReflection();
             VerifyNativeDetectorTiles();
             VerifyDetectorCsvExport();
             VerifyModelSummaryDiff();
@@ -169,6 +170,56 @@ internal static class Program
         AssertThrows<ArgumentException>(
             ()=>NscDetectorTilePreview.MeanHeatmap(pixels,1),
             "Unsupported heatmap bin count accepted.");
+    }
+
+    private interface IFakeCoatingRow
+    {
+        FakeCoatingPerformance GetCoatingPerformanceData();
+    }
+    private enum FakeCoatingDirection { inward=0, outward=1 }
+    private sealed class FakeCoatingParameter
+    {
+        public double S {get;set;}
+        public double P {get;set;}
+    }
+    private sealed class FakeCoatingPerformance
+    {
+        public FakeCoatingParameter Reflection {get;}=new();
+        public FakeCoatingParameter Transmission {get;}=new();
+        public FakeCoatingParameter Absorption {get;}=new();
+        public void GetCoatingPerformance(double aoi,double wavelength,FakeCoatingDirection direction)
+        {
+            if(aoi!=10 || wavelength!=0.55 || direction!=FakeCoatingDirection.inward)
+                throw new InvalidOperationException("Coating sample args were not passed through correctly.");
+            Reflection.S=0.3; Reflection.P=0.2;
+            Transmission.S=0.6; Transmission.P=0.7;
+            Absorption.S=0.1; Absorption.P=0.1;
+        }
+    }
+    private sealed class FakeCoatingRow : IFakeCoatingRow
+    {
+        private readonly FakeCoatingPerformance _data=new();
+        public FakeCoatingPerformance GetCoatingPerformanceData()=>_data;
+    }
+    private interface IFakeOldCoatingRow {}
+
+    private static void VerifyNativeCoatingReflection()
+    {
+        var row=new FakeCoatingRow();
+        var result=CoatingPerformanceReflection.Read(row,typeof(IFakeCoatingRow),
+            10,0.55,"inward");
+        Assert(Math.Abs(result.Reflection.Unpolarized-0.25)<1e-12 &&
+               Math.Abs(result.Transmission.Unpolarized-0.65)<1e-12 &&
+               Math.Abs(result.Absorption.Unpolarized-0.1)<1e-12 &&
+               Math.Abs(result.ResidualS)<1e-12 &&
+               Math.Abs(result.ResidualP)<1e-12 && result.PassiveRange,
+            "Official coating S/P reflection, transmission and absorption were not read independently.");
+        AssertThrows<NotSupportedException>(()=>CoatingPerformanceReflection.Read(
+            new object(),typeof(IFakeOldCoatingRow),10,0.55,"inward"),
+            "Old runtime missing coating API must fail rather than fabricating values.");
+        AssertThrows<ArgumentException>(()=>CoatingPerformanceReflection.Read(
+            row,typeof(IFakeCoatingRow),90,0.55,"inward"),
+            "Grazing incidence outside documented range was accepted.");
     }
 
     private static void VerifyUserCoatingRta()

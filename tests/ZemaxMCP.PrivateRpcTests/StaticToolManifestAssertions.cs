@@ -9,8 +9,8 @@ internal static class StaticToolManifestAssertions
     [ModuleInitializer]
     internal static void VerifyStaticToolManifestContract()
     {
-        if (StaticToolManifest.All.Count != 144)
-            throw new InvalidOperationException("Static Host tool manifest must contain all 144 Worker commands.");
+        if (StaticToolManifest.All.Count != 145)
+            throw new InvalidOperationException("Static Host tool manifest must contain all 145 Worker commands.");
         if (StaticToolManifest.ContractFingerprint.Length != 64 ||
             StaticToolManifest.ContractFingerprint.Any(character => !Uri.IsHexDigit(character)))
             throw new InvalidOperationException("Static tool contract fingerprint must be a SHA-256 hex digest.");
@@ -38,10 +38,10 @@ internal static class StaticToolManifestAssertions
         var expectedProfileCounts = new Dictionary<string, int>(StringComparer.Ordinal)
         {
             ["basic-viewing"] = 41,
-            ["sequential-design"] = 86,
+            ["sequential-design"] = 87,
             ["nonsequential-stray-light"] = 30,
             ["optimization-tolerance"] = 73,
-            ["full-expert"] = 144
+            ["full-expert"] = 145
         };
         foreach (var pair in expectedProfileCounts)
         {
@@ -79,6 +79,17 @@ internal static class StaticToolManifestAssertions
         foreach (var field in new[] { "includePixels", "dataType", "startRow", "startColumn", "rowCount", "columnCount" })
             if (!detectorSchema.TryGetProperty(field, out _))
                 throw new InvalidOperationException("Detector ROI tool is missing the published field " + field);
+
+        var coating = StaticToolManifest.GetRequired("zemax_coating_rta");
+        var coatingFields = coating.InputSchema.GetProperty("properties");
+        if (coating.DomainId != "analysis" || coating.Impact != "ReadOnly" ||
+            !StaticToolManifest.IsAllowed("sequential-design",coating.Name,true) ||
+            StaticToolManifest.IsAllowed("nonsequential-stray-light",coating.Name,false) ||
+            !coatingFields.TryGetProperty("surfaces",out _) ||
+            !coatingFields.TryGetProperty("anglesDegrees",out _) ||
+            !coatingFields.TryGetProperty("wavelengths",out _) ||
+            !coatingFields.TryGetProperty("direction",out _))
+            throw new InvalidOperationException("Native coating RTA must be a bounded read-only sequential analysis.");
 
         var footprintInputs = StaticToolManifest.GetRequired("zemax_ray_footprint").InputSchema.GetProperty("properties");
         if (!footprintInputs.TryGetProperty("mechanicalGlobalPolygon",out _) ||
