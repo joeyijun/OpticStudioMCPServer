@@ -123,6 +123,39 @@ internal sealed class JobOwnerRegistry
         catch (JsonException) { return Denied(); }
     }
 
+    /// <summary>
+    /// Reconcile a terminal Job RPC result when a progress event has not
+    /// arrived yet. The ID must match exactly; nonterminal, malformed and
+    /// error results can never clear an exclusive optical Job lease.
+    /// </summary>
+    internal static bool TryGetTerminalState(CallToolResult result, string expectedJobId, out string state)
+    {
+        state = string.Empty;
+        if (result.IsError == true || result.Content.Count != 1 ||
+            result.Content[0] is not TextContentBlock block)
+            return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(block.Text);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object ||
+                !TryReadJobId(root, out var returnedId) ||
+                !string.Equals(returnedId, expectedJobId, StringComparison.Ordinal) ||
+                !root.TryGetProperty("state", out var status) ||
+                status.ValueKind != JsonValueKind.String)
+                return false;
+            var candidate = status.GetString();
+            if (candidate == null ||
+                !(candidate.Equals("Completed", StringComparison.OrdinalIgnoreCase) ||
+                  candidate.Equals("Cancelled", StringComparison.OrdinalIgnoreCase) ||
+                  candidate.Equals("Failed", StringComparison.OrdinalIgnoreCase)))
+                return false;
+            state = candidate;
+            return true;
+        }
+        catch (JsonException) { return false; }
+    }
+
     internal static CallToolResult FilterList(CallToolResult result, string clientId, long generation, JobOwnerRegistry registry, int requestedLimit)
     {
         if (result.IsError == true) return result;

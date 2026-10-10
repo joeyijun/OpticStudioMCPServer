@@ -233,6 +233,16 @@ internal static class Program
                         }
                     }
 
+                    // A completed/cancelled Job result is authoritative even
+                    // if its asynchronous state event was delayed or dropped.
+                    // Require the returned ID to match the requested Job;
+                    // ObserveJob additionally validates the Worker generation.
+                    if ((request.Params.Name is "zemax_job_status" or "zemax_job_cancel") &&
+                        JobOwnerRegistry.TryGetJobId(request.Params, out var terminalJobId) &&
+                        JobOwnerRegistry.TryGetTerminalState(result, terminalJobId, out var terminalState))
+                        controlLease.ObserveJob(workerClient.CurrentGeneration,
+                            new WorkerJobStatus { JobId = terminalJobId, State = terminalState });
+
                     if (string.Equals(request.Params.Name, "zemax_disconnect", StringComparison.Ordinal) &&
                         IsSuccessfulDisconnect(result))
                         controlLease.ReleaseOwnership(clientId);

@@ -170,6 +170,32 @@ internal static class Program
         if (JobOwnerRegistry.ValidateSingleResult(wrongSingle, "owned-1").IsError != true)
             throw new InvalidOperationException("Job status/cancel returned a different owner's result despite authorized request parameters.");
 
+        // An explicit terminal Worker reply must clear a matching lease even
+        // when a separate progress event has not reached the Host yet.
+        var terminalCancel = new CallToolResult
+        {
+            Content = new List<ContentBlock>
+            {
+                new TextContentBlock { Text = "{\"jobId\":\"owned-1\",\"state\":\"Cancelled\"}" }
+            },
+            IsError = false
+        };
+        if (!JobOwnerRegistry.TryGetTerminalState(terminalCancel, "owned-1", out var terminalState) ||
+            terminalState != "Cancelled" ||
+            JobOwnerRegistry.TryGetTerminalState(terminalCancel, "owned-2", out _))
+            throw new InvalidOperationException("Host accepted a missing/foreign terminal Job ID.");
+        var pendingJob = new CallToolResult
+        {
+            Content = new List<ContentBlock>
+            {
+                new TextContentBlock { Text = "{\"jobId\":\"owned-1\",\"state\":\"Cancelling\"}" }
+            },
+            IsError = false
+        };
+        if (JobOwnerRegistry.TryGetTerminalState(pendingJob, "owned-1", out _) ||
+            JobOwnerRegistry.TryGetTerminalState(wrongSingle, "owned-1", out _))
+            throw new InvalidOperationException("Nonterminal/foreign Job reply released an optical job lease.");
+
         var defaultList = new CallToolRequestParams
         {
             Name = "zemax_job_list",
