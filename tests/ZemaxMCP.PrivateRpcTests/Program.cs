@@ -31,6 +31,7 @@ internal static class Program
         {
             VerifyActivityOwnership();
             VerifyOfficialTasksDefaults();
+            VerifyTlsOptions();
             VerifyTaskPlanningCatalog();
             VerifyOriginBoundary();
             await VerifyBackgroundJobLeaseRetentionAsync().ConfigureAwait(false);
@@ -123,6 +124,52 @@ internal static class Program
             HostOptions.Parse(new[] { "--enable-official-tasks", "false" }).EnableOfficialTasks ||
             !HostOptions.Parse(new[] { "--enable-official-tasks", "true" }).EnableOfficialTasks)
             throw new InvalidOperationException("Official Tasks must default on and respect explicit overrides.");
+    }
+
+    private static void VerifyTlsOptions()
+    {
+        var old = Environment.GetEnvironmentVariable("ZEMAX_TEST_TLS_SECRET");
+        var path = Path.Combine(Path.GetTempPath(), "zemax-tls-" + Guid.NewGuid().ToString("N") + ".pfx");
+        try
+        {
+            Assert(!HostOptions.Parse(Array.Empty<string>()).TlsEnabled,
+                "Legacy loopback listeners must remain HTTP by default.");
+            AssertThrows<ArgumentException>(() => HostOptions.Parse(new[] { "--tls-pfx", path }),
+                "Host accepted a missing TLS certificate.");
+            using var rsa = System.Security.Cryptography.RSA.Create(2048);
+            var request = new System.Security.Cryptography.X509Certificates.CertificateRequest(
+                "CN=localhost", rsa, System.Security.Cryptography.HashAlgorithmName.SHA256,
+                System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+            request.CertificateExtensions.Add(new System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension(
+                false, false, 0, true));
+            using var cert = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(2));
+            File.WriteAllBytes(path, cert.Export(
+                System.Security.Cryptography.X509Certificates.X509ContentType.Pfx, "test-password"));
+            AssertThrows<ArgumentException>(() => HostOptions.Parse(new[] {
+                "--tls-pfx", path, "--tls-password-env", "ZEMAX_TEST_TLS_SECRET" }),
+                "Host accepted TLS without the password variable.");
+            Environment.SetEnvironmentVariable("ZEMAX_TEST_TLS_SECRET", "test-password");
+            var enabled = HostOptions.Parse(new[] {
+                "--tls-pfx", path, "--tls-password-env", "ZEMAX_TEST_TLS_SECRET" });
+            Assert(enabled.TlsEnabled && enabled.TransportScheme == "https" &&
+                   enabled.AllowedOrigins.All(x => x.Scheme == "https"),
+                "TLS listener/origin scheme mismatch.");
+            using var loaded = System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12FromFile(
+                enabled.TlsPfxPath, Environment.GetEnvironmentVariable(enabled.TlsPasswordEnvironmentVariable),
+                System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.EphemeralKeySet);
+            Assert(loaded.HasPrivateKey, "Configured TLS certificate must load with a private key.");
+            AssertThrows<ArgumentException>(() => HostOptions.Parse(new[] {
+                "--tls-password-env", "ZEMAX_TEST_TLS_SECRET" }),
+                "Host accepted TLS password option without --tls-pfx.");
+            AssertThrows<ArgumentException>(() => HostOptions.Parse(new[] {
+                "--tls-pfx", path, "--tls-password-env", "bad name" }),
+                "Invalid TLS password environment variable name was accepted.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ZEMAX_TEST_TLS_SECRET", old);
+            if (File.Exists(path)) File.Delete(path);
+        }
     }
 
     private static void VerifyJobOwnershipRegistry()

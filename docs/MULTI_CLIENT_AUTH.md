@@ -56,3 +56,35 @@ The older process-global `zemax_multistart_status` / `zemax_multistart_stop` API
 These checks are implemented in the Host before invoking Worker RPC for direct Job status/cancel and after a Worker list response for result filtering. A non-owner cannot force Job cancellation by guessing an ID. A revoked client's already running COM task is **not** automatically terminated; it remains subject to its normal cancellation/timeout/recovery lifecycle.
 
 **Scope:** This provides per-client authentication, strict mutation authorization, lease ownership, and revocation. It does **not** yet provide confidential per-client partitions of historical Job results, health diagnostics, or optical files, and revocation does not abort a running ZOS-API operation. Do not expose one Host to mutually untrusted tenants; use separate OpticStudio processes / Hosts for that level of isolation.
+
+
+## HTTPS/TLS (draft branch, explicit opt-in)
+
+Bearer authentication is **not transport encryption**. LAN HTTP exposes tokens and optical
+data to anyone capable of observing the network path. Legacy local loopback still defaults to
+HTTP; explicitly trusted isolated LAN HTTP remains supported with a visible warning.
+
+To enable the Host's **single HTTPS listener** on a Zemax computer, provision a **trusted**
+PKCS#12 (.pfx) server certificate with a private key and SAN containing the actual client
+DNS name or IP address, and set the password **in the Host process environment**:
+
+```powershell
+$env:ZEMAX_MCP_TLS_PFX_PASSWORD = '<password from your secure deployment secret store>'
+# Existing authentication, --allowed-host and --allowed-origin arguments remain required.
+.\ZemaxMCP.Host.exe --host 0.0.0.0 --port 8000 --tls-pfx 'C:\secure\mcp-server.pfx' --allowed-host optics.example.org --allowed-origin https://optics.example.org:*
+```
+
+Use `--tls-password-env ENV_NAME` to select another existing password environment variable.
+Never pass the password in CLI arguments, client preferences, logs, source code or public
+README examples. Do not commit real certificates, private keys or tokens.
+
+Then configure each AI client with `https://optics.example.org:8000/mcp` and the original
+Bearer credential. The client must **validate** the TLS certificate chain and endpoint name.
+Do not disable certificate verification to get a connection working. A self-signed certificate
+must be deployed into an appropriate trusted store first; prefer a certificate issued by an
+authorized organization CA.
+
+This feature does not automatically generate, enroll, renew, rotate or trust certificates.
+The current Launcher still starts its own local service in legacy HTTP mode; TLS is configured
+on the Host process on the Zemax computer. PFX deployment, Windows ACLs, reverse proxies
+(if used), endpoint connectivity and certificate renewal need operational acceptance.
