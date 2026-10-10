@@ -45,6 +45,11 @@ public sealed class AuditNativeZrdTool
             if(!info.Exists||info.Length is <=0 or >134217728)
                 throw new ArgumentException("Native ZRD must exist and be 1..128 MiB.");
             var originalLength=info.Length;var modified=info.LastWriteTimeUtc;
+            // Hash while NO native reader is open. On Windows, the ZRD
+            // reader may hold an exclusive native file handle until Close.
+            string checksum;
+            using(var stream=File.OpenRead(fullPath))
+                checksum=Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
             return await _session.ExecuteAsync("AuditNativeZrd",
                 new Dictionary<string,object?>{
                     ["zrdPath"]=fullPath,["timeoutSeconds"]=timeoutSeconds
@@ -125,9 +130,6 @@ public sealed class AuditNativeZrdTool
                         var check=new FileInfo(fullPath);
                         if(check.Length!=originalLength || check.LastWriteTimeUtc!=modified)
                             throw new IOException("ZRD input changed during the reader session.");
-                        string checksum;
-                        using(var stream=File.OpenRead(fullPath))
-                            checksum=Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
                         return new Result(true,null,checksum,rays,segments.Count,audit,note);
                     }
                     finally
