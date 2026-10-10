@@ -75,7 +75,7 @@ public static class NscSameTraceLedger
             configuredSources,configuredTotal,
             configuredSources==null ? "not read; source power is not independently measured" :
                 "NCE IObjectSources configured Power and analysis-ray count read in the same session. " +
-                "This is a declared optical model source power SUM, not a measured actually emitted or launched flux. " +
+                "This is a declared optical model source power SUM, not measured actually emitted or launched flux. " +
                 "Sources with zero configured analysis rays, ignored/disabled sources, imported/special sources, " +
                 "ray filters, source coupling and hidden non-source emitters can prevent treating this sum as a conserved " +
                 "denominator. It is diagnostic only: detector fractions continue to use explicitly user-declared flux.");
