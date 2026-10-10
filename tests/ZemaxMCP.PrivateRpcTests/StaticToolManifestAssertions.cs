@@ -69,7 +69,7 @@ internal static class StaticToolManifestAssertions
             StaticToolManifest.IsAllowed("nonsequential-stray-light", zrdAudit.Name, true) ||
             StaticToolManifest.IsAllowed("basic-viewing", zrdAudit.Name, false) ||
             !zrdAudit.InputSchema.GetProperty("properties").TryGetProperty("zrdPath",out _))
-            throw new InvalidOperationException("Local ZRD file ingest requires explicit path and Caution permission.");
+            throw new InvalidOperationException($"Local ZRD file ingest requires explicit path and Caution permission; domain={zrdAudit.DomainId}, impact={zrdAudit.Impact}, nscEnabled={StaticToolManifest.IsAllowed("nonsequential-stray-light", zrdAudit.Name, false)}, readOnlyEnabled={StaticToolManifest.IsAllowed("nonsequential-stray-light", zrdAudit.Name, true)}, basicEnabled={StaticToolManifest.IsAllowed("basic-viewing", zrdAudit.Name, false)}, hasPath={zrdAudit.InputSchema.GetProperty("properties").TryGetProperty("zrdPath",out _)}.");
 
         var csvExport = StaticToolManifest.GetRequired("zemax_export_nsc_detector_csv");
         var csvExportProperties = csvExport.InputSchema.GetProperty("properties");
