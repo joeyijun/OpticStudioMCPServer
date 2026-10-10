@@ -1041,7 +1041,10 @@ internal static class Program
                 using var healthJson = JsonDocument.Parse(
                     await busyHealth.Content.ReadAsStringAsync().ConfigureAwait(false));
                 workerBusySeen = busyHealth.IsSuccessStatusCode &&
-                    healthJson.RootElement.GetProperty("workerBusy").GetBoolean();
+                    healthJson.RootElement.GetProperty("workerBusy").GetBoolean() &&
+                    healthJson.RootElement.GetProperty("activeRequests").GetInt32() > 0 &&
+                    string.Equals(healthJson.RootElement.GetProperty("lastTool").GetString(),
+                        "zemax_get_system", StringComparison.Ordinal);
             }
             if (!workerBusySeen)
                 throw new InvalidOperationException("Scoped long-read fixture never entered Worker busy state.");
