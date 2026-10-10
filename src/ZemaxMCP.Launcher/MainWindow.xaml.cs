@@ -526,10 +526,19 @@ public partial class MainWindow : Window
         if (TasksPageJobs == null) return;
         var selected = (TasksPageJobs.SelectedItem as BackgroundJobView)?.SelectionKey;
         var state = (TasksPageFilter?.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() ?? "All";
-        var visible = _taskHistory.Where(item => state == "All" ||
-            (state == "Running" && (item.State.Equals("Working", StringComparison.OrdinalIgnoreCase) ||
-                item.State.Equals("Cancelling", StringComparison.OrdinalIgnoreCase))) ||
-            string.Equals(item.State, state, StringComparison.OrdinalIgnoreCase)).ToList();
+        var search = TasksPageSearch?.Text?.Trim() ?? "";
+        var visible = _taskHistory.Where(item =>
+            (state == "All" ||
+             (state == "Running" && (item.State.Equals("Working", StringComparison.OrdinalIgnoreCase) ||
+                 item.State.Equals("Cancelling", StringComparison.OrdinalIgnoreCase))) ||
+             string.Equals(item.State, state, StringComparison.OrdinalIgnoreCase)) &&
+            (search.Length == 0 ||
+             item.ToolName.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0 ||
+             item.JobId.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0 ||
+             item.TaskId.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0 ||
+             item.State.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0))
+            .OrderByDescending(item => item.IsActive)
+            .ToList();
         TasksPageJobs.ItemsSource = visible;
         TasksPageJobs.SelectedItem = visible.FirstOrDefault(item => item.SelectionKey == selected) ??
             visible.FirstOrDefault(item => item.IsActive) ?? visible.FirstOrDefault();
@@ -538,10 +547,15 @@ public partial class MainWindow : Window
             active + " active · " + (_taskHistory.Count - active) + " recent";
         TasksPageEmpty.Visibility = visible.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         TasksPageEmpty.Text = _taskHistory.Count == 0 ?
-            "No recent tasks. Start a background operation from your AI client." : "No tasks match this filter.";
+            "No recent tasks. Start a background operation from your AI client." : "No tasks match these filters or search terms.";
     }
 
     private void TasksPageFilter_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (TasksPageJobs != null) RefreshTasksPage();
+    }
+
+    private void TasksPageSearch_Changed(object sender, System.Windows.Controls.TextChangedEventArgs e)
     {
         if (TasksPageJobs != null) RefreshTasksPage();
     }
