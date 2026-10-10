@@ -397,6 +397,18 @@ internal static class Program
                outcome.Parts.Single(x=>x.PartId==202).FirstBlockedRays==1 &&
                outcome.FirstCriticalHit==P(0,0,5),
             "Mesh audit must attribute at most one earliest first-hit per ray/part.");
+        // Supporting-plane coplanarity is NOT itself triangle overlap.
+        var coplanar=CadTriangleMeshAudit.Assess(faces,
+            new List<IReadOnlyList<GlobalRaySegmentBoundary.Segment?>> {
+                new GlobalRaySegmentBoundary.Segment?[]{
+                    new(P(20,20,5),P(21,20,5)) },
+                new GlobalRaySegmentBoundary.Segment?[]{
+                    new(P(-3,0,5),P(3,0,5)) }
+            });
+        Assert(coplanar.SampledRays==2 && coplanar.UnblockedRays==1 &&
+               coplanar.UnknownRays==1 && coplanar.AmbiguousRays==1 &&
+               coplanar.FirstBlockedRays==0,
+            "Distant coplanar segment must not be marked ambiguous; actual triangle overlap remains unknown.");
         var reversed=CadTriangleMeshAudit.Assess(faces,new List<IReadOnlyList<GlobalRaySegmentBoundary.Segment?>>{
             new GlobalRaySegmentBoundary.Segment?[]{Segment(0,0,10,0)}
         });

@@ -56,7 +56,71 @@ public static class CadTriangleMeshAudit
         return faces;
     }
 
-    private static Outcome Hit(Face face,Vec start,Vec end,
+        // A segment lying in the infinite supporting PLANE but entirely
+    // outside the FINITE triangle is a safe miss, not an ambiguous collision.
+    // Project onto the dominant plane and test actual 2D polygon overlap.
+    private readonly record struct Point2(double X,double Y);
+    private static Point2 Project2(Vec v,int droppedAxis) => droppedAxis switch
+    {
+        0 => new(v.Y,v.Z), 1 => new(v.X,v.Z), _ => new(v.X,v.Y)
+    };
+    private static double Cross2(Point2 a,Point2 b,Point2 c) =>
+        (b.X-a.X)*(c.Y-a.Y)-(b.Y-a.Y)*(c.X-a.X);
+
+    private static bool PointInsideTriangle(Point2 p,Point2 a,Point2 b,Point2 c)
+    {
+        var area=Cross2(a,b,c);
+        if(!double.IsFinite(area)||area==0)return false;
+        var v0=Cross2(b,c,p)/area;
+        var v1=Cross2(c,a,p)/area;
+        var v2=Cross2(a,b,p)/area;
+        const double tol=1e-10;
+        return v0>=-tol&&v1>=-tol&&v2>=-tol &&
+               v0<=1+tol&&v1<=1+tol&&v2<=1+tol;
+    }
+
+    private static bool SegmentsOverlap2(Point2 a,Point2 b,Point2 c,Point2 d)
+    {
+        var dx=b.X-a.X;var dy=b.Y-a.Y;
+        var ex=d.X-c.X;var ey=d.Y-c.Y;
+        var denominator=dx*ey-dy*ex;
+        var ax=c.X-a.X;var ay=c.Y-a.Y;
+        const double epsilon=1e-10;
+        if(Math.Abs(denominator)<=epsilon*Math.Max(1,
+            Math.Sqrt((dx*dx+dy*dy)*(ex*ex+ey*ey))))
+        {
+            if(Math.Abs(ax*dy-ay*dx)>epsilon*Math.Max(1,Math.Sqrt(dx*dx+dy*dy)))
+                return false;
+            // Collinear segments can intersect only with overlapping
+            // coordinate intervals. This also covers a triangle edge touch.
+            return Math.Max(Math.Min(a.X,b.X),Math.Min(c.X,d.X))<=
+                    Math.Min(Math.Max(a.X,b.X),Math.Max(c.X,d.X))+epsilon &&
+                   Math.Max(Math.Min(a.Y,b.Y),Math.Min(c.Y,d.Y))<=
+                    Math.Min(Math.Max(a.Y,b.Y),Math.Max(c.Y,d.Y))+epsilon;
+        }
+        var t=(ax*ey-ay*ex)/denominator;
+        var u=(ax*dy-ay*dx)/denominator;
+        return t>=-epsilon&&t<=1+epsilon&&u>=-epsilon&&u<=1+epsilon;
+    }
+
+    private static bool CoplanarSegmentOverlapsTriangle(Face face,Vec start,Vec end)
+    {
+        var absX=Math.Abs(face.Normal.X);
+        var absY=Math.Abs(face.Normal.Y);
+        var absZ=Math.Abs(face.Normal.Z);
+        var drop=absX>=absY&&absX>=absZ?0:absY>=absZ?1:2;
+        var p=Project2(start,drop);var q=Project2(end,drop);
+        var a=Project2(face.A,drop);
+        var b=Project2(face.A+face.E1,drop);
+        var c=Project2(face.A+face.E2,drop);
+        return PointInsideTriangle(p,a,b,c) ||
+               PointInsideTriangle(q,a,b,c) ||
+               SegmentsOverlap2(p,q,a,b) ||
+               SegmentsOverlap2(p,q,b,c) ||
+               SegmentsOverlap2(p,q,c,a);
+    }
+
+private static Outcome Hit(Face face,Vec start,Vec end,
         out double fraction,out Vec position)
     {
         fraction=0;position=default;
@@ -72,8 +136,9 @@ public static class CadTriangleMeshAudit
             // Ray lies in a triangle's plane: cannot infer unique first
             // collision from a 2-D sheet without side/solid semantics.
             var distance=face.Normal.Dot(start-face.A);
-            return Math.Abs(distance)<=epsilon*face.Normal.Norm() ?
-                Outcome.Ambiguous : Outcome.None;
+            return Math.Abs(distance)<=epsilon*face.Normal.Norm() &&
+                CoplanarSegmentOverlapsTriangle(face,start,end)
+                ? Outcome.Ambiguous : Outcome.None;
         }
         var fromVertex=start-face.A;
         var baryU=fromVertex.Dot(cross)/denominator;

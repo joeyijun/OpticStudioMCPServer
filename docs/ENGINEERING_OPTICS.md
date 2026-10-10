@@ -606,3 +606,13 @@ provenance; without both signs no local peak position is asserted.
 This does **not** infer global XYZ orientation, verify a ZOS release's
 pixel raster direction or establish native irradiance unit calibration.
 Use a known physical landmark and live detector comparison for E3.
+
+### Triangle-mesh coplanarity precision
+
+`cadOpaqueMeshTriangles` analysis distinguishes a segment coincident
+with the infinite plane **away from** a finite triangle (unblocked)
+from one genuinely touching or traversing the finite triangle in-plane
+(ambiguous rather than falsely assigned a single collision). The
+intersection test projects to the dominant global 2D plane and
+checks segment–triangle overlap; it does not classify every coplanar
+but distant ray as unknown.
