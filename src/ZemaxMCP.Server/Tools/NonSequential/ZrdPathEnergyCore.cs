@@ -46,9 +46,13 @@ public static class ZrdPathEnergyCore
             foreach(var e in nodes.Values)
                 if(e.ParentSegmentIndex!=-1 && !nodes.ContainsKey(e.ParentSegmentIndex))
                     throw new ArgumentException("A ZRD segment referenced an absent parent in its ray.");
+            var childGroups=nodes.Values.Where(x=>x.ParentSegmentIndex>=0)
+                .GroupBy(x=>x.ParentSegmentIndex)
+                .ToDictionary(g=>g.Key,g=>g.ToArray());
             foreach(var parent in nodes.Values)
             {
-                var children=nodes.Values.Where(x=>x.ParentSegmentIndex==parent.SegmentIndex).ToArray();
+                var children=childGroups.TryGetValue(parent.SegmentIndex,out var groupChildren)
+                    ? groupChildren : Array.Empty<Segment>();
                 if(children.Length==0){leafTotal+=parent.Intensity;continue;}
                 if(children.Length>1)branches++;
                 var outgoing=children.Sum(x=>x.Intensity);

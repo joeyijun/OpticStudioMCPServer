@@ -16,7 +16,8 @@ public static class OpticalResultInterpreter
         if(resultJson==null || resultJson.Length is < 2 or > 131072)
             throw new ArgumentException("Result JSON must be 2..131072 characters.");
         if(toolName is not ("zemax_energy_budget" or "zemax_ray_footprint" or
-            "zemax_get_nsc_detector" or "zemax_nsc_energy_budget" or "zemax_system_summary"))
+            "zemax_get_nsc_detector" or "zemax_nsc_energy_budget" or
+            "zemax_run_nsc_ray_trace" or "zemax_system_summary"))
             throw new ArgumentException("Unsupported tool. Interpret only a recognized finished read-only optical result.");
         using var doc=JsonDocument.Parse(resultJson);
         var json=doc.RootElement;
@@ -111,6 +112,36 @@ public static class OpticalResultInterpreter
                 warnings.Add("Never add potentially overlapping detector flux to assert global energy conservation.");
                 warnings.Add("Hit counts include repeated/split interactions and do not measure missed unique rays.");
                 next.Add("zemax_get_nsc_detector");
+                break;
+            }
+            case "zemax_run_nsc_ray_trace":
+            {
+                if(!json.TryGetProperty("sameTraceEnergy",out var ledger) ||
+                    ledger.ValueKind!=JsonValueKind.Object)
+                    throw new ArgumentException("Trace result has no in-session sameTraceEnergy evidence. A Queued Job must be polled until completed.");
+                Add(ledger,"configuredSourcePowerSum","configured model source power",
+                    "native NSC source units","source OBJECT CONFIGURATION only; not measured rays launched");
+                Add(ledger,"userDeclaredLaunchedFlux","user-declared source flux",
+                    "user-declared native flux units","external declared denominator; not independently measured");
+                if(!ledger.TryGetProperty("detectors",out var det) || det.ValueKind!=JsonValueKind.Array ||
+                   det.GetArrayLength()>16)
+                    throw new ArgumentException("Expected bounded same-trace detector readings.");
+                var detectors=det.EnumerateArray().ToArray();
+                for(var i=0;i<Math.Min(8,detectors.Length);i++)
+                {
+                    Add(detectors[i],"incidentFlux","same-trace detector["+i+"] flux",
+                        "native NSC flux units","post-trace buffered native detector reading");
+                    Add(detectors[i],"fractionOfDeclaredSource","same-trace detector["+i+"] source fraction",
+                        "ratio","ONLY when user-declared same-trace source denominator supplied");
+                }
+                warnings.Add("Detector flux samples come from the same successful trace after clearing all detector buffers, not from a later or previous trace.");
+                warnings.Add("Configured source power is NOT independently measured launched flux; do not use it automatically as an efficiency denominator.");
+                warnings.Add("Detectors can receive the same split/multiply reflected ray; never sum their incident flux or infer a global conservation residual.");
+                warnings.Add("Native detector readings already include physical interactions; DO NOT multiply separately measured coating R/T/A, material or CAD losses into them again.");
+                warnings.Add("Coating, material, CAD and escaped power have not been independently attributed. An actual ray-path/ZRD audit and source validation are still required.");
+                if(detectors.Length>8) warnings.Add("Only the first eight detector observations are summarized.");
+                next.Add("zemax_get_nsc_detector");
+                next.Add("zemax_nsc_energy_budget");
                 break;
             }
             case "zemax_system_summary":

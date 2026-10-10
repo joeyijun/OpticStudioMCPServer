@@ -76,6 +76,17 @@ internal static class Program
         Assert(image.Metrics.Any(x=>x.Value==-0.5 && x.Unit=="lens units") &&
                image.Caveats.Any(x=>x.Contains("local",StringComparison.OrdinalIgnoreCase)),
             "Signed local mechanical clearance was not honestly explained.");
+        const string trace = "{\"success\":true,\"state\":\"Completed\",\"sameTraceEnergy\":{\"configuredSourcePowerSum\":8,\"userDeclaredLaunchedFlux\":null,\"additiveSourceToDetectorBalanceValid\":false,\"detectors\":[{\"objectNumber\":2,\"incidentFlux\":5,\"fractionOfDeclaredSource\":null}]}}";
+        var traceInterpretation=OpticalResultInterpreter.Explain("zemax_run_nsc_ray_trace",trace);
+        Assert(traceInterpretation.Metrics.Any(m=>m.Name.Contains("configured model")) &&
+               traceInterpretation.Metrics.Any(m=>m.Name.Contains("detector")) &&
+               !traceInterpretation.Metrics.Any(m=>m.Name.Contains("source fraction")) &&
+               traceInterpretation.Caveats.Any(m=>m.Contains("NOT independently measured")) &&
+               traceInterpretation.Caveats.Any(m=>m.Contains("DO NOT multiply")),
+            "Same-trace optical result explanation must not invent flux normalization or double-count coatings.");
+        AssertThrows<ArgumentException>(()=>OpticalResultInterpreter.Explain(
+            "zemax_run_nsc_ray_trace","{\"success\":true,\"state\":\"Queued\"}"),
+            "Unfinished NSC trace was interpreted as physical source-to-detector data.");
         AssertThrows<ArgumentException>(()=>OpticalResultInterpreter.Explain("zemax_energy_budget",
             "{\"success\":false,\"cases\":[]}"),
             "Failed optical results were interpreted as numerical evidence.");
