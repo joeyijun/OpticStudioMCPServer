@@ -223,7 +223,7 @@ public partial class MainWindow : Window
 
     private void BrowseTlsPfx_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFileDialog
+        var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Filter = "PKCS#12 certificates (*.pfx)|*.pfx|All files (*.*)|*.*",
             CheckFileExists = true,
