@@ -111,6 +111,7 @@ public static class ToolsetCatalog
         ["zemax_get_nsc_objects"] = "non-sequential",
         ["zemax_nsc_scene_summary"] = "non-sequential",
         ["zemax_nsc_energy_budget"] = "non-sequential",
+        ["zemax_audit_native_zrd"] = "non-sequential",
         ["zemax_get_polarization"] = "polarization",
         ["zemax_get_ray_aiming"] = "system",
         ["zemax_get_ray_aiming_settings"] = "system",
@@ -293,7 +294,7 @@ public static class ToolsetCatalog
                 "zemax_get_system_metadata", "zemax_get_environment", "zemax_get_material_catalog_settings",
                 "zemax_get_polarization", "zemax_get_nonsequential_system_settings",
                 "zemax_get_nsc_objects", "zemax_get_nsc_object_parameters", "zemax_get_nsc_detector",
-                "zemax_nsc_scene_summary", "zemax_nsc_energy_budget", "zemax_run_nsc_ray_trace",
+                "zemax_nsc_scene_summary", "zemax_nsc_energy_budget", "zemax_audit_native_zrd", "zemax_run_nsc_ray_trace",
                 "zemax_job_status", "zemax_job_list", "zemax_job_cancel", "zemax_export_analysis", "zemax_export_nsc_detector_csv"),
 
             [OptimizationTolerance] = NewToolSet(

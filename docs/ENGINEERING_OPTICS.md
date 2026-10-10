@@ -556,3 +556,25 @@ These triangles can be nonplanar *as a collection*, but the tool does not
 certify watertightness, import CAD solid files, assign material transmission,
 or calculate full power conservation. This is a bounded CAD surface
 intersection diagnostic, not solid B-rep collision physics.
+
+### E2 native ZRD ray-path evidence (file-read Caution)
+
+`zemax_audit_native_zrd` requests an explicitly supplied **absolute
+local .ZRD file path** on the OpticStudio computer. It opens
+`ZOSAPI.Tools.OpenRayDatabaseReader()`, invokes the official
+`ReadNextResult` / `ReadNextSegmentFull` methods and validates
+native parent references before passing up to **1024 rays / 8192
+segments** into the existing `ZrdPathEnergyCore`. Inputs are bounded
+to 128 MiB; the result carries the local input SHA-256 so a copied
+analysis can be associated with a particular ray database. This is a
+**Caution** local-file-read operation, never available in the global
+read-only profile or basic-viewing profile.
+
+Important: reading an arbitrary existing ZRD is **not** guaranteed
+to be the *same trace* as a previous detector snapshot. The model's
+reader must be version-validated (segment parent status, detector
+hit flags, hit object numbering). This tool does not declare native
+detector hit events disjoint, infer absorption from intensity
+differences or claim source-to-detector power closure. Use it to
+investigate the parent/branch topology of a known native trace;
+treat unknown energy categories as unknown, not as zero.

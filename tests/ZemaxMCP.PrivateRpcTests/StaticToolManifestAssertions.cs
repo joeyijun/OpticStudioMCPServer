@@ -9,8 +9,8 @@ internal static class StaticToolManifestAssertions
     [ModuleInitializer]
     internal static void VerifyStaticToolManifestContract()
     {
-        if (StaticToolManifest.All.Count != 145)
-            throw new InvalidOperationException("Static Host tool manifest must contain all 145 Worker commands.");
+        if (StaticToolManifest.All.Count != 146)
+            throw new InvalidOperationException("Static Host tool manifest must contain all 146 Worker commands.");
         if (StaticToolManifest.ContractFingerprint.Length != 64 ||
             StaticToolManifest.ContractFingerprint.Any(character => !Uri.IsHexDigit(character)))
             throw new InvalidOperationException("Static tool contract fingerprint must be a SHA-256 hex digest.");
@@ -39,9 +39,9 @@ internal static class StaticToolManifestAssertions
         {
             ["basic-viewing"] = 41,
             ["sequential-design"] = 87,
-            ["nonsequential-stray-light"] = 30,
+            ["nonsequential-stray-light"] = 31,
             ["optimization-tolerance"] = 73,
-            ["full-expert"] = 145
+            ["full-expert"] = 146
         };
         foreach (var pair in expectedProfileCounts)
         {
@@ -62,6 +62,14 @@ internal static class StaticToolManifestAssertions
         if (budgetSchema.GetProperty("properties").GetProperty("detectorObjects").GetProperty("type").GetString() != "array" ||
             !budgetSchema.GetProperty("required").EnumerateArray().Any(x => x.GetString() == "detectorObjects"))
             throw new InvalidOperationException("NSC energy budgeting must require an array of detector IDs.");
+
+        var zrdAudit = StaticToolManifest.GetRequired("zemax_audit_native_zrd");
+        if (zrdAudit.DomainId != "non-sequential" || zrdAudit.Impact != "Caution" ||
+            !StaticToolManifest.IsAllowed("nonsequential-stray-light", zrdAudit.Name, false) ||
+            StaticToolManifest.IsAllowed("nonsequential-stray-light", zrdAudit.Name, true) ||
+            StaticToolManifest.IsAllowed("basic-viewing", zrdAudit.Name, false) ||
+            !zrdAudit.InputSchema.GetProperty("properties").TryGetProperty("zrdPath",out _))
+            throw new InvalidOperationException("Local ZRD file ingest requires explicit path and Caution permission.");
 
         var csvExport = StaticToolManifest.GetRequired("zemax_export_nsc_detector_csv");
         var csvExportProperties = csvExport.InputSchema.GetProperty("properties");
