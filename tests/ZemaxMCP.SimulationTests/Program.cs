@@ -224,6 +224,58 @@ internal static class Program
         var threadIds = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => dispatcher.GetExecutingThreadIdAsync()));
         Assert(threadIds.Distinct().Count() == 1 && threadIds[0] == dispatcher.ThreadId, "ZOS dispatcher did not serialize calls onto one long-lived thread.");
         Assert(dispatcher.ApartmentState == ApartmentState.STA, "ZOS dispatcher must run in STA.");
+
+        using var bounded = new ZosApiDispatcher(maxPending: 2);
+        using var entered = new ManualResetEventSlim(false);
+        using var release = new ManualResetEventSlim(false);
+        var blocking = bounded.InvokeAsync(() =>
+        {
+            entered.Set();
+            release.Wait(TimeSpan.FromSeconds(8));
+            return 1;
+        });
+        Assert(entered.Wait(TimeSpan.FromSeconds(3)), "STA operation did not start.");
+        using var cancel = new CancellationTokenSource();
+        var cancelled = bounded.InvokeAsync(() => 2, cancel.Token);
+        var later = bounded.InvokeAsync(() => 3);
+        Assert(bounded.PendingCount == 2, "STA queue did not track the bounded pending count.");
+        AssertThrows<InvalidOperationException>(() => bounded.InvokeAsync(() => 4),
+            "A full STA queue must fail closed instead of growing without bound.");
+        cancel.Cancel();
+        try
+        {
+            await cancelled.WaitAsync(TimeSpan.FromSeconds(2));
+            throw new InvalidOperationException("Cancelled queued STA work unexpectedly executed.");
+        }
+        catch (OperationCanceledException) { }
+        Assert(bounded.PendingCount == 1,
+            "Cancellation should free a pending STA queue slot before a blocking COM operation returns.");
+        var replacement = bounded.InvokeAsync(() => 5);
+        Assert(bounded.PendingCount == 2, "STA queue slot was not reusable after cancellation.");
+        release.Set();
+        Assert(await blocking == 1 && await later == 3 && await replacement == 5,
+            "Surviving STA work must execute in FIFO order after cancelling a queued item.");
+
+        using var closing = new ZosApiDispatcher(maxPending: 1);
+        using var closeEntered = new ManualResetEventSlim(false);
+        using var closeRelease = new ManualResetEventSlim(false);
+        var active = closing.InvokeAsync(() =>
+        {
+            closeEntered.Set();
+            closeRelease.Wait(TimeSpan.FromSeconds(8));
+            return 7;
+        });
+        Assert(closeEntered.Wait(TimeSpan.FromSeconds(3)), "Disposal test STA did not start.");
+        var abandoned = closing.InvokeAsync(() => 8);
+        closing.Dispose();
+        try
+        {
+            await abandoned;
+            throw new InvalidOperationException("Disposed STA accepted a queued operation.");
+        }
+        catch (ObjectDisposedException) { }
+        closeRelease.Set();
+        Assert(await active == 7, "An in-flight STA call must not access disposed queue state.");
     }
 
     private static async Task VerifyJobManagerAsync()
