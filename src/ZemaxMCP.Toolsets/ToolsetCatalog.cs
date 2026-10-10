@@ -228,7 +228,7 @@ public static class ToolsetCatalog
 
     private static readonly HashSet<string> CautionTools = new HashSet<string>(StringComparer.Ordinal)
     {
-        "zemax_connect", "zemax_disconnect", "zemax_job_cancel", "zemax_multistart_stop", "zemax_open_file", "zemax_restart", "zemax_run_nsc_ray_trace", "zemax_run_tolerancing"
+        "zemax_connect", "zemax_disconnect", "zemax_job_cancel", "zemax_multistart_stop", "zemax_open_file", "zemax_restart", "zemax_run_nsc_ray_trace", "zemax_audit_native_zrd", "zemax_run_tolerancing"
     };
 
     private static readonly HashSet<string> HighImpactTools = new HashSet<string>(StringComparer.Ordinal)
