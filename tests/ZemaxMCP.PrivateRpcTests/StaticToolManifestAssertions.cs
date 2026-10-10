@@ -96,8 +96,10 @@ internal static class StaticToolManifestAssertions
         if (!StaticToolManifest.GetRequired("zemax_system_summary").InputSchema.GetProperty("properties").TryGetProperty("baselineSummaryJson", out _))
             throw new InvalidOperationException("System summary must expose bounded prior-design comparison.");
 
-        if (!StaticToolManifest.GetRequired("zemax_energy_budget").InputSchema.GetProperty("properties").TryGetProperty("relativeSourceSpectralWeights", out _))
-            throw new InvalidOperationException("Sequential energy budgeting must expose explicitly supplied source spectral weights.");
+        var energyInputs=StaticToolManifest.GetRequired("zemax_energy_budget").InputSchema.GetProperty("properties");
+        if (!energyInputs.TryGetProperty("relativeSourceSpectralWeights", out _) ||
+            !energyInputs.TryGetProperty("relativeDetectorSpectralResponse",out _))
+            throw new InvalidOperationException("Sequential energy budgets need separately supplied source and detector spectral inputs.");
         if (!StaticToolManifest.GetRequired("zemax_energy_budget").InputSchema.GetProperty("properties").TryGetProperty("startSurface", out _))
             throw new InvalidOperationException("Sequential energy budgeting must advertise bounded startSurface for segmented LDEs.");
 

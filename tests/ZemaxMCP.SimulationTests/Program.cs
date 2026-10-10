@@ -18,6 +18,7 @@ internal static class Program
             VerifyStructuredMtf();
             VerifySequentialEnergyWindows();
             VerifySpectralWeights();
+            VerifyDetectorSpectralResponse();
             VerifyMechanicalFootprint();
             VerifyGlobalFootprint();
             VerifyGlobalMechanicalPolygon();
@@ -266,6 +267,32 @@ internal static class Program
         AssertThrows<ArgumentException>(()=>MechanicalFootprintBoundary.Validate(new[]{
             new[]{0d,0d},new[]{2d,2d},new[]{0d,2d},new[]{2d,0d}}),
             "Self-crossing outline accepted.");
+    }
+
+    private static void VerifyDetectorSpectralResponse()
+    {
+        var weights=SpectralWeighting.Normalize(new[]{3d,1d},2);
+        var (response,proxy)=SpectralWeighting.ApplyDetectorResponse(
+            new[]{0.8,0.4},weights,new[]{0.5,0d});
+        Assert(Math.Abs(response-0.375)<1e-12 &&
+               Math.Abs(proxy-0.3)<1e-12,
+            "Detector response spectral losses were normalized away.");
+        var (_,half)=SpectralWeighting.ApplyDetectorResponse(
+            new[]{0.8,0.4},weights,new[]{0.5,0.5});
+        Assert(Math.Abs(half-0.35)<1e-12,
+            "Uniform detector response must scale the original ray proxy.");
+        Assert(SpectralWeighting.ApplyDetectorResponse(new[]{0.8,0.4},
+            weights,new[]{0d,0d}).ResponseWeightedRayProxy==0,
+            "Zero detector response must yield zero proxy.");
+        AssertThrows<ArgumentException>(()=>SpectralWeighting.ApplyDetectorResponse(
+            new[]{0.8,0.4},weights,new[]{1.01,0d}),
+            "Detector response above one accepted.");
+        AssertThrows<ArgumentException>(()=>SpectralWeighting.ApplyDetectorResponse(
+            new[]{0.8,0.4},weights,new[]{double.NaN,0d}),
+            "Nonfinite detector spectral response accepted.");
+        AssertThrows<ArgumentException>(()=>SpectralWeighting.ApplyDetectorResponse(
+            new[]{0.8,0.4},weights,new[]{0.5}),
+            "Mismatched relative detector bins accepted.");
     }
 
     private static void VerifySpectralWeights()

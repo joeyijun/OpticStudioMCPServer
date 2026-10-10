@@ -347,3 +347,18 @@ not a permission to edit, and not a guarantee that ray tracing will succeed.
 numerical metrics, explains native units/denominators and suggests next tools.
 It **never** opens a model, performs ray tracing, ranks one design as optically
 superior, or invents absorption/throughput from missing information.
+
+### Explicit detector spectral response (discrete source-weighted proxy)
+
+`zemax_energy_budget` now optionally accepts
+`relativeDetectorSpectralResponse`, a finite relative detector
+efficiency in [0,1] for EACH selected wavelength, in the same order
+as explicit `relativeSourceSpectralWeights`. It returns BOTH the unchanged
+source-weighted `weightedRayIntensityProxy` and the additional
+`responseWeightedRayIntensityProxy` and
+`sourceWeightedDetectorRelativeResponse`. The response-weighted value
+is `sum(source[i]*detectorResponse[i]*rayProxy[i])/sum(source[i])`,
+**without renormalizing away detector loss**. An efficiency of 0.5
+everywhere halves the proxy. These are sparse user-supplied spectral
+bins, NOT measured detector watts, spatial ROI coupling, continuous
+spectral integration or independently conserved input-output energy.

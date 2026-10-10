@@ -23,6 +23,20 @@ internal static class SpectralWeighting
         return scaled.Select(value => value / sum).ToArray();
     }
 
+    // Detector response is an additional LOSS factor: never renormalize
+    // source*response bins back to unit sum.
+    internal static (double WeightedResponse,double ResponseWeightedRayProxy)
+        ApplyDetectorResponse(double[] intensityProxies,double[] sourceWeights,double[] response)
+    {
+        if(intensityProxies.Length!=sourceWeights.Length ||
+            response.Length!=sourceWeights.Length ||
+            response.Any(x=>!double.IsFinite(x)||x<0||x>1))
+            throw new ArgumentException("Detector response requires aligned finite [0,1] spectral bins.");
+        var meanResponse=WeightedMean(response,sourceWeights);
+        var proxy=WeightedMean(intensityProxies.Zip(response,(x,y)=>x*y).ToArray(),sourceWeights);
+        return (meanResponse,proxy);
+    }
+
     internal static double WeightedMean(double[] values, double[] normalizedWeights)
     {
         if (values.Length != normalizedWeights.Length ||
