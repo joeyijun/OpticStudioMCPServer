@@ -41,6 +41,7 @@ public partial class MainWindow : Window
     private string _localAccessToken = "";
     private string _remoteEndpoint = "";
     private string _remoteAccessToken = "";
+    private string _pendingRemoteSetup = "";
     private string _tlsPfxPath = "";
     private string _tlsPfxPassword = "";
     private string _fullDiagnostics = "Status has not been checked yet.";
@@ -208,6 +209,19 @@ public partial class MainWindow : Window
         StopBridge();
         await RefreshStatusAsync();
     }
+    private void RemoteSecureSetup_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    {
+        if (!_windowLoaded) return;
+        _pendingRemoteSetup = "";
+        RemoteTrustSection.Visibility = Visibility.Collapsed;
+    }
+    private async void TrustRemoteSetup_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrEmpty(_pendingRemoteSetup) || !TryApplySecureSetup(_pendingRemoteSetup, true)) return;
+        SaveSettings();
+        StopBridge();
+        await RefreshStatusAsync();
+    }
     private void ClearRemoteSetup_Click(object sender, RoutedEventArgs e)
     {
         _remoteEndpoint = "";
@@ -245,8 +259,8 @@ public partial class MainWindow : Window
             using var certificate = AutomaticHttps.ReadPublic(setup.PublicCertificate);
             if (!AutomaticHttps.IsTrusted(certificate))
             {
-                if (!LauncherDialog.Confirm(this, "Allow secure local connections?", "Zemax MCP prepared HTTPS automatically. Trust this server certificate for your Windows user to continue. No administrator rights are required.\n\nSHA-256: " + setup.Fingerprint, "Trust and continue"))
-                { Report("HTTPS requires certificate trust. Select Start or Copy connection setup to try again; HTTP fallback is disabled."); return false; }
+                // Windows' protected Root store owns the installation warning;
+                // do not stack another modal confirmation or suppress its UI.
                 AutomaticHttps.TrustCurrentUser(certificate);
             }
             return true;
@@ -884,7 +898,7 @@ public partial class MainWindow : Window
             catch (Exception ex) { Report("Could not read HTTPS certificate: " + ex.Message); return; }
         }
         System.Windows.Clipboard.SetText(setup.ToString(Newtonsoft.Json.Formatting.None));
-        Report("HTTPS connection setup copied. Treat the Bearer token like a password.");
+        Report("HTTPS connection setup copied. Treat the Bearer token like a password.\nServer SHA-256: " + setup["certificateSha256"]);
     }
     private void RegenerateToken_Click(object sender, RoutedEventArgs e)
     {
@@ -900,7 +914,7 @@ public partial class MainWindow : Window
         RefreshClientDashboard(null);
         Report("A new access token was created. Copy secure setup and reconfigure AI clients.");
     }
-    private bool TryApplySecureSetup(string text)
+    private bool TryApplySecureSetup(string text, bool trustApproved = false)
     {
         if (string.IsNullOrWhiteSpace(text) || !text.TrimStart().StartsWith("{", StringComparison.Ordinal)) return false;
         try
@@ -919,13 +933,23 @@ public partial class MainWindow : Window
                     throw new ArgumentException("Certificate fingerprint does not match setup.");
                 if (!AutomaticHttps.IsTrusted(certificate))
                 {
-                    if (!LauncherDialog.Confirm(this, "Trust the OpticStudio computer?", "Only accept setup received directly from your trusted OpticStudio computer. Compare this SHA-256 fingerprint on BOTH computers; a matching value in the same JSON alone does not prove identity.\n\nEndpoint: " + uri.GetLeftPart(UriPartial.Authority) + "\nSHA-256: " + fingerprint + "\n\nAdds only this server leaf certificate to your Windows user's trusted store. Client TLS still checks the endpoint name and expiration.", "Trust this server"))
-                    { Report("Connection setup was not applied; certificate trust was not confirmed."); return false; }
+                    if (!trustApproved)
+                    {
+                        _pendingRemoteSetup = text;
+                        RemoteTrustIdentity.Text = uri.GetLeftPart(UriPartial.Authority) + "\nSHA-256:\n" +
+                            string.Join(" ", Enumerable.Range(0, 8).Select(i => fingerprint.Substring(i * 8, 8)));
+                        RemoteTrustSection.Visibility = Visibility.Visible;
+                        Dispatcher.BeginInvoke(new Action(() => RemoteTrustSection.BringIntoView()));
+                        Report("Compare the certificate fingerprint with the OpticStudio computer, then select Trust and connect. Existing connection settings have not changed.");
+                        return false;
+                    }
                     AutomaticHttps.TrustCurrentUser(certificate);
                 }
             }
             _remoteEndpoint = uri.ToString().TrimEnd('/');
             _remoteAccessToken = token!;
+            _pendingRemoteSetup = "";
+            RemoteTrustSection.Visibility = Visibility.Collapsed;
             RemoteSecureSetup.Text = "";
             UpdateRemoteSetupStatus();
             Report("HTTPS connection setup accepted for " + _remoteEndpoint + ".");

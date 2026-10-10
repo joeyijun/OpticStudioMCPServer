@@ -121,14 +121,16 @@ The launcher uses HTTPS automatically. There is no transport switch, setup
 wizard or certificate configuration panel. On first Start it prepares a
 server-only certificate for loopback and the detected LAN IP, restricts
 private-key file access, and protects the saved password with Windows DPAPI.
-Confirm trust once for the current Windows user. Valid existing certificates
+Windows handles certificate installation for the current user; the Launcher
+does not add a duplicate local confirmation dialog. Valid existing certificates
 and settings are reused across restarts and upgrades. No OpenSSL, Internet
 connection or manually prepared PFX is required.
 
 Use **Copy connection setup** and paste it on the AI computer. It includes only the leaf
 **public** certificate and its SHA-256 fingerprint, never its private key or
-PFX password. Compare the fingerprint on both computers before accepting the
-explicit current-user trust prompt. TLS hostname and expiry validation remain
+PFX password. Compare the fingerprint on both computers using the
+inline certificate review, then select **Trust and connect**. Windows retains
+its native certificate-installation warning; it is not suppressed. TLS hostname and expiry validation remain
 enabled. Group policy can prevent certificate trust; the launcher reports the
 failure rather than bypassing validation. A client with its own CA store may
 still need client-specific trust configuration.

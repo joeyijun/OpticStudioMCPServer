@@ -69,6 +69,32 @@ try {
  if ($owner.FindName('TasksPageDetailsSection').IsExpanded) { throw 'Raw task details must be collapsed initially.' }
  if ($owner.FindName('TasksPageProgress').IsIndeterminate) { throw 'Idle tasks must not display animated progress.' }
  if ($owner.FindName('TasksPageCancel').IsEnabled) { throw 'Idle task cancellation must be disabled.' }
+ foreach ($name in @('TasksPageSearch','TasksPageDetail')) {
+   $control=$owner.FindName($name)
+   $control.ApplyTemplate()
+   $chrome=$control.Template.FindName('InputChrome',$control)
+   if ($null -eq $chrome -or $chrome.CornerRadius.TopLeft -lt 6) {throw "Task input is not rounded: $name"}
+ }
+ $details=$owner.FindName('TasksPageDetailsSection')
+ $details.IsExpanded=$true
+ $details.ApplyTemplate()
+ if ($details.Template.FindName('DisclosureBody',$details).Visibility -ne 'Visible') {throw 'Rounded task disclosure does not expand.'}
+ $owner.FindName('TasksPageDetail').Text="Task result preview`n{`"success`":true}"
+ $list=$owner.FindName('TasksPageJobs')
+ $list.ItemsSource=@(
+   [pscustomobject]@{ToolName='zemax_pop';ActivitySubtitle='MCP Task · 38s';State='working'},
+   [pscustomobject]@{ToolName='zemax_nsc_ray_trace';ActivitySubtitle='Worker Job · queued';State='queued'}
+ )
+ $list.SelectedIndex=0
+ Render $owner 'tasks-rounded-details.png'
+ $details.IsExpanded=$false
+ if ($details.Template.FindName('DisclosureBody',$details).Visibility -ne 'Collapsed') {throw 'Rounded task disclosure does not collapse.'}
+ $tabs.SelectedIndex=2
+ if ($owner.FindName('RemoteTrustSection').Visibility -ne 'Collapsed') {throw 'Certificate review must start hidden.'}
+ $owner.FindName('RemoteTrustSection').Visibility='Visible'
+ $owner.FindName('RemoteTrustIdentity').Text="https://192.168.8.1:8000`nSHA-256: 0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"
+ Render $owner 'certificate-review-inline.png'
+ $tabs.SelectedIndex=1
  $taskPage = $taskScroll.Content
  $taskGrid = @($taskPage.Children | Where-Object { $_ -is [System.Windows.Controls.Grid] }) | Select-Object -First 1
  if ($null -eq $taskGrid -or $taskGrid.ColumnDefinitions.Count -ne 3) {

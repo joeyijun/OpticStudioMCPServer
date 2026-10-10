@@ -121,6 +121,41 @@
       </Setter>
     </Style>
 
+    <Style x:Key="RoundedDisclosure" TargetType="Expander">
+      <Setter Property="Template"><Setter.Value>
+        <ControlTemplate TargetType="Expander">
+          <Border Background="{StaticResource GlassSurface}" BorderBrush="{StaticResource GlassEdge}" BorderThickness="1" CornerRadius="12">
+            <StackPanel>
+              <ToggleButton Content="{TemplateBinding Header}" HorizontalContentAlignment="Stretch" Padding="14,12"
+                            FocusVisualStyle="{x:Null}"
+                            IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                <ToggleButton.Template><ControlTemplate TargetType="ToggleButton">
+                  <Border x:Name="DisclosureHeader" CornerRadius="11" BorderThickness="1" BorderBrush="Transparent" Padding="{TemplateBinding Padding}">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                      <ContentPresenter VerticalAlignment="Center" RecognizesAccessKey="True"/>
+                      <Path x:Name="Chevron" Grid.Column="1" Data="M 0 0 L 4 4 L 0 8" Stroke="{StaticResource MutedBrush}" StrokeThickness="1.5" Margin="12,0,3,0" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                        <Path.RenderTransform><RotateTransform Angle="0"/></Path.RenderTransform>
+                      </Path>
+                    </Grid>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="DisclosureHeader" Property="Background" Value="{StaticResource ControlSurface}"/></Trigger>
+                    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="DisclosureHeader" Property="BorderBrush" Value="{StaticResource AccentBrush}"/></Trigger>
+                    <Trigger Property="IsChecked" Value="True"><Setter TargetName="Chevron" Property="RenderTransform"><Setter.Value><RotateTransform Angle="90"/></Setter.Value></Setter></Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate></ToggleButton.Template>
+              </ToggleButton>
+              <Border x:Name="DisclosureBody" Visibility="Collapsed" Padding="14,0,14,14"><ContentPresenter/></Border>
+            </StackPanel>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsExpanded" Value="True"><Setter TargetName="DisclosureBody" Property="Visibility" Value="Visible"/></Trigger>
+            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value></Setter>
+    </Style>
+
     <Style x:Key="PasswordInputBox" TargetType="PasswordBox">
       <Setter Property="Height" Value="36"/>
       <Setter Property="Padding" Value="10,5"/>
@@ -580,18 +615,24 @@
                   <ComboBoxItem Content="All"/><ComboBoxItem Content="Running"/><ComboBoxItem Content="Queued"/><ComboBoxItem Content="Completed"/><ComboBoxItem Content="Failed"/><ComboBoxItem Content="Cancelled"/>
                 </ComboBox>
                 <TextBox x:Name="TasksPageSearch" Grid.Row="1" Grid.ColumnSpan="2"
-                         Height="32" Margin="0,10,0,0" Padding="10,5"
+                         Style="{StaticResource InputBox}" Height="34" Margin="0,10,0,0" Padding="10,5"
                          ToolTip="Filter tasks by tool, Job ID, Task ID, or state"
                          AutomationProperties.Name="Search Tasks and Jobs"
                          TextChanged="TasksPageSearch_Changed"/>
               </Grid>
               <TextBlock x:Name="TasksPageEmpty" Text="No recent tasks. Start a background operation from your AI client." Style="{StaticResource HelperText}" Margin="0,6,0,10" TextWrapping="Wrap"/>
               <ListBox x:Name="TasksPageJobs" ItemsSource="{Binding VisibleJobs}" MinHeight="280" MaxHeight="460" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="TasksPageJobs_Changed" AutomationProperties.Name="Background Job list">
+                <ListBox.Template><ControlTemplate TargetType="ListBox">
+                  <Border CornerRadius="12" Background="{TemplateBinding Background}" Padding="0,3">
+                    <ScrollViewer Focusable="False" CanContentScroll="True" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"><ItemsPresenter/></ScrollViewer>
+                  </Border>
+                </ControlTemplate></ListBox.Template>
                 <ListBox.ItemContainerStyle>
                   <Style TargetType="ListBoxItem">
+                    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
                     <Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,3"/>
                     <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem">
-                      <Border x:Name="Row" CornerRadius="9" Padding="12,10" Background="Transparent"><ContentPresenter/></Border>
+                      <Border x:Name="Row" CornerRadius="11" Padding="12,10" Background="Transparent" BorderThickness="1" BorderBrush="Transparent"><ContentPresenter/></Border>
                       <ControlTemplate.Triggers>
                         <Trigger Property="IsSelected" Value="True"><Setter TargetName="Row" Property="Background" Value="#E5EFFC"/></Trigger>
                         <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Row" Property="BorderBrush" Value="#CBD9EB"/><Setter TargetName="Row" Property="BorderThickness" Value="1"/></Trigger>
@@ -603,18 +644,18 @@
                 <ListBox.ItemTemplate><DataTemplate>
                   <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <StackPanel><TextBlock Text="{Binding ToolName}" FontWeight="SemiBold" Foreground="{StaticResource HeadingBrush}" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding ActivitySubtitle}" FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,4,12,0" TextTrimming="CharacterEllipsis"/></StackPanel>
-                    <TextBlock Grid.Column="1" Text="{Binding State}" Foreground="{StaticResource BodyBrush}" VerticalAlignment="Center"/>
+                    <Border Grid.Column="1" Background="{StaticResource ControlSurface}" CornerRadius="10" Padding="9,3" VerticalAlignment="Center"><TextBlock Text="{Binding State}" FontSize="11" Foreground="{StaticResource BodyBrush}"/></Border>
                   </Grid>
                 </DataTemplate></ListBox.ItemTemplate>
               </ListBox>
             </StackPanel>
           </Border>
           </Grid>
-          <Expander x:Name="TasksPageDetailsSection" Header="Details and result" Margin="4,18,4,0" Foreground="{StaticResource BodyBrush}">
-            <TextBox x:Name="TasksPageDetail" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MaxHeight="240" MinHeight="90" Background="#BFFFFFFF" BorderBrush="#DCE3ED" FontFamily="Consolas" FontSize="12" Padding="12" Margin="0,10,0,0" Text="Select a task to inspect its details."/>
+          <Expander x:Name="TasksPageDetailsSection" Style="{StaticResource RoundedDisclosure}" Header="Details and result" Margin="0,18,0,0" Foreground="{StaticResource BodyBrush}">
+            <TextBox x:Name="TasksPageDetail" Style="{StaticResource InputBox}" Height="Auto" VerticalContentAlignment="Top" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MaxHeight="240" MinHeight="90" Background="#BFFFFFFF" BorderBrush="#DCE3ED" FontFamily="Consolas" FontSize="12" Padding="12" Text="Select a task to inspect its details."/>
           </Expander>
-          <Expander Header="Find a task by ID" Margin="4,14,4,0" Foreground="{StaticResource BodyBrush}">
-            <StackPanel Margin="0,10,0,0">
+          <Expander Style="{StaticResource RoundedDisclosure}" Header="Find a task by ID" Margin="0,12,0,0" Foreground="{StaticResource BodyBrush}">
+            <StackPanel>
               <TextBlock Text="Use the MCP Task ID supplied by your AI client, not a Worker Job ID." Style="{StaticResource HelperText}" TextWrapping="Wrap" Margin="0,0,0,8"/>
               <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <TextBox x:Name="TasksPageTaskId" Style="{StaticResource InputBox}" AutomationProperties.Name="MCP Task ID"/>
@@ -709,11 +750,22 @@
               <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
               <TextBox x:Name="RemoteSecureSetup" Style="{StaticResource InputBox}"
                        ToolTip="Paste the complete secure setup JSON copied from the OpticStudio computer. It is stored securely after validation."
-                       LostFocus="RemoteSecureSetup_LostFocus"/>
+                       LostFocus="RemoteSecureSetup_LostFocus" TextChanged="RemoteSecureSetup_TextChanged"/>
               <Button Grid.Column="1" Content="Use local" Style="{StaticResource SmallButton}" Margin="9,2,0,2"
                       ToolTip="Use this computer's local MCP service again" Click="ClearRemoteSetup_Click"/>
             </Grid>
             <TextBlock Text="Paste secure setup from the OpticStudio computer." Style="{StaticResource HelperText}" Margin="1,8,0,0"/>
+            <Border x:Name="RemoteTrustSection" Visibility="Collapsed" Background="{StaticResource ControlSurface}"
+                    BorderBrush="{StaticResource GlassEdge}" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,12,0,0">
+              <StackPanel>
+                <TextBlock Text="Verify your OpticStudio computer" FontWeight="SemiBold" Foreground="{StaticResource HeadingBrush}"/>
+                <TextBlock Text="Compare this fingerprint on both computers before trusting. Windows will handle certificate installation."
+                           Style="{StaticResource HelperText}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                <TextBlock x:Name="RemoteTrustIdentity" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap"
+                           Foreground="{StaticResource BodyBrush}" Margin="0,8,0,10"/>
+                <Button Content="Trust and connect" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Click="TrustRemoteSetup_Click"/>
+              </StackPanel>
+            </Border>
           </StackPanel>
         </Border>
       </Grid>
