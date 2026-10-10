@@ -1433,8 +1433,12 @@ internal static class Program
                     }).ConfigureAwait(false);
                     continue;
                 }
-                if (string.Equals(command, "zemax_status", StringComparison.Ordinal) || string.Equals(command, "zemax_tool_catalog", StringComparison.Ordinal) || string.Equals(command, "zemax_get_system", StringComparison.Ordinal) ||
-                    string.Equals(command, "zemax_test_echo", StringComparison.Ordinal) || string.Equals(command, "zemax_test_hold", StringComparison.Ordinal))
+                if (string.Equals(command, "zemax_status", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_tool_catalog", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_get_system", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_connect", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_test_echo", StringComparison.Ordinal) ||
+                    string.Equals(command, "zemax_test_hold", StringComparison.Ordinal))
                 {
                     await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
                     {
