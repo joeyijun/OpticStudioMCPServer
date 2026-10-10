@@ -34,7 +34,8 @@ internal static class HostLaunchPlan
             throw new ArgumentException("Unsupported MCP toolset profile.");
         if(shareLan && (!IPAddress.TryParse(lanAddress,out var ip) ||
             ip.AddressFamily!=System.Net.Sockets.AddressFamily.InterNetwork ||
-            IPAddress.IsLoopback(ip)))
+            IPAddress.IsLoopback(ip) || ip.Equals(IPAddress.Any) ||
+            ip.Equals(IPAddress.Broadcast) || ip.GetAddressBytes()[0]>=224)))
             throw new ArgumentException("LAN sharing requires a concrete IPv4 interface address.");
         var cert=tlsEnabled?SafePath(pfxPath??"",nameof(pfxPath)):"";
         if(tlsEnabled && (!cert.EndsWith(".pfx",StringComparison.OrdinalIgnoreCase) ||

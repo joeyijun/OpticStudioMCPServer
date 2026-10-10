@@ -396,6 +396,11 @@ internal static class Program
             true,true,"127.0.0.1",false,null,"token",null),
             "Remote LAN sharing cannot use loopback IPv4 as its published address.");
         AssertThrows<ArgumentException>(()=>HostLaunchPlan.Build(
+            @"C:\Host.exe",@"C:\Worker.exe",@"C:\OS","0.0.0.0",
+            8000,false,"basic-viewing",@"C:\snapshots",
+            true,true,"0.0.0.0",false,null,"token",null),
+            "LAN address must not use unspecified bind-all IPv4 as its published origin.");
+        AssertThrows<ArgumentException>(()=>HostLaunchPlan.Build(
             @"C:\Host.exe",@"C:\Worker.exe",@"C:\OS","127.0.0.1",
             8000,false,"basic-viewing",@"C:\snapshots",
             true,false,"127.0.0.1",true,@"C:\Certs\abc.pfx","token",null),
