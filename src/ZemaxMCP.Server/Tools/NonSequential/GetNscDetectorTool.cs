@@ -193,6 +193,8 @@ public sealed class GetNscDetectorTool
                         }
                     }
                     roiSum = pixelGrid.Sum(line => line.Sum());
+                    if (double.IsNaN(roiSum.Value) || double.IsInfinity(roiSum.Value))
+                        throw new InvalidOperationException("The ROI pixel sum overflows the native detector data range.");
                     var pixels = pixelGrid.SelectMany(line => line).ToArray();
                     pixelMin = pixels.Min();
                     pixelMax = pixels.Max();
@@ -216,6 +218,9 @@ public sealed class GetNscDetectorTool
                         roiDetectorFraction = roiIntegral.Value / totalFlux.Value;
                     if (roiIntegral.HasValue && launchedFlux.HasValue)
                         roiLaunchedFraction = roiIntegral.Value / launchedFlux.Value;
+                    if ((roiDetectorFraction.HasValue && (double.IsNaN(roiDetectorFraction.Value) || double.IsInfinity(roiDetectorFraction.Value))) ||
+                        (roiLaunchedFraction.HasValue && (double.IsNaN(roiLaunchedFraction.Value) || double.IsInfinity(roiLaunchedFraction.Value))))
+                        throw new InvalidOperationException("ROI normalization is non-finite; verify source and detector flux scales.");
                 }
 
                 return new Result(
