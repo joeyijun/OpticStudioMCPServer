@@ -208,7 +208,7 @@ internal static class WorkerTaskLedgerAssertions
             Assert(File.Exists(file + ".bak"),
                 "A bounded second journal generation should be retained as a repair backup.");
             File.WriteAllText(file, "{ INVALID JOURNAL");
-            var repaired = new WorkerTaskLedger(maxRecords: 5, journalPath: file);
+            var repaired = new WorkerTaskLedger(maxRecords: 5, maxRetainedResults: 2, journalPath: file);
             Assert(repaired.ListOwnedMetadata("token:scoped:alice").Count > 0 &&
                    repaired.ListOwnedMetadata("scoped:foreign").Count == 0 &&
                    !File.ReadAllText(file).Contains("SECRET-OPTICAL-DATA", StringComparison.Ordinal),
