@@ -480,6 +480,10 @@ public partial class MainWindow : Window
                         generation.Length > 0 && item.WorkerGeneration == generation);
                 if (linkedJob != null) items.Remove(linkedJob);
                 var state = record["state"]?.ToString() ?? "working";
+                var taskActive = state.Equals("working", StringComparison.OrdinalIgnoreCase) ||
+                    state.Equals("running", StringComparison.OrdinalIgnoreCase) ||
+                    state.Equals("queued", StringComparison.OrdinalIgnoreCase) ||
+                    state.Equals("cancelling", StringComparison.OrdinalIgnoreCase);
                 var started = DateTimeOffset.TryParse(record["createdAt"]?.ToString(), out var born)
                     ? born : DateTimeOffset.UtcNow;
                 var completedAt = DateTimeOffset.TryParse(record["updatedAt"]?.ToString(), out var updated)
@@ -495,8 +499,10 @@ public partial class MainWindow : Window
                     WorkerGeneration = generation.Length > 0 ? generation : "Not reported",
                     Elapsed = linkedJob?.Elapsed ?? Math.Max(0, elapsed).ToString("F0") + "s",
                     Queue = linkedJob?.Queue ?? "",
-                    Progress = linkedJob?.Progress ?? "",
-                    ProgressFraction = linkedJob?.ProgressFraction,
+                    // A terminal Task must not inherit a stale 42% reading
+                    // from its still-cached Worker Job.
+                    Progress = taskActive ? linkedJob?.Progress ?? "" : "",
+                    ProgressFraction = taskActive ? linkedJob?.ProgressFraction : null,
                     Message = (record["message"]?.ToString() ?? "") +
                         (record["cancelRequested"]?.Value<bool>() == true ? " · cancellation requested" : "") +
                         (record["resultExpired"]?.Value<bool>() == true ? " · result expired" : "") +
