@@ -68,6 +68,8 @@ internal static class StaticToolManifestAssertions
             if (!detectorSchema.TryGetProperty(field, out _))
                 throw new InvalidOperationException("Detector ROI tool is missing the published field " + field);
 
+        if (!StaticToolManifest.GetRequired("zemax_energy_budget").InputSchema.GetProperty("properties").TryGetProperty("relativeSourceSpectralWeights", out _))
+            throw new InvalidOperationException("Sequential energy budgeting must expose explicitly supplied source spectral weights.");
         if (!StaticToolManifest.GetRequired("zemax_energy_budget").InputSchema.GetProperty("properties").TryGetProperty("startSurface", out _))
             throw new InvalidOperationException("Sequential energy budgeting must advertise bounded startSurface for segmented LDEs.");
 

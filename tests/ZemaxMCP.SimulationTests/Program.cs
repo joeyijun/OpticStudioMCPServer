@@ -15,6 +15,7 @@ internal static class Program
             VerifyScientificNumberTruthfulness();
             VerifyStructuredMtf();
             VerifySequentialEnergyWindows();
+            VerifySpectralWeights();
             VerifyGlassCatalogSafety();
             await VerifyStaDispatcherAsync();
             await VerifyJobManagerAsync();
@@ -28,6 +29,24 @@ internal static class Program
             Console.Error.WriteLine(exception);
             return 1;
         }
+    }
+
+    private static void VerifySpectralWeights()
+    {
+        var weights = SpectralWeighting.Normalize(new[] { 8d, 2d, 0d }, 3);
+        Assert(Math.Abs(weights.Sum() - 1) < 1e-12 &&
+               Math.Abs(SpectralWeighting.WeightedMean(new[] { 0.5, 1d, 0.1 }, weights) - 0.6) < 1e-12,
+            "Wavelength weights produced the wrong source-relative aggregate.");
+        var large = SpectralWeighting.Normalize(new[] { 1e308, 1e308 }, 2);
+        Assert(Math.Abs(large[0] - 0.5) < 1e-12, "Large finite weights caused overflow.");
+        AssertThrows<ArgumentException>(() => SpectralWeighting.Normalize(new[] { 0d, 0d }, 2),
+            "All-zero source weights accepted.");
+        AssertThrows<ArgumentException>(() => SpectralWeighting.Normalize(new[] { -1d, 2d }, 2),
+            "Negative source weights accepted.");
+        AssertThrows<ArgumentException>(() => SpectralWeighting.Normalize(new[] { double.NaN, 2d }, 2),
+            "Non-finite source weights accepted.");
+        AssertThrows<ArgumentException>(() => SpectralWeighting.Normalize(new[] { 1d }, 2),
+            "Mismatched source weights accepted.");
     }
 
     private static void VerifySequentialEnergyWindows()

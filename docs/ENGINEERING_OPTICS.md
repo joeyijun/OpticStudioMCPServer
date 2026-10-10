@@ -15,6 +15,7 @@ Example MCP `tools/call` arguments:
   "wavelengths": [1, 2],
   "finalSurface": 12,
   "startSurface": 1,
+  "relativeSourceSpectralWeights": [0.8, 0.2],
   "gridSize": 15
 }
 ```
@@ -35,6 +36,12 @@ Example MCP `tools/call` arguments:
   supply an actual source spectrum, physical surface/coating data, detector
   response and a trace-consistent launched flux; NSC is appropriate for
   detector/stray-light work.
+- Optional `relativeSourceSpectralWeights` aligns with the selected wavelength
+  list and is normalized without overflow. Returned per-field spectral
+  aggregates remain **dimensionless geometric survival and ray-intensity
+  proxies**, not detector-collected watts or absolute throughput; no source
+  spectrum is silently assumed. A zero weight is allowed but all-zero,
+  negative, non-finite and wrong-length inputs fail.
 - Calls are bounded to <=6 fields, <=6 wavelengths, <=24 consecutive
   surfaces per call, and <=150000 surface/ray samples. For a long LDE use
   absolute `startSurface` and `finalSurface`, with **one shared boundary
