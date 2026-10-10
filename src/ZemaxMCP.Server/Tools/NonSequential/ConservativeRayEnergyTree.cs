@@ -37,7 +37,7 @@ public static class ConservativeRayEnergyTree
             var values=new[]{node.Incoming,node.CoatingAbsorbed,
                 node.MaterialAbsorbed,node.MechanicalStopped,
                 node.DetectorAbsorbed,node.Escaped,node.OtherVerifiedLoss};
-            if(values.Any(x=>!double.IsFinite(x)||x<0))
+            if(values.Any(x=>!FrameworkCompatibility.IsFinite(x)||x<0))
                 throw new ArgumentException("Ray incoming and deposited powers must be finite and nonnegative.");
         }
         // Check ALL parent references before walking ancestry. Otherwise a
@@ -79,7 +79,7 @@ public static class ConservativeRayEnergyTree
             var consumed=node.CoatingAbsorbed+node.MaterialAbsorbed+
                 node.MechanicalStopped+node.DetectorAbsorbed+
                 node.Escaped+node.OtherVerifiedLoss;
-            if(!double.IsFinite(outgoing)||!double.IsFinite(consumed))
+            if(!FrameworkCompatibility.IsFinite(outgoing)||!FrameworkCompatibility.IsFinite(consumed))
                 throw new InvalidDataException("Energy tree accumulated nonfinite child/absorption power.");
             var residual=node.Incoming-consumed-outgoing;
             var tolerance=1e-9*Math.Max(1d,node.Incoming);
@@ -96,7 +96,7 @@ public static class ConservativeRayEnergyTree
             other+=node.OtherVerifiedLoss;
         }
         var sum=coating+material+mechanical+detector+escaped+other+totalUnknown;
-        if(!double.IsFinite(totalRoots)||!double.IsFinite(sum))
+        if(!FrameworkCompatibility.IsFinite(totalRoots)||!FrameworkCompatibility.IsFinite(sum))
             throw new InvalidDataException("Energy tree summation overflowed finite power.");
         var closed=Math.Abs(totalRoots-sum) <= 1e-8*Math.Max(1d,totalRoots)
             && totalUnknown <= 1e-9*Math.Max(1d,totalRoots);

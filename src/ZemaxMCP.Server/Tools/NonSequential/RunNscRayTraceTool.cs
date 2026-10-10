@@ -63,7 +63,7 @@ public sealed class RunNscRayTraceTool
                     snapshotDetectorObjects.Distinct().Count()!=snapshotDetectorObjects.Length)
                     throw new ArgumentException("Provide 1..16 unique positive scalar detector IDs.");
                 if (declaredLaunchedFlux.HasValue &&
-                    (!double.IsFinite(declaredLaunchedFlux.Value) || declaredLaunchedFlux.Value<=0))
+                    (!FrameworkCompatibility.IsFinite(declaredLaunchedFlux.Value) || declaredLaunchedFlux.Value<=0))
                     throw new ArgumentException("User-declared launched flux must be finite and positive.");
             }
             else if (declaredLaunchedFlux.HasValue || includeConfiguredSourcePower)

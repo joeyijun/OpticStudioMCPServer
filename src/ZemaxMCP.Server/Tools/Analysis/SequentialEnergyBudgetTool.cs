@@ -101,7 +101,7 @@ public sealed class SequentialEnergyBudgetTool
                         : SpectralWeighting.Normalize(relativeSourceSpectralWeights, selectedWaves.Length);
                     if (relativeDetectorSpectralResponse!=null &&
                         (relativeDetectorSpectralResponse.Length!=selectedWaves.Length ||
-                         relativeDetectorSpectralResponse.Any(x=>!double.IsFinite(x) || x<0 || x>1)))
+                         relativeDetectorSpectralResponse.Any(x=>!FrameworkCompatibility.IsFinite(x) || x<0 || x>1)))
                         throw new ArgumentException("Detector response must have finite [0,1] values for all selected wavelengths.");
 
                     var pupil = SequentialPupilSampler.CircularGrid(gridSize);

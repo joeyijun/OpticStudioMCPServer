@@ -18,11 +18,15 @@ internal sealed class ScopedDeltaCursor
 
     private static string Scope(string endpoint,string token)
     {
-        if(string.IsNullOrWhiteSpace(endpoint))
-            throw new ArgumentException("A nonempty MCP endpoint is required.");
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            throw new ArgumentException("An absolute HTTP(S) MCP endpoint is required.");
         using(var hash=SHA256.Create())
             return Convert.ToBase64String(hash.ComputeHash(
-                Encoding.UTF8.GetBytes(endpoint.TrimEnd('/').ToUpperInvariant()+"\n"+token)));
+                // Uri normalizes scheme/host, but preserves case-sensitive paths.
+                // Uppercasing the entire URL could replay a cursor into a
+                // different reverse-proxy application using the same credential.
+                Encoding.UTF8.GetBytes(uri.AbsoluteUri.TrimEnd('/')+"\n"+token)));
     }
 
     /// <returns>True when the endpoint or bearer identity changed.</returns>

@@ -26,7 +26,7 @@ public static class ZrdPathEnergyCore
            events.Any(e=>e.RayNumber<0 || e.SegmentIndex<0 ||
                e.ParentSegmentIndex>=e.SegmentIndex ||
                e.ParentSegmentIndex<-1 ||
-               !double.IsFinite(e.Intensity)||e.Intensity<0 ||
+               !FrameworkCompatibility.IsFinite(e.Intensity)||e.Intensity<0 ||
                e.HitObject<0))
             throw new ArgumentException("ZRD graph requires <=16384 finite nonnegative segments with strictly earlier parents.");
         var groups=events.GroupBy(x=>x.RayNumber).ToArray();
@@ -56,7 +56,7 @@ public static class ZrdPathEnergyCore
                 if(children.Length==0){leafTotal+=parent.Intensity;continue;}
                 if(children.Length>1)branches++;
                 var outgoing=children.Sum(x=>x.Intensity);
-                if(!double.IsFinite(outgoing))
+                if(!FrameworkCompatibility.IsFinite(outgoing))
                     throw new InvalidDataException("ZRD outgoing intensity sum overflowed.");
                 var diff=parent.Intensity-outgoing;
                 if(diff>=0)positive+=diff;else negative-=diff;
@@ -64,7 +64,7 @@ public static class ZrdPathEnergyCore
         }
         var hitEvents=events.Where(e=>e.DetectorObservation).ToArray();
         var observed=hitEvents.Sum(x=>x.Intensity);
-        if(!new[]{launched,positive,negative,leafTotal,observed}.All(double.IsFinite))
+        if(!new[]{launched,positive,negative,leafTotal,observed}.All(FrameworkCompatibility.IsFinite))
             throw new InvalidDataException("ZRD aggregate intensity overflowed.");
         var residual=Math.Abs((leafTotal+positive-negative)-launched);
         if(residual>1e-8*Math.Max(1d,launched))

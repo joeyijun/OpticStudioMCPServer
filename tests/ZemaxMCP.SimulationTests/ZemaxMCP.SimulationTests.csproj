@@ -5,6 +5,7 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\..\src\ZemaxMCP.Server\Compatibility\FrameworkCompatibility.cs" Link="Server\FrameworkCompatibility.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Models\AnalysisResults.cs" Link="Core\AnalysisResults.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\MtfSeriesReader.cs" Link="Server\MtfSeriesReader.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\SequentialEnergySurfaceRange.cs" Link="Server\SequentialEnergySurfaceRange.cs" />

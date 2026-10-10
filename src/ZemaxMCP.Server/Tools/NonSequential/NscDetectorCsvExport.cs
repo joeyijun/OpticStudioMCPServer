@@ -52,12 +52,12 @@ public static class NscDetectorCsvExport
                         if((x&63)==0) cancellationToken.ThrowIfCancellationRequested();
                         var absoluteRow=startRow+y;var absoluteColumn=startColumn+x;
                         var value=readNativePixel(absoluteRow,absoluteColumn);
-                        if(!double.IsFinite(value))
+                        if(!FrameworkCompatibility.IsFinite(value))
                             throw new InvalidDataException("Detector returned non-finite native pixel data.");
                         minimum=Math.Min(minimum,value);
                         maximum=Math.Max(maximum,value);
                         sum+=value;
-                        if(!double.IsFinite(sum))
+                        if(!FrameworkCompatibility.IsFinite(sum))
                             throw new InvalidDataException("Native ROI sum overflow; no partial output was published.");
                         writer.Write(absoluteRow.ToString(CultureInfo.InvariantCulture));
                         writer.Write(',');
@@ -73,7 +73,7 @@ public static class NscDetectorCsvExport
             // Windows cannot atomically move/replace an open CSV. Dispose
             // the hash read handle before committing the sibling temp file.
             using(var file=File.OpenRead(temp))
-                digest=Convert.ToHexString(SHA256.HashData(file)).ToLowerInvariant();
+                digest=FrameworkCompatibility.Sha256Hex(file);
             cancellationToken.ThrowIfCancellationRequested();
             if(overwrite && File.Exists(target)) File.Replace(temp,target,null);
             else File.Move(temp,target);

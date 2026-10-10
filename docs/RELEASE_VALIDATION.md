@@ -8,7 +8,8 @@ Every pull request must pass the Windows workflow at the exact release-candidate
 
 Hosted checks cover:
 
-- 122 Worker tool classes / 141 unique commands;
+- 146 unique public tool commands (the registration verifier reports the exact Worker class count);
+- vendor-independent optical kernels compiled and exercised under the actual **net48** target via `scripts/verify-worker-framework.ps1`, with every simulated Server optical kernel included, plus guards against reviewed unsupported modern BCL APIs;
 - explicit domain and impact metadata for every public tool;
 - generated JSON schemas and deterministic static-manifest fingerprint;
 - official .NET 10 MCP Host behavior and MCP 2026-07-28 stateless requests;
@@ -25,6 +26,11 @@ Hosted checks cover:
 - cross-version ZOS-API policy guards for an x64 Worker, packaged compile-baseline metadata, pre-type-load runtime version checks, and ZMX safety snapshots.
 
 Hosted CI deliberately does **not** claim that a ZOS-API call works against a real OpticStudio build. Proprietary ZOS-API assemblies and a valid OpticStudio license are not available on the hosted runner. Version-sensitive ZOS-API members are checked against the current Ansys reference, while claimed older-version support must additionally pass `scripts/verify-zosapi-compatibility.ps1` against the actual old DLLs and then the licensed-machine acceptance defined below. See `docs/ZOSAPI_COMPATIBILITY.md`.
+
+The net48 kernel projection is not a complete Worker build: ZOS-dependent tool
+wrappers and cross-tool invocation signatures still require a full local build
+against licensed reference DLLs before packaging. A green net10 simulation or
+hosted CI alone must not be recorded as that compilation evidence.
 
 ## 2. Live smoke test: real OpticStudio
 

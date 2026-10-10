@@ -11,7 +11,7 @@ internal static class SpectralWeighting
     {
         if (weights == null || wavelengthCount is < 1 or > 6 ||
             weights.Length != wavelengthCount ||
-            weights.Any(x => !double.IsFinite(x) || x < 0))
+            weights.Any(x => !FrameworkCompatibility.IsFinite(x) || x < 0))
             throw new ArgumentException("Source spectral weights must match selected wavelengths and be finite nonnegative values.");
         var maximum = weights.Max();
         if (maximum <= 0)
@@ -30,7 +30,7 @@ internal static class SpectralWeighting
     {
         if(intensityProxies.Length!=sourceWeights.Length ||
             response.Length!=sourceWeights.Length ||
-            response.Any(x=>!double.IsFinite(x)||x<0||x>1))
+            response.Any(x=>!FrameworkCompatibility.IsFinite(x)||x<0||x>1))
             throw new ArgumentException("Detector response requires aligned finite [0,1] spectral bins.");
         var meanResponse=WeightedMean(response,sourceWeights);
         var proxy=WeightedMean(intensityProxies.Zip(response,(x,y)=>x*y).ToArray(),sourceWeights);
@@ -40,13 +40,13 @@ internal static class SpectralWeighting
     internal static double WeightedMean(double[] values, double[] normalizedWeights)
     {
         if (values.Length != normalizedWeights.Length ||
-            values.Any(x => !double.IsFinite(x)) ||
-            normalizedWeights.Any(x => !double.IsFinite(x) || x < 0))
+            values.Any(x => !FrameworkCompatibility.IsFinite(x)) ||
+            normalizedWeights.Any(x => !FrameworkCompatibility.IsFinite(x) || x < 0))
             throw new InvalidDataException("Non-finite spectral ray proxy or mismatched weights.");
         var sum = 0d;
         for (var i = 0; i < values.Length; i++)
             sum += values[i] * normalizedWeights[i];
-        if (!double.IsFinite(sum))
+        if (!FrameworkCompatibility.IsFinite(sum))
             throw new InvalidDataException("Spectral weighted result is non-finite.");
         return sum;
     }

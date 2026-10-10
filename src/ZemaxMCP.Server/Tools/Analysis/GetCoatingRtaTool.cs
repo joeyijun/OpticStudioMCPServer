@@ -33,7 +33,7 @@ public sealed class GetCoatingRtaTool
         var angles=anglesDegrees is {Length:>0}?anglesDegrees:new[]{0d};
         if(surfaces is not {Length:>=1 and <=24} ||
             surfaces.Any(x=>x<=0) || surfaces.Distinct().Count()!=surfaces.Length ||
-            angles.Length is <1 or >6 || angles.Any(x=>!double.IsFinite(x)||x<0||x>89.9) ||
+            angles.Length is <1 or >6 || angles.Any(x=>!FrameworkCompatibility.IsFinite(x)||x<0||x>89.9) ||
             angles.Distinct().Count()!=angles.Length ||
             direction is not ("inward" or "outward"))
             return new Result(false,"Invalid surface IDs, angle range, or direction.",Array.Empty<Sample>(),scope);
@@ -81,7 +81,7 @@ public sealed class GetCoatingRtaTool
         catch(OperationCanceledException){throw;}
         catch(Exception ex)
         {
-            return new Result(false,ex is System.Reflection.TargetInvocationException {InnerException:not null} error
+            return new Result(false,ex is global::System.Reflection.TargetInvocationException {InnerException:not null} error
                 ? error.InnerException!.Message:ex.Message,Array.Empty<Sample>(),scope);
         }
     }

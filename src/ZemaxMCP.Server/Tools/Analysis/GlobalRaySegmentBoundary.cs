@@ -43,18 +43,18 @@ public static class GlobalRaySegmentBoundary
         {
             var a=new[]{seg.Start.X,seg.Start.Y,seg.Start.Z};
             var b=new[]{seg.End.X,seg.End.Y,seg.End.Z};
-            if(a.Any(v=>!double.IsFinite(v))||b.Any(v=>!double.IsFinite(v)))
+            if(a.Any(v=>!FrameworkCompatibility.IsFinite(v))||b.Any(v=>!FrameworkCompatibility.IsFinite(v)))
                 throw new InvalidDataException("Non-finite optical ray segment endpoint.");
             var delta=new[]{b[0]-a[0],b[1]-a[1],b[2]-a[2]};
             var relative=new[]{a[0]-p.Origin[0],a[1]-p.Origin[1],a[2]-p.Origin[2]};
             var length=Math.Sqrt(Dot3(delta,delta));
-            if(!double.IsFinite(length)||!double.IsFinite(Dot3(relative,relative)))
+            if(!FrameworkCompatibility.IsFinite(length)||!FrameworkCompatibility.IsFinite(Dot3(relative,relative)))
                 throw new InvalidDataException("Optical ray segment geometry overflowed.");
             if(length<=1e-12){degenerate++;continue;}
             var d0=Dot3(relative,p.Normal);
             var denominator=Dot3(delta,p.Normal);
             var d1=d0+denominator;
-            if(!double.IsFinite(d0)||!double.IsFinite(d1))
+            if(!FrameworkCompatibility.IsFinite(d0)||!FrameworkCompatibility.IsFinite(d1))
                 throw new InvalidDataException("Optical ray-to-plane distances overflowed.");
             // Coplanar paths have infinitely many possible intersections:
             // they require solid-side collision handling, not one 2D sample.
@@ -72,7 +72,7 @@ public static class GlobalRaySegmentBoundary
             var shift=new[]{xyz[0]-p.Origin[0],xyz[1]-p.Origin[1],xyz[2]-p.Origin[2]};
             var clearance=MechanicalFootprintBoundary.SignedClearance(
                 p.Vertices2D,Dot3(shift,p.AxisU),Dot3(shift,p.AxisV));
-            if(!double.IsFinite(clearance))
+            if(!FrameworkCompatibility.IsFinite(clearance))
                 throw new InvalidDataException("Non-finite aperture clearance at ray-plane intersection.");
             hits++;
             if(clearance<0)outside++;

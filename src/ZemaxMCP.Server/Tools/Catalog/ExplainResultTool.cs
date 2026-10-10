@@ -19,7 +19,7 @@ public sealed class ExplainResultTool
         cancellationToken.ThrowIfCancellationRequested();
         try { return Task.FromResult(new Result(true,null,
             OpticalResultInterpreter.Explain(toolName,resultJson))); }
-        catch(Exception ex) when(ex is ArgumentException or System.Text.Json.JsonException)
+        catch(Exception ex) when(ex is ArgumentException or global::System.Text.Json.JsonException)
         { return Task.FromResult(new Result(false,ex.Message,null)); }
     }
 }

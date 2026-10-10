@@ -26,17 +26,17 @@ public static class GlobalPlanarMechanicalBoundary
     private static double[] Unit(double[] v)
     {
         var length=Norm(v);
-        if(!double.IsFinite(length)||length<=1e-12)
+        if(!FrameworkCompatibility.IsFinite(length)||length<=1e-12)
             throw new ArgumentException("Mechanical polygon is degenerate.");
         return v.Select(value=>value/length).ToArray();
     }
 
     internal static Basis Build(double[][] vertices,double tolerance)
     {
-        if(!double.IsFinite(tolerance) || tolerance<=0 || tolerance>1e6 ||
+        if(!FrameworkCompatibility.IsFinite(tolerance) || tolerance<=0 || tolerance>1e6 ||
             vertices is not {Length:>=3 and <=64} ||
             vertices.Any(v=>v==null||v.Length!=3||
-                v.Any(x=>!double.IsFinite(x)||Math.Abs(x)>1e9)))
+                v.Any(x=>!FrameworkCompatibility.IsFinite(x)||Math.Abs(x)>1e9)))
             throw new ArgumentException("Expected 3..64 finite global [x,y,z] vertices and positive finite plane tolerance.");
         var origin=vertices[0];
         var u=Unit(Subtract(vertices[1],origin));
@@ -84,7 +84,7 @@ public static class GlobalPlanarMechanicalBoundary
             var z=origin[2]+rotation[2][0]*local.X+rotation[2][1]*local.Y+rotation[2][2]*local.Z;
             var relative=Subtract(new[]{x,y,z},plane.Origin);
             var offset=Math.Abs(Dot(relative,plane.Normal));
-            if(!double.IsFinite(offset))throw new InvalidDataException("Nonfinite global mechanical plane residual.");
+            if(!FrameworkCompatibility.IsFinite(offset))throw new InvalidDataException("Nonfinite global mechanical plane residual.");
             maximumPlaneDeviation=Math.Max(maximumPlaneDeviation,offset);
             if(offset>planeTolerance)continue;
             compared++;

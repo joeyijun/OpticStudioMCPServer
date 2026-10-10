@@ -36,9 +36,9 @@ public sealed class AuditNativeZrdTool
         const string note="Read-only parse of an EXPLICIT EXISTING local .ZRD using ZOS-API OpenRayDatabaseReader and GetResults. RayNumber and parent semantics are version-sensitive; native segment-parent indexes are validated and never silently repaired. File hash identifies input but cannot prove it came from the same previous detector trace. The graph audit certifies only algebraic linkage. Detector-hit double-counting, native source-launched flux, polarized/coating/material/CAD category attribution and physical watts remain UNKNOWN.";
         try
         {
-            if(string.IsNullOrWhiteSpace(zrdPath)||!Path.IsPathFullyQualified(zrdPath) ||
+            if(string.IsNullOrWhiteSpace(zrdPath)||!FrameworkCompatibility.IsFullyQualifiedPath(zrdPath) ||
                !string.Equals(Path.GetExtension(zrdPath),".zrd",StringComparison.OrdinalIgnoreCase) ||
-               !double.IsFinite(timeoutSeconds)||timeoutSeconds<1||timeoutSeconds>120)
+               !FrameworkCompatibility.IsFinite(timeoutSeconds)||timeoutSeconds<1||timeoutSeconds>120)
                 throw new ArgumentException("Supply an absolute existing .ZRD path and timeoutSeconds in [1,120].");
             var fullPath=Path.GetFullPath(zrdPath);
             var info=new FileInfo(fullPath);
@@ -49,7 +49,7 @@ public sealed class AuditNativeZrdTool
             // reader may hold an exclusive native file handle until Close.
             string checksum;
             using(var stream=File.OpenRead(fullPath))
-                checksum=Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+                checksum=FrameworkCompatibility.Sha256Hex(stream);
             return await _session.ExecuteAsync("AuditNativeZrd",
                 new Dictionary<string,object?>{
                     ["zrdPath"]=fullPath,["timeoutSeconds"]=timeoutSeconds
@@ -96,7 +96,7 @@ public sealed class AuditNativeZrdTool
                             cancellationToken.ThrowIfCancellationRequested();
                             if(++rays>1024 || count is <1 or >8192 ||
                                segments.Count+count>8192 ||
-                               !double.IsFinite(wavelengthUm) || wavelengthUm<=0 ||
+                               !FrameworkCompatibility.IsFinite(wavelengthUm) || wavelengthUm<=0 ||
                                waveIndex<1)
                                 throw new InvalidDataException("ZRD evidence exceeded 1024 rays / 8192 segments or returned invalid wavelength/segment count.");
                             for(var index=0;index<count;index++)
@@ -115,8 +115,8 @@ public sealed class AuditNativeZrdTool
                                     throw new InvalidDataException("Native ZRD unexpectedly ended within a ray.");
                                 if(index>0 && (parent<0||parent>=index))
                                     throw new NotSupportedException("ZRD parent index is incompatible with this audited native reader release: no physical branch inference is permitted.");
-                                if(!double.IsFinite(intensity)||intensity<0||hitObject<0 ||
-                                   !double.IsFinite(pathLength)||pathLength<0)
+                                if(!FrameworkCompatibility.IsFinite(intensity)||intensity<0||hitObject<0 ||
+                                   !FrameworkCompatibility.IsFinite(pathLength)||pathLength<0)
                                     throw new InvalidDataException("Native ZRD contained nonfinite/invalid branch intensity, hit object or path length.");
                                 // Stable internal record ordinal prevents RayNumber overlap
                                 // between distinct native reader results and wavelengths.

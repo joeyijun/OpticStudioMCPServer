@@ -47,7 +47,10 @@ jobs:
       - name: Verify Stage F specialized contracts
         shell: pwsh
         run: ./scripts/verify-specialized-contracts.ps1
-      - name: Build and simulate ZOS-independent Core/Server logic
+      - name: Compile and test vendor-independent optical kernels on net48
+        shell: pwsh
+        run: ./scripts/verify-worker-framework.ps1 -Configuration Release
+      - name: Run modern Core/Server simulations
         shell: pwsh
         run: dotnet run --project tests/ZemaxMCP.SimulationTests/ZemaxMCP.SimulationTests.csproj -c Release
       - name: Build public desktop components

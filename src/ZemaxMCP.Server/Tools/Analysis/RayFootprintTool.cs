@@ -85,7 +85,7 @@ public sealed class RayFootprintTool
                 throw new ArgumentException("globalMechanicalMode must be surface or preceding-segment.");
             if (globalMechanicalMode=="preceding-segment" && mechanicalGlobalPolygon==null)
                 throw new ArgumentException("preceding-segment mode requires mechanicalGlobalPolygon.");
-            if (!double.IsFinite(mechanicalPlaneTolerance) ||
+            if (!FrameworkCompatibility.IsFinite(mechanicalPlaneTolerance) ||
                 mechanicalPlaneTolerance<=0 || mechanicalPlaneTolerance>1e6)
                 throw new ArgumentException("mechanicalPlaneTolerance must be finite and in (0,1000000].");
             var mechanical = mechanicalRectangle != null ?
@@ -135,7 +135,7 @@ public sealed class RayFootprintTool
                         throw new ArgumentException("mechanicalSurface must match an inspected LDE target surface.");
                     if (globalMechanicalMode=="preceding-segment" && comparisonSurface<2)
                         throw new ArgumentException("A finite preceding LDE segment requires mechanicalSurface >=2 (target and immediately previous physical LDE surface).");
-                    if(multiStops && cadStopAfterSurfaces!.Any(x=>x<targets[0] || x>=targets[^1]))
+                    if(multiStops && cadStopAfterSurfaces!.Any(x=>x<targets[0] || x>=targets[targets.Length - 1]))
                         throw new ArgumentException("Each CAD stop must lie between consecutive inspected LDE surfaces.");
                     var pupil = SequentialPupilSampler.CircularGrid(gridSize);
                     if ((long)pupil.Length * (targets.Length +

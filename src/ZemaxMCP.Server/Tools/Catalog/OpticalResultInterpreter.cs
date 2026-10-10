@@ -40,7 +40,7 @@ public static class OpticalResultInterpreter
             if(!root.TryGetProperty(key,out var v) || v.ValueKind==JsonValueKind.Null) return;
             if(v.ValueKind!=JsonValueKind.Number) throw new ArgumentException(label+" must be a numeric value.");
             var value=v.GetDouble();
-            if(!double.IsFinite(value)) throw new ArgumentException(label+" must be finite.");
+            if(!FrameworkCompatibility.IsFinite(value)) throw new ArgumentException(label+" must be finite.");
             if(numbers.Count<24) numbers.Add(new Metric(label,value,units,scope));
         }
         switch(toolName)

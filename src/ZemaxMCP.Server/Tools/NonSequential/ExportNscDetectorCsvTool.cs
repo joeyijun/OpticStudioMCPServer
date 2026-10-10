@@ -71,9 +71,9 @@ public sealed class ExportNscDetectorCsvTool
                         r=(uint)rectangle.NumberYPixels;
                     }
                     if(!nce.GetDetectorData(objectNumber,0,0,out var total) ||
-                        !double.IsFinite(total) ||
+                        !FrameworkCompatibility.IsFinite(total) ||
                         !nce.GetDetectorData(objectNumber,-3,0,out var hits) ||
-                        !double.IsFinite(hits))
+                        !FrameworkCompatibility.IsFinite(hits))
                         throw new InvalidOperationException("No finite detector flux/hit statistics; trace the model first.");
                     if(r>int.MaxValue || c>int.MaxValue)
                         throw new ArgumentException("Detector dimensions exceed the native integer index bounds.");

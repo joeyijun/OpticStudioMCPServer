@@ -10,7 +10,7 @@ public static class MechanicalFootprintBoundary
 
     internal static double[][] Rectangle(double[] b)
     {
-        if (b == null || b.Length != 4 || b.Any(v => !double.IsFinite(v)) ||
+        if (b == null || b.Length != 4 || b.Any(v => !FrameworkCompatibility.IsFinite(v)) ||
             b[0] >= b[2] || b[1] >= b[3])
             throw new ArgumentException("Rectangle must be [xmin,ymin,xmax,ymax] in lens units.");
         return new[] { new[]{b[0],b[1]}, new[]{b[2],b[1]},
@@ -35,7 +35,7 @@ public static class MechanicalFootprintBoundary
     {
         if (p is not { Length: >= 3 and <= 64 } ||
             p.Any(v=>v==null || v.Length!=2 ||
-                v.Any(x=>!double.IsFinite(x) || Math.Abs(x)>1e9)))
+                v.Any(x=>!FrameworkCompatibility.IsFinite(x) || Math.Abs(x)>1e9)))
             throw new ArgumentException("Polygon must have 3..64 finite local [x,y] vertices.");
         var area=0d;
         for(var i=0;i<p.Length;i++)
@@ -45,7 +45,7 @@ public static class MechanicalFootprintBoundary
                 throw new ArgumentException("Zero-length polygon edge.");
             area+=a[0]*b[1]-b[0]*a[1];
         }
-        if(!double.IsFinite(area) || area==0)
+        if(!FrameworkCompatibility.IsFinite(area) || area==0)
             throw new ArgumentException("Polygon area must be nonzero.");
         for(var i=0;i<p.Length;i++)
         for(var j=i+2;j<p.Length;j++)
@@ -63,7 +63,7 @@ public static class MechanicalFootprintBoundary
         {
             var a=p[i];var b=p[(i+1)%p.Length];
             var dx=b[0]-a[0];var dy=b[1]-a[1];
-            var t=Math.Clamp(((x-a[0])*dx+(y-a[1])*dy)/(dx*dx+dy*dy),0,1);
+            var t=Math.Max(0, Math.Min(1, ((x-a[0])*dx+(y-a[1])*dy)/(dx*dx+dy*dy)));
             var ex=x-a[0]-t*dx;var ey=y-a[1]-t*dy;
             closest=Math.Min(closest,ex*ex+ey*ey);
             if ((a[1]>y)!=(b[1]>y) && x<(b[0]-a[0])*(y-a[1])/(b[1]-a[1])+a[0])

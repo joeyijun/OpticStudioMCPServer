@@ -30,7 +30,7 @@ public static class CadTriangleMeshAudit
 
     private static Vec Read(double[] values)
     {
-        if(values is not {Length:3} || values.Any(x=>!double.IsFinite(x)||Math.Abs(x)>1e9))
+        if(values is not {Length:3} || values.Any(x=>!FrameworkCompatibility.IsFinite(x)||Math.Abs(x)>1e9))
             throw new ArgumentException("Mesh vertices must be finite global XYZ within 1e9 lens units.");
         return new(values[0],values[1],values[2]);
     }
@@ -49,7 +49,7 @@ public static class CadTriangleMeshAudit
             var e1=Read(triangle.Vertices[1])-a;
             var e2=Read(triangle.Vertices[2])-a;
             var n=e1.Cross(e2);
-            if(!double.IsFinite(n.Norm()) || n.Norm()<=1e-12*Math.Max(1d,e1.Norm()*e2.Norm()))
+            if(!FrameworkCompatibility.IsFinite(n.Norm()) || n.Norm()<=1e-12*Math.Max(1d,e1.Norm()*e2.Norm()))
                 throw new ArgumentException("Degenerate, zero-area or nonfinite mesh triangle.");
             faces[i]=new(a,e1,e2,n,triangle.PartId);
         }
@@ -70,7 +70,7 @@ public static class CadTriangleMeshAudit
     private static bool PointInsideTriangle(Point2 p,Point2 a,Point2 b,Point2 c)
     {
         var area=Cross2(a,b,c);
-        if(!double.IsFinite(area)||area==0)return false;
+        if(!FrameworkCompatibility.IsFinite(area)||area==0)return false;
         var v0=Cross2(b,c,p)/area;
         var v1=Cross2(c,a,p)/area;
         var v2=Cross2(a,b,p)/area;
@@ -128,7 +128,7 @@ private static Outcome Hit(Face face,Vec start,Vec end,
         var cross=direction.Cross(face.E2);
         var denominator=face.E1.Dot(cross);
         var reference=Math.Max(1d,direction.Norm()*face.Normal.Norm());
-        if(!double.IsFinite(denominator)||!double.IsFinite(reference))
+        if(!FrameworkCompatibility.IsFinite(denominator)||!FrameworkCompatibility.IsFinite(reference))
             throw new InvalidDataException("Mesh intersection arithmetic overflow.");
         const double epsilon=1e-11;
         if(Math.Abs(denominator)<=epsilon*reference)
@@ -148,7 +148,7 @@ private static Outcome Hit(Face face,Vec start,Vec end,
         if(baryV < -epsilon || baryU+baryV>1+epsilon)return Outcome.None;
         var t=face.E2.Dot(q)/denominator;
         if(t<-epsilon||t>1+epsilon)return Outcome.None;
-        fraction=Math.Clamp(t,0,1);
+        fraction=Math.Max(0, Math.Min(1, t));
         position=start+direction*fraction;
         return Outcome.Hit;
     }
@@ -174,7 +174,7 @@ private static Outcome Hit(Face face,Vec start,Vec end,
                 if(chord is null){missing++;wasUnknown=true;break;}
                 var a=new Vec(chord.Start.X,chord.Start.Y,chord.Start.Z);
                 var b=new Vec(chord.End.X,chord.End.Y,chord.End.Z);
-                if(!double.IsFinite(a.Norm())||!double.IsFinite(b.Norm()))
+                if(!FrameworkCompatibility.IsFinite(a.Norm())||!FrameworkCompatibility.IsFinite(b.Norm()))
                     throw new InvalidDataException("Nonfinite global optical chord for mesh.");
                 if(i>0 && path[i-1] is { } previous)
                 {

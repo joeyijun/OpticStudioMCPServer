@@ -68,6 +68,7 @@ internal static class JobActionClient
         request.ContentType = "application/json";
         request.Accept = "application/json, text/event-stream";
         request.Timeout = 15000;
+        request.ReadWriteTimeout = 15000;
         request.Headers["MCP-Protocol-Version"] = "2026-07-28";
         request.Headers["Mcp-Method"] = "tools/call";
         request.Headers["Mcp-Name"] = toolName;
@@ -77,12 +78,17 @@ internal static class JobActionClient
         using var response = (HttpWebResponse)request.GetResponse();
         using var reader = new StreamReader(response.GetResponseStream());
         var raw = reader.ReadToEnd();
-        if (response.ContentType?.StartsWith("text/event-stream", StringComparison.OrdinalIgnoreCase) == true)
-        {
-            raw = raw.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                .FirstOrDefault(line => line.StartsWith("data:", StringComparison.Ordinal))?.Substring(5) ?? "";
-        }
-        var rpc = JObject.Parse(raw);
+        return ParseJobResponse(raw,
+            response.ContentType?.StartsWith("text/event-stream", StringComparison.OrdinalIgnoreCase) == true,
+            jobId, body["id"]!);
+    }
+
+    internal static string ParseJobResponse(string raw, bool isSse, string jobId, JToken requestId)
+    {
+        var rpc = isSse ? McpDiagnosticsClient.SelectMcpSseResponse(raw, requestId) : JObject.Parse(raw);
+        if (rpc["method"] != null || !JToken.DeepEquals(rpc["id"], requestId) ||
+            (rpc["result"] == null && rpc["error"] == null))
+            throw new InvalidDataException("MCP Job response does not match the request ID.");
         if (rpc["error"] != null || rpc["result"]?["isError"]?.Value<bool>() == true)
         {
             // New Hosts provide a machine-readable failure envelope. Legacy
@@ -93,7 +99,7 @@ internal static class JobActionClient
             {
                 try
                 {
-                    var error = JObject.Parse(errorText);
+                    var error = JObject.Parse(errorText!);
                     var code = error["code"]?.ToString() ?? "domain_error";
                     var explanation = error["message"]?.ToString() ?? "Request rejected.";
                     throw new JobToolErrorException(code, explanation);
@@ -106,7 +112,7 @@ internal static class JobActionClient
         var text = rpc["result"]?["content"]?.FirstOrDefault()?["text"]?.ToString();
         if (string.IsNullOrWhiteSpace(text) || text == "null")
             throw new InvalidOperationException("Worker returned no matching Job. It may be expired or owned by another client.");
-        var parsed = JObject.Parse(text);
+        var parsed = JObject.Parse(text!);
         if (!string.Equals(parsed["jobId"]?.ToString(), jobId, StringComparison.Ordinal))
             throw new InvalidDataException("Job result ID does not match the requested Job.");
         return parsed.ToString(Newtonsoft.Json.Formatting.None);

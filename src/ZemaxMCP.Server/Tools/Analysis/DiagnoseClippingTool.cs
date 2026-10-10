@@ -57,7 +57,7 @@ public sealed class DiagnoseClippingTool
                 return Failure("gridSize must be 5..41 and maxPointsPerSurface 0..128.");
             cancellationToken.ThrowIfCancellationRequested();
             var fp = await _footprints.ExecuteAsync(surfaces, hx, hy, wavelength,
-                gridSize, maxPointsPerSurface, cancellationToken).ConfigureAwait(false);
+                gridSize, maxPointsPerSurface, cancellationToken: cancellationToken).ConfigureAwait(false);
             if (!fp.Success || fp.Surfaces.Count == 0)
                 return Failure(fp.Error ?? "No readable sequential ray footprints.");
             var destination = fp.Surfaces.Max(x => x.Surface);

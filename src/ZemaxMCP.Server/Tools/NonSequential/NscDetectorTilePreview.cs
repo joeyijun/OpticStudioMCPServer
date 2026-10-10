@@ -34,7 +34,7 @@ public static class NscDetectorTilePreview
     {
         if(bins is < 2 or > 16 || pixels.Length==0 ||
            pixels[0].Length==0 || pixels.Any(r=>r==null ||
-                r.Length!=pixels[0].Length || r.Any(v=>!double.IsFinite(v))))
+                r.Length!=pixels[0].Length || r.Any(v=>!FrameworkCompatibility.IsFinite(v))))
             throw new ArgumentException("Heatmap needs rectangular finite ROI and 2..16 bins.");
         var height=pixels.Length;var width=pixels[0].Length;
         var outRows=Math.Min(height,bins);var outCols=Math.Min(width,bins);
@@ -51,7 +51,7 @@ public static class NscDetectorTilePreview
                 for(var xx=x0;xx<x1;xx++)
                     sum+=pixels[yy][xx];
                 var mean=sum/((y1-y0)*(x1-x0));
-                if(!double.IsFinite(mean))
+                if(!FrameworkCompatibility.IsFinite(mean))
                     throw new InvalidDataException("Heatmap bin mean overflow.");
                 map[y][x]=mean;
             }

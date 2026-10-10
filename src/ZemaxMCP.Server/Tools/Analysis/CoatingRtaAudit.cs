@@ -19,7 +19,7 @@ public static class CoatingRtaAudit
             passiveRta.Length is < 1 or > 24 ||
             passiveRta.Length!=followReflection.Length ||
             passiveRta.Any(row=>row==null || row.Length!=3 ||
-                row.Any(v=>!double.IsFinite(v) || v<0 || v>1) ||
+                row.Any(v=>!FrameworkCompatibility.IsFinite(v) || v<0 || v>1) ||
                 row.Sum()>1+1e-10))
             throw new ArgumentException(
                 "Provide 1..24 passive [R,T,A] records and an equal-length selected-reflection mask; coefficients must be finite in [0,1] with R+T+A<=1.");
@@ -39,7 +39,7 @@ public static class CoatingRtaAudit
                 selected,remainder,bypass,loss,unknownLoss));
             selected=remainder;other+=bypass;absorbed+=loss;unknown+=unknownLoss;
         }
-        if(!double.IsFinite(selected+other+absorbed+unknown) ||
+        if(!FrameworkCompatibility.IsFinite(selected+other+absorbed+unknown) ||
            Math.Abs(selected+other+absorbed+unknown-1)>1e-8)
             throw new InvalidDataException("Assumed-coating bookkeeping is not conservative.");
         return new Audit(1,selected,other,absorbed,unknown,rows,

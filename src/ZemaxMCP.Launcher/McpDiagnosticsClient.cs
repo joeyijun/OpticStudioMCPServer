@@ -73,6 +73,7 @@ internal static class McpDiagnosticsClient
         request.ContentType = "application/json";
         request.Accept = "application/json, text/event-stream";
         request.Timeout = method == "tools/call" ? 105000 : 20000;
+        request.ReadWriteTimeout = request.Timeout;
         request.Headers["MCP-Protocol-Version"] = "2026-07-28";
         request.Headers["Mcp-Method"] = method;
         if (!string.IsNullOrEmpty(routingName)) request.Headers["Mcp-Name"] = routingName;
@@ -93,7 +94,7 @@ internal static class McpDiagnosticsClient
         return rpc;
     }
 
-    private static JObject SelectMcpSseResponse(string raw, JToken requestId)
+    internal static JObject SelectMcpSseResponse(string raw, JToken requestId)
     {
         foreach (var frame in raw.Replace("\r\n", "\n").Split(new[] { "\n\n" }, StringSplitOptions.RemoveEmptyEntries))
         {

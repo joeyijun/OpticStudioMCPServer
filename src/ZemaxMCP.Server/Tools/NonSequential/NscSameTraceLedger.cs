@@ -38,15 +38,15 @@ public static class NscSameTraceLedger
             throw new ArgumentException("Same-trace detector ledger requires clearing ALL detector buffers before this trace.");
         if(detectorReadings is null || detectorReadings.Count is < 1 or > 16 ||
             detectorReadings.Any(x=>x.Id<1 || string.IsNullOrWhiteSpace(x.Type) ||
-                !double.IsFinite(x.Flux)||x.Flux<0 ||
-                !double.IsFinite(x.Hits)||x.Hits<0) ||
+                !FrameworkCompatibility.IsFinite(x.Flux)||x.Flux<0 ||
+                !FrameworkCompatibility.IsFinite(x.Hits)||x.Hits<0) ||
             detectorReadings.Select(x=>x.Id).Distinct().Count()!=detectorReadings.Count)
             throw new ArgumentException("Provide 1..16 unique detectors with finite nonnegative native flux and hits.");
-        if(declaredFlux.HasValue && (!double.IsFinite(declaredFlux.Value)||declaredFlux.Value<=0))
+        if(declaredFlux.HasValue && (!FrameworkCompatibility.IsFinite(declaredFlux.Value)||declaredFlux.Value<=0))
             throw new ArgumentException("Declared source flux must be finite and positive.");
         if(configuredSources is {Count:>128} ||
            configuredSources?.Any(x=>x.ObjectNumber<1 ||
-               !double.IsFinite(x.ConfiguredPower) || x.ConfiguredPower<0 ||
+               !FrameworkCompatibility.IsFinite(x.ConfiguredPower) || x.ConfiguredPower<0 ||
                x.AnalysisRayCount<0 || x.WaveNumber<0)==true ||
            configuredSources?.Select(x=>x.ObjectNumber).Distinct().Count()!=configuredSources?.Count)
             throw new ArgumentException("Native configured sources must be unique and finite (up to 128).");
@@ -54,13 +54,13 @@ public static class NscSameTraceLedger
         if(configuredSources != null)
         {
             configuredTotal=configuredSources.Sum(x=>x.ConfiguredPower);
-            if(!double.IsFinite(configuredTotal.Value))
+            if(!FrameworkCompatibility.IsFinite(configuredTotal.Value))
                 throw new InvalidDataException("Configured source power sum overflowed.");
         }
         var rows=detectorReadings.Select(x=>
             new DetectorReading(x.Id,x.Type,x.Flux,x.Hits,
                 declaredFlux is null ? null : x.Flux/declaredFlux.Value)).ToArray();
-        if(rows.Any(x=>x.FractionOfDeclaredSource is double f && !double.IsFinite(f)))
+        if(rows.Any(x=>x.FractionOfDeclaredSource is double f && !FrameworkCompatibility.IsFinite(f)))
             throw new InvalidDataException("Source-normalized detector ratio overflowed.");
         return new Report("post-trace native NSC detector GetDetectorData(0/−3)",
             declaredFlux is null ? "none; no total source power measured" :

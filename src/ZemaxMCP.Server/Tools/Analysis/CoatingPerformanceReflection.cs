@@ -14,9 +14,9 @@ public static class CoatingPerformanceReflection
     internal static Coefficients Read(object row,Type rowInterface,
         double incidenceAngleDegrees,double wavelengthMicrometers,string direction)
     {
-        if(row==null || rowInterface==null || !double.IsFinite(incidenceAngleDegrees) ||
+        if(row==null || rowInterface==null || !FrameworkCompatibility.IsFinite(incidenceAngleDegrees) ||
             incidenceAngleDegrees<0 || incidenceAngleDegrees>89.9 ||
-            !double.IsFinite(wavelengthMicrometers) || wavelengthMicrometers<=0 ||
+            !FrameworkCompatibility.IsFinite(wavelengthMicrometers) || wavelengthMicrometers<=0 ||
             direction is not ("inward" or "outward"))
             throw new ArgumentException("Expected a valid LDE row, 0..89.9 degree AOI, positive wavelength in micrometers and inward/outward direction.");
         var dataGetter=rowInterface.GetMethod("GetCoatingPerformanceData",Type.EmptyTypes)
@@ -45,9 +45,9 @@ public static class CoatingPerformanceReflection
             var pp=parameterType.GetProperty("P")?.GetValue(result);
             if(ps==null||pp==null)
                 throw new NotSupportedException("Native coating "+name+" S/P data are unavailable.");
-            var ss=Convert.ToDouble(ps,System.Globalization.CultureInfo.InvariantCulture);
-            var sp=Convert.ToDouble(pp,System.Globalization.CultureInfo.InvariantCulture);
-            if(!double.IsFinite(ss)||!double.IsFinite(sp))
+            var ss=Convert.ToDouble(ps,global::System.Globalization.CultureInfo.InvariantCulture);
+            var sp=Convert.ToDouble(pp,global::System.Globalization.CultureInfo.InvariantCulture);
+            if(!FrameworkCompatibility.IsFinite(ss)||!FrameworkCompatibility.IsFinite(sp))
                 throw new InvalidDataException("Native coating "+name+" has non-finite S/P intensities.");
             return new Polarized(ss,sp,(ss+sp)*0.5);
         }
@@ -57,7 +57,7 @@ public static class CoatingPerformanceReflection
         var residualS=1-r.S-t.S-a.S;
         var residualP=1-r.P-t.P-a.P;
         var passive=new[]{r.S,r.P,t.S,t.P,a.S,a.P}.All(value=>value>=0&&value<=1);
-        if(!double.IsFinite(residualS)||!double.IsFinite(residualP))
+        if(!FrameworkCompatibility.IsFinite(residualS)||!FrameworkCompatibility.IsFinite(residualP))
             throw new InvalidDataException("Coating S/P R+T+A arithmetic overflow.");
         return new Coefficients(r,t,a,residualS,residualP,passive);
     }

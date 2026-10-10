@@ -23,7 +23,7 @@ public static class CadMultiSegmentAudit
            rayPaths is null || rayPaths.Count>2601 ||
            stops.Any(s=>s.AfterSurface<firstSurface ||
                         s.AfterSurface>=firstSurface+24 ||
-                        !double.IsFinite(s.PlaneTolerance) ||
+                        !FrameworkCompatibility.IsFinite(s.PlaneTolerance) ||
                         s.PlaneTolerance<=0))
             throw new ArgumentException("CAD path expects <=12 bounded stops, <=2601 pupil rays and consecutive LDE surfaces.");
         var chords=rayPaths.Count==0 ? stops.Max(s=>s.AfterSurface)-firstSurface+1 :
@@ -60,7 +60,7 @@ public static class CadMultiSegmentAudit
                     var length=Math.Sqrt(segment.Start.X*segment.Start.X+
                         segment.Start.Y*segment.Start.Y+
                         segment.Start.Z*segment.Start.Z);
-                    if(!double.IsFinite(distance)||!double.IsFinite(length) ||
+                    if(!FrameworkCompatibility.IsFinite(distance)||!FrameworkCompatibility.IsFinite(length) ||
                        distance>1e-6*Math.Max(1,length))
                     {uncertain=true;discontinuous++;break;}
                 }
@@ -82,7 +82,7 @@ public static class CadMultiSegmentAudit
                         var dy=segment.End.Y-segment.Start.Y;
                         var dz=segment.End.Z-segment.Start.Z;
                         var sq=dx*dx+dy*dy+dz*dz;
-                        if(!double.IsFinite(sq)||sq<=0)
+                        if(!FrameworkCompatibility.IsFinite(sq)||sq<=0)
                             throw new InvalidDataException("Invalid ray segment length.");
                         var position=((hit.X-segment.Start.X)*dx+
                             (hit.Y-segment.Start.Y)*dy+
