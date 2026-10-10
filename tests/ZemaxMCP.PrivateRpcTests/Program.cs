@@ -331,7 +331,7 @@ internal static class Program
         var alice = monitor.GetDelta("token:scoped:alice",true,null,17,false,true,
             jobs,otherOwnerTasks,id=>id=="job-alice");
         var encoded = JsonSerializer.Serialize(alice);
-        Assert(alice.Changed && alice.Snapshot?.Jobs.Count==1 &&
+        Assert(alice.Changed && alice.Snapshot?.OwnerScoped==true && alice.Snapshot.Jobs.Count==1 &&
                encoded.Contains("alice-private",StringComparison.Ordinal) &&
                !encoded.Contains("job-bob",StringComparison.Ordinal) &&
                !encoded.Contains("bob-private",StringComparison.Ordinal),
@@ -359,7 +359,7 @@ internal static class Program
             "Worker restart must invalidate stale generation-bound cursors.");
         var anon = monitor.GetDelta("",false,null,17,false,true,jobs,
             otherOwnerTasks,_=>true);
-        Assert(anon.Snapshot?.Jobs.Count==2 && anon.Snapshot.Tasks.Count==0,
+        Assert(anon.Snapshot?.OwnerScoped==false && anon.Snapshot.Jobs.Count==2 && anon.Snapshot.Tasks.Count==0,
             "Shared/local Job state must not expose official Task IDs.");
         AssertThrows<InvalidOperationException>(()=>monitor.GetDelta("",true,null,17,false,true,
             jobs,Array.Empty<object>(),_=>false),"A scoped missing identity was not denied.");

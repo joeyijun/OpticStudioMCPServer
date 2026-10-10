@@ -228,7 +228,7 @@ as owned by that authenticated credential **and that Worker generation**.
 Shared/local mode can see Job diagnostics but never receives Official Task IDs.
 
 The response is `{cursor, changed, snapshot}`. A changed response includes
-`snapshot.workerGeneration`, `workerBusy`, `statusAvailable`,
+`snapshot.workerGeneration`, `ownerScoped`, `workerBusy`, `statusAvailable`,
 `jobs` (Job ID, tool name, state, fractional progress, queue and message)
 and `tasks` (safe owner-specific Task metadata). An unchanged response has
 `snapshot: null`, preventing redundant Job/Task data transfer.

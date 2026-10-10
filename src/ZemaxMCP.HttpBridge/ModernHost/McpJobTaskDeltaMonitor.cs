@@ -18,7 +18,7 @@ internal sealed class McpJobTaskDeltaMonitor
     internal sealed record JobView(string JobId, string ToolName, string State,
         double? Fraction, int QueuePosition, string? Message, double? ElapsedSeconds);
 
-    internal sealed record Snapshot(long WorkerGeneration, bool WorkerBusy, bool StatusAvailable,
+    internal sealed record Snapshot(long WorkerGeneration, bool OwnerScoped, bool WorkerBusy, bool StatusAvailable,
         IReadOnlyList<JobView> Jobs, IReadOnlyList<object> Tasks);
 
     internal sealed record Delta(string Cursor, bool Changed, Snapshot? Snapshot);
@@ -74,7 +74,7 @@ internal sealed class McpJobTaskDeltaMonitor
         // Shared/local diagnostics never expose someone else's official Task
         // IDs. Only scoped bearer credentials have owner-scoped Task metadata.
         var tasks = scoped ? ownerTasks.Take(25).ToArray() : Array.Empty<object>();
-        var snapshot = new Snapshot(generation, busy, statusAvailable, jobs, tasks);
+        var snapshot = new Snapshot(generation, scoped, busy, statusAvailable, jobs, tasks);
 
         // A random process-local HMAC key prevents offline probing of a tiny
         // state space such as "queued"/"completed". Scoped cursors are unique

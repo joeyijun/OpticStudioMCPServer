@@ -487,7 +487,7 @@ public partial class MainWindow : Window
             var presentationHealth=new JObject {
                 ["tasks"]=snapshot["tasks"]?.DeepClone() ?? new JArray(),
                 ["worker"]=worker,
-                ["clientIsolation"]=string.IsNullOrWhiteSpace(token) ? "local" : "scoped-or-shared"
+                ["clientIsolation"]=snapshot["ownerScoped"]?.Value<bool>()==true ? "scoped" : "shared/local"
             };
             RefreshTaskCenter(snapshot["jobs"] as JArray,presentationHealth);
         }
