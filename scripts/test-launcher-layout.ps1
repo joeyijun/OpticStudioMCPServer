@@ -63,6 +63,15 @@ try {
  if ($owner.FindName('TasksPageDetailsSection').IsExpanded) { throw 'Raw task details must be collapsed initially.' }
  if ($owner.FindName('TasksPageProgress').IsIndeterminate) { throw 'Idle tasks must not display animated progress.' }
  if ($owner.FindName('TasksPageCancel').IsEnabled) { throw 'Idle task cancellation must be disabled.' }
+ $taskPage = $taskScroll.Content
+ $taskGrid = @($taskPage.Children | Where-Object { $_ -is [System.Windows.Controls.Grid] }) | Select-Object -First 1
+ if ($null -eq $taskGrid -or $taskGrid.ColumnDefinitions.Count -ne 3) {
+   throw 'Tasks must use a side-by-side activity list and selected-task details.'
+ }
+ if ($null -eq $owner.FindName('TasksPageSearch')) {
+   throw 'Tasks text search is missing.'
+ }
+
  $owner.FindName('TasksPageTitle').Text = 'NSC Ray Trace'
  $owner.FindName('TasksPageState').Text = 'Running'
  $owner.FindName('TasksPageMetadata').Text = 'Job demo-42 | client-a@1.0 | elapsed 35s'
@@ -82,7 +91,7 @@ try {
  Render $owner 'tasks-running.png'
  $owner.Width = 860; $owner.Height = 620
  Render $owner 'tasks-compact.png'
- foreach ($name in @('TasksPageCancel','TasksPageViewResult','TasksPageFilter')) {
+ foreach ($name in @('TasksPageCancel','TasksPageViewResult','TasksPageFilter','TasksPageSearch')) {
   $control = $owner.FindName($name)
   if ($control.ActualWidth -lt 60 -or $control.ActualHeight -lt 30) { throw "Task control clipped: $name" }
  }
