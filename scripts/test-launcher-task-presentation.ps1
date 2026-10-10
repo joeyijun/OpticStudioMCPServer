@@ -47,6 +47,29 @@ if ($items.Count -ne 5 -or !$items[4].IsOfficialTask -or $items[4].WorkerGenerat
     throw 'Restored Task from a different Worker generation must not absorb a current Job of the same ID.'
 }
 $health['tasks'][0]['generation'] = [Newtonsoft.Json.Linq.JValue]::new([long]3)
+# Exercise the WPF-free Task Center view-model, not only the projection.
+$vmType = $assembly.GetType('ZemaxMCP.Launcher.TaskCenterViewModel')
+if ($null -eq $vmType) { throw 'Task Center ViewModel module is missing.' }
+$instance = [Activator]::CreateInstance($vmType, $true)
+$instanceFlags = [Reflection.BindingFlags]'Instance,NonPublic'
+$update = $vmType.GetMethod('Update', $instanceFlags)
+$visible = $vmType.GetMethod('Visible', $instanceFlags)
+$select = $vmType.GetMethod('Select', [Reflection.BindingFlags]'Static,NonPublic')
+$detail = $vmType.GetMethod('Detail', [Reflection.BindingFlags]'Static,NonPublic')
+$updateArgs = New-Object object[] 2
+$updateArgs[0]=$jobs; $updateArgs[1]=$health
+$update.Invoke($instance,$updateArgs)
+$filterArgs = New-Object object[] 2
+$filterArgs[0]='Running'; $filterArgs[1]='zemax_pop'
+$filtered=$visible.Invoke($instance,$filterArgs)
+if ($filtered.Count -ne 2 -or $filtered[0].ToolName -ne 'zemax_pop' -or
+    $filtered[1].TaskId -ne 'task-1') {
+    throw 'Task Center ViewModel running/search filtering changed during WPF split.'
+}
+$selected = $select.Invoke($null, @($filtered, [string]'task:task-1'))
+if ($selected.TaskId -ne 'task-1' -or $detail.Invoke($null, @($selected)) -notmatch 'Worker generation') {
+    throw 'Task Center ViewModel did not preserve selection/detail diagnostic context.'
+}
 $xaml = [IO.File]::ReadAllText((Join-Path $root 'src\ZemaxMCP.Launcher\MainWindow.xaml'))
 if ($xaml -notmatch 'Title="Zemax MCP"') { throw 'Window title must match the product name.' }
 $diagnosticsType = $assembly.GetType('ZemaxMCP.Launcher.McpDiagnosticsClient')

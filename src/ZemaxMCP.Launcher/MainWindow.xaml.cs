@@ -492,16 +492,13 @@ public partial class MainWindow : Window
         finally { _refreshingJobsDelta=false; }
     }
 
-    private List<BackgroundJobView> _taskHistory = new List<BackgroundJobView>();
+    private readonly TaskCenterViewModel _taskCenter=new TaskCenterViewModel();
 
     private void RefreshTaskCenter(JArray? jobs, JObject? health = null)
     {
-        _taskHistory = BuildTaskHistory(jobs, health);
+        _taskCenter.Update(jobs, health);
         RefreshTasksPage();
-        var active = _taskHistory.Count(item => item.IsActive);
-        TaskCenterSummary.Text = _taskHistory.Count == 0
-            ? "No background tasks reported."
-            : active + " active · " + (_taskHistory.Count - active) + " recent";
+        TaskCenterSummary.Text = _taskCenter.Summary;
     }
 
     // Preserve existing reflection smoke tests while the presentation logic
@@ -537,31 +534,16 @@ public partial class MainWindow : Window
 
     private void RefreshTasksPage()
     {
-        if (TasksPageJobs == null) return;
-        var selected = (TasksPageJobs.SelectedItem as BackgroundJobView)?.SelectionKey;
-        var state = (TasksPageFilter?.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() ?? "All";
-        var search = TasksPageSearch?.Text?.Trim() ?? "";
-        var visible = _taskHistory.Where(item =>
-            (state == "All" ||
-             (state == "Running" && (item.State.Equals("Working", StringComparison.OrdinalIgnoreCase) ||
-                 item.State.Equals("Cancelling", StringComparison.OrdinalIgnoreCase))) ||
-             string.Equals(item.State, state, StringComparison.OrdinalIgnoreCase)) &&
-            (search.Length == 0 ||
-             item.ToolName.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0 ||
-             item.JobId.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0 ||
-             item.TaskId.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0 ||
-             item.State.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0))
-            .OrderByDescending(item => item.IsActive)
-            .ToList();
-        TasksPageJobs.ItemsSource = visible;
-        TasksPageJobs.SelectedItem = visible.FirstOrDefault(item => item.SelectionKey == selected) ??
-            visible.FirstOrDefault(item => item.IsActive) ?? visible.FirstOrDefault();
-        var active = _taskHistory.Count(item => item.IsActive);
-        TasksPageSummary.Text = _taskHistory.Count == 0 ? "Background activity from your AI clients." :
-            active + " active · " + (_taskHistory.Count - active) + " recent";
-        TasksPageEmpty.Visibility = visible.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        TasksPageEmpty.Text = _taskHistory.Count == 0 ?
-            "No recent tasks. Start a background operation from your AI client." : "No tasks match these filters or search terms.";
+        if(TasksPageJobs==null)return;
+        var selected=(TasksPageJobs.SelectedItem as BackgroundJobView)?.SelectionKey;
+        var state=(TasksPageFilter?.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() ?? "All";
+        var search=TasksPageSearch?.Text ?? "";
+        var visible=_taskCenter.Visible(state,search);
+        TasksPageJobs.ItemsSource=visible;
+        TasksPageJobs.SelectedItem=TaskCenterViewModel.Select(visible,selected);
+        TasksPageSummary.Text=_taskCenter.PageSummary;
+        TasksPageEmpty.Visibility=visible.Count==0?Visibility.Visible:Visibility.Collapsed;
+        TasksPageEmpty.Text=_taskCenter.EmptyMessage(visible.Count);
     }
 
     private void TasksPageFilter_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -574,36 +556,20 @@ public partial class MainWindow : Window
         if (TasksPageJobs != null) RefreshTasksPage();
     }
 
-    private void TasksPageJobs_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    private void TasksPageJobs_Changed(object sender,System.Windows.Controls.SelectionChangedEventArgs e)
     {
-        if (TasksPageDetail == null || TasksPageCancel == null || TasksPageViewResult == null) return;
-        var selected = TasksPageJobs?.SelectedItem as BackgroundJobView;
-        TasksPageCancel.IsEnabled = selected?.IsActive == true;
-        TasksPageViewResult.IsEnabled = selected != null;
-        TasksPageTitle.Text = selected?.ToolName ?? "No task selected";
-        TasksPageState.Text = selected?.State ?? "Idle";
-        TasksPageMetadata.Text = selected == null ? "Tasks appear here when an AI starts a background operation." :
-            (selected.IsOfficialTask ? "Task " + selected.TaskId : "Job " + selected.JobId) +
-            " · " + selected.Owner + " · elapsed " + selected.Elapsed;
-        TasksPageProgress.IsIndeterminate = selected?.IsProgressIndeterminate == true;
-        TasksPageProgress.Value = (selected?.ProgressFraction ?? 0) * 100;
-        TasksPageProgressHint.Text = selected?.ProgressHint ?? "No numeric progress reported.";
-        TasksPageMessage.Text = selected == null ? "" :
-            selected.Message + (selected.RecommendedAction.Length == 0 ? "" :
-                "\nSuggested action: " + selected.RecommendedAction);
-        TasksPageDetail.Text = selected == null ? "Select a Job to inspect its details." :
-            (selected.IsOfficialTask ? "Task ID: " + selected.TaskId + "\nLinked Job: " + selected.JobId :
-                "Job ID: " + selected.JobId) + "\nTool: " + selected.ToolName +
-            "\nState: " + selected.State +
-            "\nWorker generation: " + selected.WorkerGeneration +
-            "\nOwner visibility: " + selected.Owner +
-            "\nElapsed: " + selected.Elapsed +
-            "\nProgress: " + (string.IsNullOrWhiteSpace(selected.Progress) ? "Not reported" : selected.Progress) +
-            "\nQueue: " + (string.IsNullOrWhiteSpace(selected.Queue) ? "Not queued" : selected.Queue) +
-            "\nWorker message / failure reason: " + selected.Message +
-            (selected.RecommendedAction.Length == 0 ? "" : "\nSuggested action: " + selected.RecommendedAction) +
-            "\n\n'View result' calls Tasks/get for owned official Tasks or job_status for Worker Jobs. "+
-            "A completed Job may have expired its result; official Tasks require their separate Task ID.";
+        if(TasksPageDetail==null || TasksPageCancel==null || TasksPageViewResult==null)return;
+        var selected=TasksPageJobs?.SelectedItem as BackgroundJobView;
+        TasksPageCancel.IsEnabled=selected?.IsActive==true;
+        TasksPageViewResult.IsEnabled=selected!=null;
+        TasksPageTitle.Text=selected?.ToolName??"No task selected";
+        TasksPageState.Text=selected?.State??"Idle";
+        TasksPageMetadata.Text=TaskCenterViewModel.Metadata(selected);
+        TasksPageProgress.IsIndeterminate=selected?.IsProgressIndeterminate==true;
+        TasksPageProgress.Value=(selected?.ProgressFraction??0)*100;
+        TasksPageProgressHint.Text=selected?.ProgressHint??"No numeric progress reported.";
+        TasksPageMessage.Text=TaskCenterViewModel.Message(selected);
+        TasksPageDetail.Text=TaskCenterViewModel.Detail(selected);
     }
 
     private async void TasksPageCancel_Click(object sender, RoutedEventArgs e)

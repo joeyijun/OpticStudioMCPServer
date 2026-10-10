@@ -51,7 +51,7 @@ The Host may start and answer `tools/list` without starting the Worker. The Work
 
 ### Desktop/package
 
-- `src/ZemaxMCP.Launcher` owns end-user setup, configuration, status and service lifecycle. The WPF `MainWindow` owns visible UI state and service-start/stop interactions; `ClientConfigurator` owns per-client config-file formats and detection; `McpDiagnosticsClient` owns HTTP MCP health/protocol smoke probes; `JobActionClient` owns authenticated Job status/cancellation RPC; `TaskPresentation` owns UI-independent Task/Job projections; and `ScopedDeltaCursor` owns credential-bound polling cursors. These are incremental separations, **not yet a complete WPF MVVM conversion**.
+- `src/ZemaxMCP.Launcher` owns end-user setup, configuration, status and service lifecycle. The WPF `MainWindow` owns visible UI state and service-start/stop interactions; `ClientConfigurator` owns per-client config-file formats and detection; `McpDiagnosticsClient` owns HTTP MCP health/protocol smoke probes; `JobActionClient` owns authenticated Job status/cancellation RPC; `TaskPresentation` owns UI-independent Task/Job projections; `TaskCenterViewModel` owns Task Center history, filter/selection and detail rendering inputs without any WPF controls; and `ScopedDeltaCursor` owns credential-bound polling cursors. These are incremental separations, **not yet a complete WPF MVVM conversion**.
 - `src/ZemaxMCP.ClientProxy` adapts stdio-only clients to the public HTTP MCP endpoint and emits a per-process client instance identity.
 - `src/ZemaxMCP.Installer` owns first-install UI and delegates upgrades to `src/ZemaxMCP.Updater`; portable upgrades use the same updater replacement/rollback path when an installed copy exists.
 
