@@ -324,7 +324,16 @@ internal static class Program
         var remaining = monitor.GetHealth();
         if (remaining.ActiveRequests != 1 || remaining.ActiveOperations[0].Tool != "zemax_get_system")
             throw new InvalidOperationException("Completed MCP activity was not removed independently.");
+        var oldCursor = monitor.GetDelta("client:codex@1.0|remote:192.168.8.20", null, true).Cursor;
+        using (monitor.Begin("client:third@1.0", "zemax_status")) { }
+        var untouched = monitor.GetDelta("client:codex@1.0|remote:192.168.8.20", oldCursor, true);
+        if (untouched.Changed || untouched.Activity != null)
+            throw new InvalidOperationException("Scoped cursor reveals changes to a foreign client.");
         first.Dispose();
+        var changed = monitor.GetDelta("client:codex@1.0|remote:192.168.8.20", oldCursor, true);
+        if (!changed.Changed || changed.Activity?.ActiveRequests != 0 ||
+            changed.Cursor == oldCursor)
+            throw new InvalidOperationException("Own activity completion was not surfaced by the delta cursor.");
         var completed = monitor.GetHealth();
         if (completed.ActiveRequests != 0 || completed.LastClient != "client:codex@1.0|remote:192.168.8.20" ||
             completed.LastTool != "zemax_get_system" || completed.LastRequestAt == null)

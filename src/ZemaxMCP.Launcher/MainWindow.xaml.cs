@@ -29,6 +29,8 @@ public partial class MainWindow : Window
     private bool _refreshingActivity;
     private bool _healthReachable;
     private bool _activityEndpointSupported = true;
+    private bool _activityDeltaSupported = true;
+    private string _activityCursor = "";
     private DateTimeOffset _activityEndpointRetryAfter;
     private string _observedActivityEndpoint = "";
     private bool _windowLoaded;
@@ -358,13 +360,32 @@ public partial class MainWindow : Window
         {
             _observedActivityEndpoint = endpoint;
             _activityEndpointSupported = true;
+            _activityDeltaSupported = true;
+            _activityCursor = "";
         }
         if (!_activityEndpointSupported && DateTimeOffset.UtcNow < _activityEndpointRetryAfter) return;
         _refreshingActivity = true;
         var accessToken = McpToken;
         try
         {
-            var activity = await Task.Run(() => GetEndpointJson(endpoint, accessToken, "/activity", 2000));
+            JObject activity;
+            if (_activityDeltaSupported)
+            {
+                try
+                {
+                    var delta = await Task.Run(() => GetEndpointJson(endpoint, accessToken,
+                        "/activity-delta?cursor=" + Uri.EscapeDataString(_activityCursor), 2000));
+                    _activityCursor = delta["cursor"]?.ToString() ?? "";
+                    if (delta["changed"]?.Value<bool>() != true) return;
+                    activity = delta["activity"] as JObject ?? new JObject();
+                }
+                catch (WebException ex) when ((ex.Response as HttpWebResponse)?.StatusCode == HttpStatusCode.NotFound)
+                {
+                    _activityDeltaSupported = false;
+                    activity = await Task.Run(() => GetEndpointJson(endpoint, accessToken, "/activity", 2000));
+                }
+            }
+            else activity = await Task.Run(() => GetEndpointJson(endpoint, accessToken, "/activity", 2000));
             _activityEndpointSupported = true;
             if (_healthReachable && string.Equals(endpoint, McpUrl, StringComparison.OrdinalIgnoreCase))
                 RefreshClientDashboard(activity, refreshSetup: false);

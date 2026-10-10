@@ -8,6 +8,11 @@ internal sealed class McpActivityMonitor
     private DateTimeOffset? _lastRequestAt;
     private readonly Dictionary<long, McpActiveOperation> _activeOperations = new();
     private long _nextOperationId;
+    private long _eventSequence;
+    private readonly string _epoch = Guid.NewGuid().ToString("N");
+    // Only the latest sequence for up to 256 owners is retained. Events are
+    // not persisted, and cursors do not encode other clients' activity counts.
+    private readonly Dictionary<string, long> _ownerEvents = new(StringComparer.Ordinal);
 
     public IDisposable Begin(string client, string tool)
     {
@@ -15,12 +20,47 @@ internal sealed class McpActivityMonitor
         lock (_sync)
         {
             operationId = ++_nextOperationId;
+            TouchOwnerLocked(client);
             _lastClient = client;
             _lastTool = tool;
             _lastRequestAt = DateTimeOffset.UtcNow;
             _activeOperations.Add(operationId, new McpActiveOperation(client, tool, _lastRequestAt.Value));
         }
         return new Releaser(this, operationId);
+    }
+
+    private void TouchOwnerLocked(string client)
+    {
+        if (_ownerEvents.Count >= 256 && !_ownerEvents.ContainsKey(client))
+        {
+            var evict = _ownerEvents.OrderBy(x => x.Value)
+                .FirstOrDefault(x => !_activeOperations.Values.Any(a => a.Client == x.Key));
+            if (evict.Key != null) _ownerEvents.Remove(evict.Key);
+            else _ownerEvents.Remove(_ownerEvents.OrderBy(x => x.Value).First().Key);
+        }
+        _ownerEvents[client] = ++_eventSequence;
+    }
+
+    // Diff cursors are opaque (not numeric sequence IDs). A scoped client
+    // cannot infer that another client's operations happened between polls.
+    private string CursorLocked(string owner, bool scoped)
+    {
+        var sequence = scoped ? _ownerEvents.GetValueOrDefault(owner) : _eventSequence;
+        var bytes = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(_epoch + ":" + (scoped ? owner : "*") + ":" + sequence));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
+    public McpActivityDelta GetDelta(string owner, string? previousCursor, bool scoped)
+    {
+        lock (_sync)
+        {
+            var cursor = CursorLocked(owner, scoped);
+            var changed = !string.Equals(cursor, previousCursor, StringComparison.Ordinal);
+            var snapshot = !changed ? null : scoped
+                ? GetForClient(owner) : GetHealth();
+            return new McpActivityDelta(cursor, changed, snapshot);
+        }
     }
 
     public McpActivitySnapshot GetHealth()
@@ -53,6 +93,7 @@ internal sealed class McpActivityMonitor
         {
             if (_activeOperations.Remove(operationId, out var operation))
             {
+                TouchOwnerLocked(operation.Client);
                 _lastClient = operation.Client;
                 _lastTool = operation.Tool;
                 _lastRequestAt = DateTimeOffset.UtcNow;
@@ -81,3 +122,5 @@ internal sealed record McpActivitySnapshot(string LastClient, string? LastTool, 
     public int ActiveRequests => ActiveOperations.Count;
     public DateTimeOffset? ActiveSince => ActiveOperations.Count == 0 ? null : ActiveOperations[0].StartedAt;
 }
+
+internal sealed record McpActivityDelta(string Cursor, bool Changed, McpActivitySnapshot? Activity);

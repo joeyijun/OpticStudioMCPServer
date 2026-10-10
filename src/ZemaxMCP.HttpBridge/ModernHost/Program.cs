@@ -347,6 +347,18 @@ internal static class Program
                         ? "token:" + profile : ""));
             });
 
+            // Owner-specific opaque activity cursor. Matching cursors avoid
+            // transmitting unchanged activity JSON on high-frequency polls.
+            app.MapGet(options.McpPath + "/activity-delta", (HttpContext httpContext, string? cursor) =>
+            {
+                var profile = httpContext.User.FindFirst("zemax-mcp-auth-profile")?.Value;
+                var scoped = credentialStore != null;
+                var owner = scoped && profile != null &&
+                    profile.StartsWith("scoped:", StringComparison.Ordinal)
+                    ? "token:" + profile : "";
+                return Results.Json(activity.GetDelta(owner, cursor, scoped));
+            });
+
             app.MapGet(options.McpPath + "/health", async (HttpContext httpContext, CancellationToken cancellationToken) =>
             {
                 // A long STA operation or background Job must never make
