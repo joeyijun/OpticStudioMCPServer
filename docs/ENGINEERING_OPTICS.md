@@ -217,6 +217,32 @@ silently classified as unchanged, added or removed. This comparison does NOT
 establish which design is optically better: confirm any changes with PSF/MTF,
 real ray footprints, throughput, source/detector flux or tolerance analysis.
 
+### Job/Task incremental diagnostics (Host and Launcher)
+
+`GET /mcp/jobs-delta?cursor=<previous opaque cursor>` is a
+**non-COM-blocking** status endpoint that reads the Host's already validated
+Worker status cache, buffered Worker progress events and (for scoped clients
+only) the metadata-only Task ledger. Authentication is identical to
+`/mcp/health`. In scoped-credential mode it returns only Job IDs recorded
+as owned by that authenticated credential **and that Worker generation**.
+Shared/local mode can see Job diagnostics but never receives Official Task IDs.
+
+The response is `{cursor, changed, snapshot}`. A changed response includes
+`snapshot.workerGeneration`, `workerBusy`, `statusAvailable`,
+`jobs` (Job ID, tool name, state, fractional progress, queue and message)
+and `tasks` (safe owner-specific Task metadata). An unchanged response has
+`snapshot: null`, preventing redundant Job/Task data transfer.
+Cursors are process-local, HMAC-protected, owner-specific and reset across
+Host/Worker generations; neither cross-client event counts nor raw optical
+tool results are embedded. An active COM operation does not stall this
+endpoint because no Worker status RPC is issued.
+
+The Launcher tries this endpoint at one-second cadence and falls back
+to its existing five-second `/health` polling on older Hosts (HTTP 404).
+The delta is a cached/progress observation, **not** proof that hardware
+execution progressed, that a cancellation completed, or that the underlying
+OpticStudio model is numerically correct.
+
 ## Launcher monitoring and smoke checks
 
 The Launcher separates **Overview**, **Tasks**, **Settings**, and **Diagnostics**.
