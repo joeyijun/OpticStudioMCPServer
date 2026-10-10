@@ -337,7 +337,8 @@ internal static class Program
                 // hang behind COM and interfere with hard-recovery timers.
                 // Use the last contract-validated status from THIS generation;
                 // advertise staleness rather than misrepresenting it as live.
-                var workerBusy = worker.HasForegroundTool || controlLease.HasActiveBackgroundJobs;
+                var foregroundRpcBusy = worker.HasForegroundTool;
+                var workerBusy = foregroundRpcBusy || controlLease.HasActiveBackgroundJobs;
                 var statusFresh = false;
                 WorkerStatus? status = null;
                 if (workerBusy)
@@ -383,6 +384,7 @@ internal static class Program
                         hostVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown",
                         mcpServerRunning = worker.CurrentGeneration != 0,
                         workerBusy,
+                        foregroundRpcBusy,
                         statusFresh,
                         lastKnownStatus = status != null,
                         zosApiLoaded = status?.ZosApiLoaded ?? false,
@@ -409,6 +411,7 @@ internal static class Program
                     bridgeRunning = true,
                     mcpServerRunning = worker.CurrentGeneration != 0,
                         workerBusy,
+                        foregroundRpcBusy,
                         statusFresh,
                         lastKnownStatus = status != null,
                     hostVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown",
