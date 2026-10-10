@@ -13,7 +13,7 @@ public static class GlobalPlanarMechanicalBoundary
         double? OutsideFractionOfPlaneMatched, double MaximumPlaneDeviation,
         double PlaneTolerance, string CoordinateFrame, string Interpretation);
 
-    private sealed record Basis(double[] Origin, double[] AxisU,
+    internal sealed record Basis(double[] Origin, double[] AxisU,
         double[] AxisV, double[] Normal, double[][] Vertices2D);
 
     private static double Dot(double[] a,double[] b) =>
@@ -31,7 +31,7 @@ public static class GlobalPlanarMechanicalBoundary
         return v.Select(value=>value/length).ToArray();
     }
 
-    private static Basis Build(double[][] vertices,double tolerance)
+    internal static Basis Build(double[][] vertices,double tolerance)
     {
         if(!double.IsFinite(tolerance) || tolerance<=0 || tolerance>1e6 ||
             vertices is not {Length:>=3 and <=64} ||
