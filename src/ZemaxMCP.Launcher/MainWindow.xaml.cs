@@ -655,6 +655,13 @@ public partial class MainWindow : Window
         };
     }
 
+    private sealed class JobToolErrorException : InvalidOperationException
+    {
+        public string OutcomeCode { get; }
+        public JobToolErrorException(string code, string message)
+            : base("Job request [" + code + "]: " + message) => OutcomeCode = code;
+    }
+
     private static string RequestJobTool(string endpoint, string accessToken, string jobId, string toolName)
     {
         // Always route through ordinary MCP tools/call so scoped ownership and
@@ -701,7 +708,25 @@ public partial class MainWindow : Window
         }
         var rpc = JObject.Parse(raw);
         if (rpc["error"] != null || rpc["result"]?["isError"]?.Value<bool>() == true)
-            throw new InvalidOperationException("MCP rejected the request (not owner, stale generation, or cancellation error).");
+        {
+            // New Hosts provide a machine-readable failure envelope. Legacy
+            // Hosts still report plain errors; show their text without
+            // conflating "not found", "expired" and "conflict".
+            var errorText = rpc["result"]?["content"]?.FirstOrDefault()?["text"]?.ToString();
+            if (!string.IsNullOrWhiteSpace(errorText))
+            {
+                try
+                {
+                    var error = JObject.Parse(errorText);
+                    var code = error["code"]?.ToString() ?? "domain_error";
+                    var explanation = error["message"]?.ToString() ?? "Request rejected.";
+                    throw new JobToolErrorException(code, explanation);
+                }
+                catch (Newtonsoft.Json.JsonException) { }
+            }
+            throw new InvalidOperationException("MCP rejected the Job request: " +
+                (rpc["error"]?["message"]?.ToString() ?? errorText ?? "Not found, not owned, or unavailable."));
+        }
         var text = rpc["result"]?["content"]?.FirstOrDefault()?["text"]?.ToString();
         if (string.IsNullOrWhiteSpace(text) || text == "null")
             throw new InvalidOperationException("Worker returned no matching Job. It may be expired or owned by another client.");
