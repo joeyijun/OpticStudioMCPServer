@@ -32,6 +32,7 @@ internal static class Program
             VerifyDetectorCsvExport();
             VerifySameTraceLedger();
             VerifyZrdPathEnergyCore();
+            VerifyConservativeRayEnergyTree();
             VerifyModelSummaryDiff();
             VerifyModelPreflight();
             VerifyPurposePreflight();
@@ -180,6 +181,46 @@ internal static class Program
         Assert(gain.NegativeTransitionDifferenceMagnitude==1 &&
                !gain.PhysicalEnergyClosureEstablished,
             "Intensity gain was hidden or renormalized away.");
+    }
+
+    private static void VerifyConservativeRayEnergyTree()
+    {
+        var branches=new[]{
+            new ConservativeRayEnergyTree.Node("source",null,1d,CoatingAbsorbed:0.1),
+            new ConservativeRayEnergyTree.Node("transmit","source",0.6,
+                MaterialAbsorbed:0.2,DetectorAbsorbed:0.4),
+            new ConservativeRayEnergyTree.Node("reflect","source",0.3,
+                MechanicalStopped:0.1,Escaped:0.2)
+        };
+        var actual=ConservativeRayEnergyTree.Reconcile(branches);
+        Assert(actual.ArithmeticClosure && actual.NodeCount==3 &&
+               actual.SplitRayNodes==1 && actual.SourceRootCount==1 &&
+               Math.Abs(actual.Launched-1d)<1e-12 &&
+               actual.Unresolved==0 &&
+               Math.Abs(actual.CoatingAbsorbed-0.1)<1e-12 &&
+               Math.Abs(actual.MaterialAbsorbed-0.2)<1e-12 &&
+               Math.Abs(actual.MechanicalStopped-0.1)<1e-12 &&
+               Math.Abs(actual.DetectorAbsorbed-0.4)<1e-12,
+            "Explicitly deposited energy was double counted at ray branching.");
+        var incomplete=ConservativeRayEnergyTree.Reconcile(new[]{
+            new ConservativeRayEnergyTree.Node("root",null,1d,CoatingAbsorbed:0.1),
+            new ConservativeRayEnergyTree.Node("child","root",0.4)
+        });
+        Assert(!incomplete.ArithmeticClosure &&
+               Math.Abs(incomplete.Unresolved-0.5)<1e-12,
+            "Missing ray energy must remain UNKNOWN rather than invented as coating/material loss.");
+        AssertThrows<InvalidDataException>(()=>ConservativeRayEnergyTree.Reconcile(new[]{
+            new ConservativeRayEnergyTree.Node("root",null,1d,CoatingAbsorbed:0.6),
+            new ConservativeRayEnergyTree.Node("child","root",0.6)
+        }),"Ray loss plus child power exceeding parent was accepted.");
+        AssertThrows<ArgumentException>(()=>ConservativeRayEnergyTree.Reconcile(new[]{
+            new ConservativeRayEnergyTree.Node("root",null,1d),
+            new ConservativeRayEnergyTree.Node("child","missing",0.5)
+        }),"Missing source ancestry was accepted.");
+        AssertThrows<ArgumentException>(()=>ConservativeRayEnergyTree.Reconcile(new[]{
+            new ConservativeRayEnergyTree.Node("a","b",1d),
+            new ConservativeRayEnergyTree.Node("b","a",1d)
+        }),"Cyclic ray genealogy was accepted.");
     }
 
     private static void VerifySameTraceLedger()

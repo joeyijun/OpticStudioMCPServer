@@ -626,3 +626,28 @@ with different trace IDs as though they belong to one source-to-detector
 balance. The marker is a data-correlation safeguard, **not** itself
 proof of launched power, missing-ray detection or physical energy
 conservation.
+
+### Exclusive-deposit ray energy tree (arithmetic core; awaiting validated ZRD adapter)
+
+`ConservativeRayEnergyTree` is a bounded **pure calculation core**, not
+a new public trace tool. Given separately VERIFIED trace-native
+`parentId` / `rayId`, incoming branch power and exclusive
+absorbed/stopped/escaped allocations, it partitions the launched
+power into coating absorption, bulk material absorption, physical
+mechanical interception, *absorbed at a terminal detector*, escape,
+other proven loss and **unresolved** energy. The reflected/transmitted
+branches are child **incoming power**, not coating absorption;
+each ray's absorbed/deposited energy is recorded once. The core
+rejects missing ancestry, cycles, duplicated ray IDs and overcommitted
+child/deposit power, while reporting undercounted power explicitly as
+unknown. `arithmeticClosure` means the PROVIDED numbers add up,
+not that they are sourced from an actual licensed ZOS trace.
+
+This complements rather than replaces `ZrdPathEnergyCore`, which
+audits candidate segment intensity topology **without assigning**
+any physical loss category. The missing integration gate is an
+independently verified, version-correct native ZRD/per-ray-event reader
+with explicitly confirmed deposited vs incident detector power.
+Native `GetDetectorData` incident totals, per-surface R/T/A lookup
+and sampled mechanical masks CANNOT legitimately be supplied as
+terminal deposits to fake the completed source-to-detector balance.

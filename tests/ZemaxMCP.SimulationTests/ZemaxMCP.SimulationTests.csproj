@@ -22,6 +22,7 @@
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscDetectorCsvExport.cs" Link="Server\NscDetectorCsvExport.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscSameTraceLedger.cs" Link="Server\NscSameTraceLedger.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\ZrdPathEnergyCore.cs" Link="Server\ZrdPathEnergyCore.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\ConservativeRayEnergyTree.cs" Link="Server\ConservativeRayEnergyTree.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\SystemSummaryComparer.cs" Link="Server\SystemSummaryComparer.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\ModelPreflightChecks.cs" Link="Server\ModelPreflightChecks.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\ModelWorkflowValidator.cs" Link="Server\ModelWorkflowValidator.cs" />

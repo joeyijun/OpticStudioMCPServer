@@ -40,6 +40,12 @@ public static class ConservativeRayEnergyTree
             if(values.Any(x=>!double.IsFinite(x)||x<0))
                 throw new ArgumentException("Ray incoming and deposited powers must be finite and nonnegative.");
         }
+        // Check ALL parent references before walking ancestry. Otherwise a
+        // missing grandparent could throw a KeyNotFoundException instead
+        // of a controlled graph-validation diagnostic.
+        foreach(var node in nodes)
+            if(node.ParentId!=null && !byId.ContainsKey(node.ParentId))
+                throw new ArgumentException("Missing ray parent: "+node.ParentId);
         var children=new Dictionary<string,List<Node>>(StringComparer.Ordinal);
         var roots=0;
         foreach(var node in nodes)
