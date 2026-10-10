@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Hosting;
+using System.Security.Cryptography.X509Certificates;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -43,7 +45,23 @@ internal static class Program
         try
         {
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = Array.Empty<string>() });
-            builder.WebHost.UseUrls("http://" + options.Host + ":" + options.Port);
+            builder.WebHost.UseUrls(options.TransportScheme + "://" + options.Host + ":" + options.Port);
+            if (options.TlsEnabled)
+            {
+                // Never place a private-key password in CLI arguments or logs.
+                var certificate = X509CertificateLoader.LoadPkcs12FromFile(
+                    options.TlsPfxPath, Environment.GetEnvironmentVariable(options.TlsPasswordEnvironmentVariable),
+                    X509KeyStorageFlags.EphemeralKeySet);
+                if (!certificate.HasPrivateKey)
+                    throw new InvalidOperationException("TLS PFX must contain a private key.");
+                builder.WebHost.ConfigureKestrel(server =>
+                    server.ConfigureHttpsDefaults(https => https.ServerCertificate = certificate));
+            }
+            else if (options.Host is not ("127.0.0.1" or "localhost" or "::1" or "[::1]"))
+            {
+                Log.Warning("LAN HTTP transmits Bearer tokens and optical data without encryption. Prefer TLS with a trusted PKCS#12 certificate.");
+                Console.Error.WriteLine("WARNING: LAN HTTP is unencrypted. Use TLS or a trusted isolated LAN.");
+            }
             builder.WebHost.UseSetting("AllowedHosts", string.Join(";", options.AllowedHosts));
             builder.Host.UseSerilog();
             builder.Services.AddSingleton(options);
@@ -305,6 +323,8 @@ internal static class Program
                     await context.Response.WriteAsJsonAsync(new
                     {
                         bridgeRunning = true,
+                        transportSecurity = options.TlsEnabled ? "tls" : "plaintext",
+                        tlsEnabled = options.TlsEnabled,
                         authenticationMode = "scoped",
                         clientId = scopedCredential!.Id,
                         permission = scopedCredential.Permission,
@@ -398,6 +418,8 @@ internal static class Program
                     return Results.Json(new
                     {
                         bridgeRunning = true,
+                        transportSecurity = options.TlsEnabled ? "tls" : "plaintext",
+                        tlsEnabled = options.TlsEnabled,
                         authenticationMode = "scoped",
                         permission = httpContext.User.FindFirst("zemax-mcp-permission")?.Value,
                         jobDiagnostics = "authenticated-owner-only",
@@ -431,6 +453,8 @@ internal static class Program
                 return Results.Json(new
                 {
                     bridgeRunning = true,
+                    transportSecurity = options.TlsEnabled ? "tls" : "plaintext",
+                    tlsEnabled = options.TlsEnabled,
                     mcpServerRunning = worker.CurrentGeneration != 0,
                     workerBusy,
                     foregroundRpcBusy,
@@ -505,7 +529,7 @@ internal static class Program
             app.MapMcp(options.McpPath);
 
             Log.Information("Official MCP ASP.NET Core Host listening at {Endpoint}; private RPC v{RpcVersion}, manifest {ManifestFingerprint}",
-                "http://" + options.Host + ":" + options.Port + options.McpPath,
+                options.TransportScheme + "://" + options.Host + ":" + options.Port + options.McpPath,
                 ZemaxRpcProtocol.Version,
                 StaticToolManifest.ContractFingerprint);
             await app.RunAsync().ConfigureAwait(false);
