@@ -228,13 +228,13 @@ public static class ToolsetCatalog
 
     private static readonly HashSet<string> CautionTools = new HashSet<string>(StringComparer.Ordinal)
     {
-        "zemax_connect", "zemax_disconnect", "zemax_job_cancel", "zemax_multistart_stop", "zemax_open_file", "zemax_restart", "zemax_run_nsc_ray_trace", "zemax_audit_native_zrd", "zemax_run_tolerancing"
+        "zemax_connect", "zemax_disconnect", "zemax_job_cancel", "zemax_multistart_stop", "zemax_open_file", "zemax_restart", "zemax_run_nsc_ray_trace", "zemax_run_tolerancing"
     };
 
     private static readonly HashSet<string> HighImpactTools = new HashSet<string>(StringComparer.Ordinal)
     {
         "zemax_add_configuration_operand", "zemax_add_operand", "zemax_add_surface", "zemax_batch_set_surfaces", "zemax_clear_vignetting", "zemax_constrained_optimize",
-        "zemax_delete_configuration_operand", "zemax_export_analysis", "zemax_export_nsc_detector_csv", "zemax_export_glass_catalog", "zemax_forbes_merit_function", "zemax_global_search",
+        "zemax_delete_configuration_operand", "zemax_export_analysis", "zemax_audit_native_zrd", "zemax_export_nsc_detector_csv", "zemax_export_glass_catalog", "zemax_forbes_merit_function", "zemax_global_search",
         "zemax_hammer", "zemax_load_merit_function_file", "zemax_multistart_optimize", "zemax_new_system", "zemax_optimization_wizard", "zemax_optimize",
         "zemax_pop", "zemax_quick_focus", "zemax_remove_operand", "zemax_remove_surface", "zemax_snapshot_restore", "zemax_save_file", "zemax_save_merit_function_file", "zemax_scale_lens",
         "zemax_set_afocal_mode", "zemax_set_aperture", "zemax_set_apodization", "zemax_set_aspheric_surface", "zemax_set_clear_semi_diameter_margin",

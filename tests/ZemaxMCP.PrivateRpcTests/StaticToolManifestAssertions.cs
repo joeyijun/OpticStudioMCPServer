@@ -64,12 +64,12 @@ internal static class StaticToolManifestAssertions
             throw new InvalidOperationException("NSC energy budgeting must require an array of detector IDs.");
 
         var zrdAudit = StaticToolManifest.GetRequired("zemax_audit_native_zrd");
-        if (zrdAudit.DomainId != "non-sequential" || zrdAudit.Impact != "Caution" ||
+        if (zrdAudit.DomainId != "non-sequential" || zrdAudit.Impact != "HighImpact" ||
             !StaticToolManifest.IsAllowed("nonsequential-stray-light", zrdAudit.Name, false) ||
             StaticToolManifest.IsAllowed("nonsequential-stray-light", zrdAudit.Name, true) ||
             StaticToolManifest.IsAllowed("basic-viewing", zrdAudit.Name, false) ||
             !zrdAudit.InputSchema.GetProperty("properties").TryGetProperty("zrdPath",out _))
-            throw new InvalidOperationException($"Local ZRD file ingest requires explicit path and Caution permission; domain={zrdAudit.DomainId}, impact={zrdAudit.Impact}, nscEnabled={StaticToolManifest.IsAllowed("nonsequential-stray-light", zrdAudit.Name, false)}, readOnlyEnabled={StaticToolManifest.IsAllowed("nonsequential-stray-light", zrdAudit.Name, true)}, basicEnabled={StaticToolManifest.IsAllowed("basic-viewing", zrdAudit.Name, false)}, hasPath={zrdAudit.InputSchema.GetProperty("properties").TryGetProperty("zrdPath",out _)}.");
+            throw new InvalidOperationException($"Local ZRD file ingest requires explicit path and HighImpact file-access permission; domain={zrdAudit.DomainId}, impact={zrdAudit.Impact}, nscEnabled={StaticToolManifest.IsAllowed("nonsequential-stray-light", zrdAudit.Name, false)}, readOnlyEnabled={StaticToolManifest.IsAllowed("nonsequential-stray-light", zrdAudit.Name, true)}, basicEnabled={StaticToolManifest.IsAllowed("basic-viewing", zrdAudit.Name, false)}, hasPath={zrdAudit.InputSchema.GetProperty("properties").TryGetProperty("zrdPath",out _)}.");
 
         var csvExport = StaticToolManifest.GetRequired("zemax_export_nsc_detector_csv");
         var csvExportProperties = csvExport.InputSchema.GetProperty("properties");

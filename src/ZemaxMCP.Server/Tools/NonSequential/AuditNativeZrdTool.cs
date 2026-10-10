@@ -27,7 +27,7 @@ public sealed class AuditNativeZrdTool
         string Interpretation);
 
     [ZemaxTool(Name="zemax_audit_native_zrd")]
-    [Description("CAUTION: read an explicitly named LOCAL OpticStudio .ZRD ray database (sensitive user optical data), using the official native ZRD reader. Cap 1024 rays/8192 segments/128 MiB, verify file integrity and parent indexes, report only algebraic branch energy topology. It does NOT prove that the ZRD belongs to the most recent trace, derive coating/bulk absorption, or close a source-detector energy balance.")]
+    [Description("PRIVILEGED local file READ: read an explicitly named LOCAL OpticStudio .ZRD ray database (sensitive user optical data), using the official native ZRD reader. Cap 1024 rays/8192 segments/128 MiB, verify file integrity and parent indexes, report only algebraic branch energy topology. It does NOT prove that the ZRD belongs to the most recent trace, derive coating/bulk absorption, or close a source-detector energy balance.")]
     public async Task<Result> ExecuteAsync(
         [Description("Absolute .ZRD filename on the OPTICSTUDIO HOST machine, existing regular file. File data may be private.")] string zrdPath,
         [Description("Wall-clock maximum for ZRD reader, in seconds (1..120).")] double timeoutSeconds=30,

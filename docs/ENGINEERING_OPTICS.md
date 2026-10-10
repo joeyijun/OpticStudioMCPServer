@@ -567,7 +567,7 @@ native parent references before passing up to **1024 rays / 8192
 segments** into the existing `ZrdPathEnergyCore`. Inputs are bounded
 to 128 MiB; the result carries the local input SHA-256 so a copied
 analysis can be associated with a particular ray database. This is a
-**Caution** local-file-read operation, never available in the global
+**HighImpact** local-file-read operation (because optical files can be sensitive), never available in the global
 read-only profile or basic-viewing profile.
 
 Important: reading an arbitrary existing ZRD is **not** guaranteed
