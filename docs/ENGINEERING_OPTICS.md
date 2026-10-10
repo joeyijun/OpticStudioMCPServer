@@ -230,7 +230,10 @@ Shared/local mode can see Job diagnostics but never receives Official Task IDs.
 The response is `{cursor, changed, snapshot}`. A changed response includes
 `snapshot.workerGeneration`, `ownerScoped`, `workerBusy`, `statusAvailable`,
 `jobs` (Job ID, tool name, state, fractional progress, queue and message)
-and `tasks` (safe owner-specific Task metadata). An unchanged response has
+and `tasks` (safe owner-specific Task metadata). A just-registered,
+owner-authenticated Job with no Worker status yet is reported with explicit
+`state: Unknown`; its state and progress are NOT guessed. Confirm later via
+`zemax_job_status` or the next valid progress event. An unchanged response has
 `snapshot: null`, preventing redundant Job/Task data transfer.
 Cursors are process-local, HMAC-protected, owner-specific and reset across
 Host/Worker generations; neither cross-client event counts nor raw optical
