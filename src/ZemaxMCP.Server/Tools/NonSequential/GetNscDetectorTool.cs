@@ -48,7 +48,10 @@ public sealed class GetNscDetectorTool
         double? RoiPixelMean = null,
         int? RoiNonzeroPixelCount = null,
         int? RoiPeakRow = null,
-        int? RoiPeakColumn = null);
+        int? RoiPeakColumn = null,
+        NscDetectorTilePreview.Plan? NativeTilePlan = null,
+        double[][]? RoiMeanHeatmap = null,
+        string? RoiMeanHeatmapCaveat = null);
 
     [ZemaxTool(Name = "zemax_get_nsc_detector")]
     [Description("Read NSC detector dimensions, total incident flux, ray hits and optionally a bounded ROI flux/irradiance pixel matrix. Pixel values are native OpticStudio data (not automatically power-normalized). Use after tracing and verify source-power units.")]
@@ -61,10 +64,17 @@ public sealed class GetNscDetectorTool
         [Description("ROI height; 0 = remaining detector rows.")] int rowCount = 0,
         [Description("ROI width; 0 = remaining detector columns.")] int columnCount = 0,
         [Description("Optional positive launched source flux from the SAME ray trace in the detector's native flux units; used only to calculate explicitly normalized ratios.")] double? launchedFlux = null,
+        [Description("Return up to 64 tiles per page (each <=4096 native pixels) to reconstruct a large detector with multiple bounded ROI calls.")] bool includeTilePlan = false,
+        [Description("0-based page of the native row-major tile plan.")] int tilePlanPage = 0,
+        [Description("Optional mean-binned heatmap size 2..16, only with includePixels=true. 0 disables heatmap.")] int heatmapBins = 0,
         CancellationToken cancellationToken = default)
     {
         if (objectNumber < 1)
             return new Result(false, "objectNumber must be at least 1.", objectNumber, null, null, 0, 0, 0, null);
+        if (tilePlanPage < 0 || heatmapBins != 0 && (heatmapBins < 2 || heatmapBins > 16) ||
+            heatmapBins > 0 && !includePixels)
+            return new Result(false, "tilePlanPage must be nonnegative and heatmapBins is 0 or 2..16 with includePixels=true.",
+                objectNumber, null, null, 0, 0, 0, null);
         if (dataType is not (0 or 1) || startRow < 0 || startColumn < 0 || rowCount < 0 || columnCount < 0 ||
             (launchedFlux.HasValue && (launchedFlux.Value <= 0 || double.IsNaN(launchedFlux.Value) || double.IsInfinity(launchedFlux.Value))))
             return new Result(false, "dataType must be 0/1 and ROI coordinates/sizes cannot be negative.", objectNumber, null, null, 0, 0, 0, null);
@@ -105,6 +115,10 @@ public sealed class GetNscDetectorTool
                         $"Detector object {objectNumber} dimension/size mismatch: {columns} columns x {rows} rows = {expectedPixels} pixels, but GetDetectorSize returned {totalPixels}.",
                         objectNumber, row.TypeName, row.Comment, columns, rows, totalPixels, row.TypeData.DetectorShowAs.ToString());
                 }
+
+                NscDetectorTilePreview.Plan? tilePlan = null;
+                if (includeTilePlan)
+                    tilePlan = NscDetectorTilePreview.MakePlan(rows, columns, tilePlanPage);
 
                 if (includePixels && (row.Type is ZOSAPI.Editors.NCE.ObjectType.DetectorColor or
                     ZOSAPI.Editors.NCE.ObjectType.DetectorPolar))
@@ -246,7 +260,11 @@ public sealed class GetNscDetectorTool
                     "For non-rectangular detectors the exact pixel physical area and ROI flux-integral may be unavailable. " +
                     "DetectorVolume dataType=1 integrates ABSORBED flux: its launched-flux ratio is absorption, not collection throughput. " +
                     "ROI pixel maxima are not integrated detector power.",
-                    pixelMin, pixelMax, pixelMean, nonzeroCount, peakRow, peakColumn);
+                    pixelMin, pixelMax, pixelMean, nonzeroCount, peakRow, peakColumn,
+                    tilePlan,
+                    pixelGrid != null && heatmapBins > 0
+                        ? NscDetectorTilePreview.MeanHeatmap(pixelGrid, heatmapBins) : null,
+                    heatmapBins > 0 ? "Native ROI ordering, per-bin arithmetic MEAN of pixel values; not a detector-power integral, RGB visualization, or physical orientation calibration." : null);
             }, cancellationToken);
         }
         catch (OperationCanceledException)

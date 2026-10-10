@@ -3,6 +3,7 @@ using ZemaxMCP.Core.Services.GlassCatalog;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Services.Jobs;
 using ZemaxMCP.Server.Tools.Analysis;
+using ZemaxMCP.Server.Tools.NonSequential;
 using ZemaxMCP.Server.Tools.Base;
 
 internal static class Program
@@ -17,6 +18,7 @@ internal static class Program
             VerifySequentialEnergyWindows();
             VerifySpectralWeights();
             VerifyMechanicalFootprint();
+            VerifyNativeDetectorTiles();
             VerifyGlassCatalogSafety();
             await VerifyStaDispatcherAsync();
             await VerifyJobManagerAsync();
@@ -30,6 +32,30 @@ internal static class Program
             Console.Error.WriteLine(exception);
             return 1;
         }
+    }
+
+    private static void VerifyNativeDetectorTiles()
+    {
+        var page=NscDetectorTilePreview.MakePlan(130,129,0);
+        Assert(page.TotalTiles==9 && page.Tiles.Count==9 &&
+            page.Tiles[0] == new NscDetectorTilePreview.Tile(0,0,64,64) &&
+            page.Tiles[8] == new NscDetectorTilePreview.Tile(128,128,2,1),
+            "Native detector tiles must cover edge pixels without reordering.");
+        var big=NscDetectorTilePreview.MakePlan(4096,4096,63);
+        Assert(big.TotalTiles==4096 && big.TotalPages==64 &&
+            big.Tiles.Count==64 && big.Tiles[0].StartRow==4032,
+            "Large detector paging uses overlapping or incorrect indices.");
+        AssertThrows<ArgumentOutOfRangeException>(
+            ()=>NscDetectorTilePreview.MakePlan(64,64,1),
+            "Out-of-range native tile page accepted.");
+        var pixels=new[] {new[]{1d,3d,2d,4d},new[]{5d,7d,6d,8d}};
+        var heat=NscDetectorTilePreview.MeanHeatmap(pixels,2);
+        Assert(heat.Length==2 && heat[0].Length==2 &&
+            heat[0][0]==2 && heat[1][1]==7,
+            "Native ROI mean heatmap does not preserve row/column binning.");
+        AssertThrows<ArgumentException>(
+            ()=>NscDetectorTilePreview.MeanHeatmap(pixels,1),
+            "Unsupported heatmap bin count accepted.");
     }
 
     private static void VerifyMechanicalFootprint()
