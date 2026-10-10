@@ -204,7 +204,7 @@ internal static class Program
             "Explicitly deposited energy was double counted at ray branching.");
         var incomplete=ConservativeRayEnergyTree.Reconcile(new[]{
             new ConservativeRayEnergyTree.Node("root",null,1d,CoatingAbsorbed:0.1),
-            new ConservativeRayEnergyTree.Node("child","root",0.4)
+            new ConservativeRayEnergyTree.Node("child","root",0.4,Escaped:0.4)
         });
         Assert(!incomplete.ArithmeticClosure &&
                Math.Abs(incomplete.Unresolved-0.5)<1e-12,
