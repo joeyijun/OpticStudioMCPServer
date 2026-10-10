@@ -79,6 +79,16 @@ $selected = $select.Invoke($null, $selectArgs)
 if ($selected.TaskId -ne 'task-1' -or $detail.Invoke($null, @($selected)) -notmatch 'Worker generation') {
     throw 'Task Center ViewModel did not preserve selection/detail diagnostic context.'
 }
+$security = $assembly.GetType('ZemaxMCP.Launcher.TransportSecurityDisplay')
+if ($null -eq $security) { throw 'Client-path-aware TLS diagnostic is missing.' }
+$explain = $security.GetMethod('Explain', $flags)
+$https = $explain.Invoke($null, @('https://gateway.example/mcp', [bool]$false))
+$remoteHttp = $explain.Invoke($null, @('http://gateway.example/mcp', [bool]$true))
+$loopback = $explain.Invoke($null, @('http://127.0.0.1:5000/mcp', [bool]$false))
+if ($https -notmatch 'HTTPS/TLS' -or $https -match 'UNENCRYPTED' -or
+    $remoteHttp -notmatch 'UNENCRYPTED' -or $loopback -notmatch 'loopback') {
+    throw 'Transport security UI was derived from upstream Host TLS rather than actual client URI.'
+}
 $xaml = [IO.File]::ReadAllText((Join-Path $root 'src\ZemaxMCP.Launcher\MainWindow.xaml'))
 if ($xaml -notmatch 'Title="Zemax MCP"') { throw 'Window title must match the product name.' }
 $diagnosticsType = $assembly.GetType('ZemaxMCP.Launcher.McpDiagnosticsClient')

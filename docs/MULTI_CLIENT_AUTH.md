@@ -88,3 +88,15 @@ This feature does not automatically generate, enroll, renew, rotate or trust cer
 The current Launcher still starts its own local service in legacy HTTP mode; TLS is configured
 on the Host process on the Zemax computer. PFX deployment, Windows ACLs, reverse proxies
 (if used), endpoint connectivity and certificate renewal need operational acceptance.
+
+### Launcher TLS diagnostics behind HTTPS reverse proxies
+
+The Launcher reports the security of the **actual client endpoint URL**,
+not just a downstream Host `tlsEnabled` flag. A remote HTTPS URL remains
+HTTPS/TLS to the gateway when a trusted reverse proxy terminates TLS
+before forwarding to the Host. A remote HTTP URL remains **unencrypted**
+even if the Host independently reports that its Kestrel TLS option is
+enabled. Loopback HTTP is explicitly identified as unencrypted local
+transport. This status is not a certificate-chain validation or
+a guarantee about the reverse proxy → Host hop; configure and audit
+both independently.

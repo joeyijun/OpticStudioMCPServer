@@ -683,9 +683,8 @@ public partial class MainWindow : Window
                 "; status: " + (statusFresh ? "fresh" : workerBusy ? "cached while Worker is busy" : "last known / unavailable") +
                 (statusAge.HasValue ? " (validated " + Math.Round(statusAge.Value).ToString(System.Globalization.CultureInfo.InvariantCulture) + "s ago)" : " (never validated)") + "\n" +
                 "Security: " + (authenticationRequired ? "Bearer token required" : "no token") +
-                "; network encryption: " + (health["tlsEnabled"]?.Value<bool>() == true ? "TLS" :
-                    (Uri.TryCreate(endpoint, UriKind.Absolute, out var activeUri) && activeUri.IsLoopback
-                        ? "local loopback HTTP" : "UNENCRYPTED HTTP — token exposed in transit")) +
+                "; network encryption: " + TransportSecurityDisplay.Explain(
+                    endpoint,health["tlsEnabled"]?.Value<bool>()==true) +
                 "; Origin validation: " + (originValidationEnabled ? "enabled" : "not reported") +
                 "; lens access: " + (readOnly ? "read-only" : "read/write with pre-change snapshots") + "\n" +
                 "Snapshot folder: " + (string.IsNullOrWhiteSpace(snapshotDirectory) ? "not reported" : snapshotDirectory) +
