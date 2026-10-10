@@ -95,6 +95,19 @@ internal static class StaticToolManifestAssertions
             if (!clippingSchema.TryGetProperty(field, out _))
                 throw new InvalidOperationException("Clipping diagnosis is missing bounded sampling input: " + field);
 
+        var summary = StaticToolManifest.GetRequired("zemax_system_summary");
+        if (summary.DomainId != "system" || summary.Impact != "ReadOnly" ||
+            !StaticToolManifest.IsAllowed("basic-viewing", summary.Name, readOnly: true) ||
+            !StaticToolManifest.IsAllowed("sequential-design", summary.Name, readOnly: true) ||
+            !StaticToolManifest.IsAllowed("nonsequential-stray-light", summary.Name, readOnly: true) ||
+            !StaticToolManifest.IsAllowed("optimization-tolerance", summary.Name, readOnly: true))
+            throw new InvalidOperationException("Bounded system summary must be read-only and present in every optical profile.");
+        var summaryProperties = summary.InputSchema.GetProperty("properties");
+        foreach (var pair in new[] { ("maxSurfaces", 12), ("maxFields", 8), ("maxWavelengths", 8) })
+            if (!summaryProperties.TryGetProperty(pair.Item1, out var setting) ||
+                setting.GetProperty("default").GetInt32() != pair.Item2)
+                throw new InvalidOperationException("Bounded model summary lost its required safe default: " + pair.Item1);
+
         var aiPlanner = StaticToolManifest.GetRequired("zemax_task_plan");
         if (aiPlanner.DomainId != "system" || aiPlanner.Impact != "ReadOnly" ||
             !StaticToolManifest.IsAllowed("basic-viewing", aiPlanner.Name, readOnly: true) ||
