@@ -1087,6 +1087,35 @@ internal static class Program
                     body.Contains("activeOperations", StringComparison.Ordinal))
                     throw new InvalidOperationException("Scoped /activity leaked cross-client operations.");
             }
+            // Delta cursors are stable for one owner unless that owner's
+            // activity changes. A second scoped credential cannot read
+            // foreign active-operation names or results through this route.
+            string ownerActivityCursor;
+            using (var delta = await SendScopedGetAsync(client,
+                       new Uri(endpoint, endpoint.AbsolutePath.TrimEnd('/') + "/activity-delta"),
+                       otherWriter).ConfigureAwait(false))
+            {
+                var body = await delta.Content.ReadAsStringAsync().ConfigureAwait(false);
+                using var parsed = JsonDocument.Parse(body);
+                ownerActivityCursor = parsed.RootElement.GetProperty("cursor").GetString() ?? "";
+                if (!delta.IsSuccessStatusCode || ownerActivityCursor.Length != 64 ||
+                    !parsed.RootElement.GetProperty("changed").GetBoolean() ||
+                    body.Contains("private-unknown-result", StringComparison.Ordinal) ||
+                    body.Contains("private-job-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Scoped activity cursor leaked Job data or failed to initialize: " + body);
+            }
+            using (var unchanged = await SendScopedGetAsync(client,
+                       new Uri(endpoint, endpoint.AbsolutePath.TrimEnd('/') +
+                           "/activity-delta?cursor=" + ownerActivityCursor), otherWriter).ConfigureAwait(false))
+            {
+                var body = await unchanged.Content.ReadAsStringAsync().ConfigureAwait(false);
+                using var parsed = JsonDocument.Parse(body);
+                if (!unchanged.IsSuccessStatusCode ||
+                    parsed.RootElement.GetProperty("changed").GetBoolean() ||
+                    parsed.RootElement.GetProperty("activity").ValueKind != JsonValueKind.Null)
+                    throw new InvalidOperationException("Activity delta did not suppress unchanged owner data: " + body);
+            }
+
             using (var ownerCancel = await SendScopedAsync(client, endpoint, 114, "tools/call", "zemax_job_cancel", otherWriter,
                        new { jobId = "fake-owned-job" }).ConfigureAwait(false))
             {
