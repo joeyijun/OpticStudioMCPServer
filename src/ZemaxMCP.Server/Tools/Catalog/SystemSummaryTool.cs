@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tooling;
 using ZOSAPI;
@@ -33,7 +34,8 @@ public sealed class SystemSummaryTool
         IReadOnlyList<FieldSummary> Fields,
         IReadOnlyList<WavelengthSummary> Wavelengths,
         int OmittedSurfaces, int OmittedFields, int OmittedWavelengths,
-        IReadOnlyList<string> Warnings, string Interpretation);
+        IReadOnlyList<string> Warnings, string Interpretation,
+        SystemSummaryComparer.Comparison? BaselineComparison = null);
 
     private static double? Finite(double value) =>
         double.IsNaN(value) || double.IsInfinity(value) ? null : value;
@@ -44,6 +46,7 @@ public sealed class SystemSummaryTool
         [Description("Maximum reported key LDE surfaces, from 4 to 24 (default 12).")] int maxSurfaces = 12,
         [Description("Maximum field records, from 1 to 16 (default 8).")] int maxFields = 8,
         [Description("Maximum wavelength records, from 1 to 16 (default 8).")] int maxWavelengths = 8,
+        [Description("Optional prior successful zemax_system_summary JSON (<=96 KB) to compare with current metadata; no file switching, optical analysis or edits.")] string? baselineSummaryJson = null,
         CancellationToken cancellationToken = default)
     {
         const string meaning = "This is a snapshot of active-model metadata, NOT an optical analysis or a mechanical clipping test. Coordinates/lengths use native lens units; wavelength values are micrometers and field coordinates use the declared field type. Local Coordinate Breaks affect per-surface ray coordinates. Semidiameter is informational, not necessarily an enforced clear aperture.";
@@ -56,7 +59,7 @@ public sealed class SystemSummaryTool
 
         try
         {
-            return await _session.ExecuteAsync("SystemSummary", new Dictionary<string, object?>
+            var current = await _session.ExecuteAsync("SystemSummary", new Dictionary<string, object?>
             {
                 ["maxSurfaces"] = maxSurfaces,
                 ["maxFields"] = maxFields,
@@ -161,6 +164,11 @@ public sealed class SystemSummaryTool
                     Math.Max(0, fieldCount - fields.Count),
                     Math.Max(0, wavelengthCount - wavelengths.Count), warnings, meaning);
             }, cancellationToken).ConfigureAwait(false);
+            if (baselineSummaryJson == null || !current.Success) return current;
+            var serialized = JsonSerializer.Serialize(current, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            return current with {
+                BaselineComparison = SystemSummaryComparer.Compare(baselineSummaryJson, serialized)
+            };
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)

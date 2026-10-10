@@ -19,6 +19,7 @@ internal static class Program
             VerifySpectralWeights();
             VerifyMechanicalFootprint();
             VerifyNativeDetectorTiles();
+            VerifyModelSummaryDiff();
             VerifyGlassCatalogSafety();
             await VerifyStaDispatcherAsync();
             await VerifyJobManagerAsync();
@@ -32,6 +33,23 @@ internal static class Program
             Console.Error.WriteLine(exception);
             return 1;
         }
+    }
+
+    private static void VerifyModelSummaryDiff()
+    {
+        const string first = "{\"success\":true,\"mode\":\"Sequential\",\"numberOfSurfaces\":5,\"lensUnit\":\"Millimeters\",\"omittedSurfaces\":3,\"keySurfaces\":[{\"number\":1,\"radius\":10.0}],\"fields\":[],\"wavelengths\":[]}";
+        const string second = "{\"success\":true,\"mode\":\"Sequential\",\"numberOfSurfaces\":5,\"lensUnit\":\"Millimeters\",\"omittedSurfaces\":3,\"keySurfaces\":[{\"number\":1,\"radius\":11.0}],\"fields\":[],\"wavelengths\":[]}";
+        var diff = SystemSummaryComparer.Compare(first,second);
+        Assert(diff.Comparable && diff.ChangedProperties==1 &&
+            diff.Differences[0].Path=="keySurfaces[1].radius" &&
+            diff.Warnings.Any(x=>x.Contains("omittedSurfaces")),
+            "Metadata diff should compare matched sample IDs and admit unseen LDE rows.");
+        AssertThrows<ArgumentException>(()=>SystemSummaryComparer.Compare(
+            "{\"success\":false}",second), "Failed baseline summary was accepted.");
+        var unmatched=second.Replace("\"number\":1","\"number\":2");
+        var unknown=SystemSummaryComparer.Compare(first,unmatched);
+        Assert(unknown.ChangedProperties==0 && unknown.Warnings.Any(x=>x.Contains("UNKNOWN")),
+            "Unmatched bounded sample must not imply a verified surface deletion.");
     }
 
     private static void VerifyNativeDetectorTiles()
