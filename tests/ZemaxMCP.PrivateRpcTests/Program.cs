@@ -1170,10 +1170,10 @@ internal static class Program
             {
                 var body=await firstJobs.Content.ReadAsStringAsync().ConfigureAwait(false);
                 using var parsed=JsonDocument.Parse(body);
-                var root=parsed.RootElement;
-                ownerJobCursor=root.GetProperty("cursor").GetString() ?? "";
+                var jobDeltaRoot=parsed.RootElement;
+                ownerJobCursor=jobDeltaRoot.GetProperty("cursor").GetString() ?? "";
                 if(!firstJobs.IsSuccessStatusCode || ownerJobCursor.Length!=64 ||
-                    !root.GetProperty("changed").GetBoolean() ||
+                    !jobDeltaRoot.GetProperty("changed").GetBoolean() ||
                     !body.Contains("fake-owned-job",StringComparison.Ordinal) ||
                     body.Contains("private-unknown-result",StringComparison.Ordinal) ||
                     body.Contains("private-job-result",StringComparison.Ordinal) ||
