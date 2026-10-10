@@ -734,6 +734,7 @@ public partial class MainWindow : Window
             var serverRunning = health["mcpServerRunning"]?.Value<bool>() == true;
             var workerBusy = health["workerBusy"]?.Value<bool>() == true;
             var statusFresh = health["statusFresh"]?.Value<bool>() ?? true;
+            var statusAge = health["statusAgeSeconds"]?.Value<double?>();
             var lastKnownStatus = health["lastKnownStatus"]?.Value<bool>() ?? true;
             var activeRequests = health["activeRequests"]?.Value<int>() ?? 0;
             var activeOperations = health["activeOperations"] as JArray;
@@ -783,7 +784,8 @@ public partial class MainWindow : Window
                 "; loaded: " + (apiLoaded ? "yes" : "not yet") +
                 "; OpticStudio connected: " + (apiConnected ? "yes" : (workerBusy && !lastKnownStatus ? "unknown while busy" : "not yet")) +
                 "; license: " + licenseStatus +
-                "; status: " + (statusFresh ? "fresh" : workerBusy ? "cached while Worker is busy" : "last known / unavailable") + "\n" +
+                "; status: " + (statusFresh ? "fresh" : workerBusy ? "cached while Worker is busy" : "last known / unavailable") +
+                (statusAge.HasValue ? " (validated " + Math.Round(statusAge.Value).ToString(System.Globalization.CultureInfo.InvariantCulture) + "s ago)" : " (never validated)") + "\n" +
                 "Security: " + (authenticationRequired ? "Bearer token required" : "no token") +
                 "; Origin validation: " + (originValidationEnabled ? "enabled" : "not reported") +
                 "; lens access: " + (readOnly ? "read-only" : "read/write with pre-change snapshots") + "\n" +
@@ -1151,6 +1153,7 @@ public partial class MainWindow : Window
         var licensed = result["licenseValidForApi"]?.Value<bool?>();
         var busy = result["workerBusy"]?.Value<bool>() == true;
         var fresh = result["statusFresh"]?.Value<bool>() ?? true;
+        var age = result["statusAgeSeconds"]?.Value<double?>();
         if (!bridge) throw new InvalidOperationException("Host is reachable but reports bridgeRunning=false.");
         return "Connection check — Host: reachable; authentication: accepted; Worker: " +
             (worker ? "running" : "unavailable") + "; ZOS-API: " +
@@ -1158,7 +1161,8 @@ public partial class MainWindow : Window
             (zos ? "connected" : "disconnected") + "; license: " +
             (result["licenseStatus"]?.ToString() ?? "not reported") +
             "; API license valid: " + (licensed.HasValue ? licensed.Value.ToString() : "not reported") +
-            (busy ? "; Worker busy (status " + (fresh ? "fresh" : "last known") + ")" :
+            (busy ? "; Worker busy (status " + (fresh ? "fresh" : "last known") +
+                (age.HasValue ? ", verified " + Math.Round(age.Value).ToString(System.Globalization.CultureInfo.InvariantCulture) + "s ago" : ", never verified") + ")" :
                 (fresh ? "" : "; Worker status unavailable")) +
             ". This is a health check, not a tool execution test.";
     }
