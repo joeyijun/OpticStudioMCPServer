@@ -27,6 +27,11 @@ public partial class MainWindow : Window
     private bool _clientSetupPrompted;
     private bool _refreshingStatus;
     private bool _refreshingActivity;
+    private bool _refreshingJobsDelta;
+    private bool _jobsDeltaSupported = true;
+    private string _jobsDeltaCursor = "";
+    private string _jobsDeltaEndpoint = "";
+    private DateTimeOffset _jobsDeltaRetryAfter;
     private bool _healthReachable;
     private bool _activityEndpointSupported = true;
     private bool _activityDeltaSupported = true;
@@ -79,7 +84,11 @@ public partial class MainWindow : Window
         _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _statusTimer.Tick += async (_, _) => await RefreshStatusAsync();
         _activityTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _activityTimer.Tick += async (_, _) => await RefreshActivityAsync();
+        _activityTimer.Tick += async (_, _) =>
+        {
+            await RefreshActivityAsync();
+            await RefreshJobsDeltaAsync();
+        };
     }
 
     private static System.Drawing.Icon GetApplicationIcon()
@@ -437,6 +446,62 @@ public partial class MainWindow : Window
         catch (Exception) { /* The next full health check owns offline state. */ }
         finally { _refreshingActivity = false; }
     }
+    private async Task RefreshJobsDeltaAsync()
+    {
+        if (!_healthReachable || _refreshingJobsDelta || _refreshingStatus) return;
+        var endpoint=McpUrl;
+        if (!string.Equals(endpoint,_jobsDeltaEndpoint,StringComparison.OrdinalIgnoreCase))
+        {
+            _jobsDeltaEndpoint=endpoint;
+            _jobsDeltaCursor="";
+            _jobsDeltaSupported=true;
+        }
+        if (!_jobsDeltaSupported && DateTimeOffset.UtcNow<_jobsDeltaRetryAfter) return;
+        _refreshingJobsDelta=true;
+        // PasswordBox must be read ONLY on the WPF thread.
+        var token=McpToken;
+        try
+        {
+            JObject response;
+            try
+            {
+                response=await Task.Run(()=>GetEndpointJson(endpoint,token,
+                    "/jobs-delta?cursor="+Uri.EscapeDataString(_jobsDeltaCursor),2500));
+            }
+            catch(WebException error) when((error.Response as HttpWebResponse)?.StatusCode==HttpStatusCode.NotFound)
+            {
+                // Back-level Hosts keep the 5-second full /health polling path.
+                _jobsDeltaSupported=false;
+                _jobsDeltaRetryAfter=DateTimeOffset.UtcNow.AddMinutes(1);
+                return;
+            }
+            if(!string.Equals(endpoint,McpUrl,StringComparison.OrdinalIgnoreCase)) return;
+            if(response["cursor"]?.ToString() is not { Length:64 } nextCursor)
+                throw new InvalidDataException("Host returned an invalid Jobs delta cursor.");
+            _jobsDeltaCursor=nextCursor;
+            _jobsDeltaSupported=true;
+            if(response["changed"]?.Value<bool>()!=true) return;
+            var snapshot=response["snapshot"] as JObject ??
+                throw new InvalidDataException("Changed Jobs delta must include a snapshot.");
+            var worker=new JObject { ["workerGeneration"]=snapshot["workerGeneration"]?.DeepClone() };
+            var presentationHealth=new JObject {
+                ["tasks"]=snapshot["tasks"]?.DeepClone() ?? new JArray(),
+                ["worker"]=worker,
+                ["clientIsolation"]=string.IsNullOrWhiteSpace(token) ? "local" : "scoped-or-shared"
+            };
+            RefreshTaskCenter(snapshot["jobs"] as JArray,presentationHealth);
+        }
+        catch(WebException)
+        {
+            // The 5-second full health path owns connection/offline warnings.
+        }
+        catch(Exception)
+        {
+            _jobsDeltaCursor=""; // Re-fetch a complete owner-scoped snapshot.
+        }
+        finally { _refreshingJobsDelta=false; }
+    }
+
     private List<BackgroundJobView> _taskHistory = new List<BackgroundJobView>();
 
     private void RefreshTaskCenter(JArray? jobs, JObject? health = null)
