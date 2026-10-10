@@ -379,7 +379,21 @@ internal static class Program
                 var observed = workerClient.GetObservedJobStatuses();
                 // Prefer latest coalesced Worker progress for a Job ID; normal
                 // cached Job lists fill missing elapsed/queue information.
-                var merged = McpJobTaskDeltaMonitor.MergeStatuses(cached, observed);
+                var merged = McpJobTaskDeltaMonitor.MergeStatuses(cached, observed).ToList();
+                if (scoped)
+                {
+                    // Registration precedes the first Worker Job status/event.
+                    // Include a truthful unknown-state placeholder for own Job
+                    // IDs, never a fabricated state or another client's Job.
+                    var knownIds = merged.Select(job => job.JobId)
+                        .ToHashSet(StringComparer.Ordinal);
+                    foreach (var id in jobOwners.ListOwnedJobIds(owner, generation))
+                        if (knownIds.Add(id))
+                            merged.Add(new WorkerJobStatus {
+                                JobId = id, ToolName = "ZOS-API Job", State = "Unknown",
+                                Message = "Job registered; no cached Worker status yet. Query zemax_job_status for a definitive state."
+                            });
+                }
                 var tasks = scoped && taskLedger != null
                     ? taskLedger.ListOwnedMetadata(owner, 25) : Array.Empty<object>();
                 var delta = jobTaskDelta.GetDelta(owner, scoped, cursor,

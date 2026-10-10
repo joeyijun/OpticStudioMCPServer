@@ -214,6 +214,12 @@ internal static class Program
     private static void VerifyJobOwnershipRegistry()
     {
         var registry = new JobOwnerRegistry();
+        registry.Register("scoped:alice", "just-started", 3);
+        registry.Register("scoped:bob", "foreign", 3);
+        Assert(registry.ListOwnedJobIds("scoped:alice",3).SequenceEqual(new[]{"just-started"}) &&
+               registry.ListOwnedJobIds("scoped:alice",4).Count==0 &&
+               registry.ListOwnedJobIds("scoped:bob",3).SequenceEqual(new[]{"foreign"}),
+            "Owner-scoped Job IDs exposed foreign or cross-generation records.");
         registry.Register("scoped:a", "owned-1", 7);
         registry.Register("scoped:b", "owned-2", 7);
         if (!registry.IsOwned("scoped:a", "owned-1", 7) ||

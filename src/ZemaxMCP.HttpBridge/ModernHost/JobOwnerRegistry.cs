@@ -48,6 +48,20 @@ internal sealed class JobOwnerRegistry
                    owner.ClientId == clientId && owner.Generation == generation;
     }
 
+    /// <summary>Only ID and authorization evidence, never optical Job results.
+    /// Fresh jobs may be registered before their first Worker status sample.</summary>
+    internal IReadOnlyList<string> ListOwnedJobIds(string owner, long generation, int limit = 256)
+    {
+        if (string.IsNullOrWhiteSpace(owner) || generation <= 0) return Array.Empty<string>();
+        if (limit is < 1 or > MaximumRecords)
+            throw new ArgumentOutOfRangeException(nameof(limit));
+        lock (_gate)
+            return _owners.Where(pair => pair.Value.ClientId == owner &&
+                    pair.Value.Generation == generation)
+                .OrderByDescending(pair => pair.Value.Sequence)
+                .Take(limit).Select(pair => pair.Key).ToArray();
+    }
+
     internal void ReleaseGeneration(long generation)
     {
         if (generation <= 0) return;
