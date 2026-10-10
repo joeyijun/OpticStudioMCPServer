@@ -33,6 +33,7 @@ internal static class Program
             VerifyActivityOwnership();
             VerifyJobsDeltaOwnership();
             VerifyLauncherDeltaCredentialScope();
+            VerifyHostLaunchPlan();
             VerifyStructuredToolOutcomes();
             VerifyOfficialTasksDefaults();
             VerifyTlsOptions();
@@ -371,6 +372,39 @@ internal static class Program
             "Shared/local Job state must not expose official Task IDs.");
         AssertThrows<InvalidOperationException>(()=>monitor.GetDelta("",true,null,17,false,true,
             jobs,Array.Empty<object>(),_=>false),"A scoped missing identity was not denied.");
+    }
+
+    private static void VerifyHostLaunchPlan()
+    {
+        var process=HostLaunchPlan.Build(
+            @"C:\Zemax MCP\Host.exe", @"C:\Zemax MCP\Worker.exe",
+            @"C:\Program Files\OpticStudio","0.0.0.0",8000,false,
+            "nonsequential-stray-light", @"C:\Zemax MCP\snapshots",
+            true,true,"192.168.1.12",true,@"C:\Certs\instance.pfx",
+            "token-secret-123","private-pfx-secret");
+        Assert(process.Arguments.Contains("--tls-pfx") &&
+               process.Arguments.Contains("--allowed-origin https://192.168.1.12:*") &&
+               process.Arguments.Contains("--enable-official-tasks true") &&
+               !process.Arguments.Contains("token-secret-123") &&
+               !process.Arguments.Contains("private-pfx-secret") &&
+               process.EnvironmentVariables["ZEMAX_MCP_TOKEN"]=="token-secret-123" &&
+               process.EnvironmentVariables["ZEMAX_MCP_TLS_PFX_PASSWORD"]=="private-pfx-secret",
+            "Launcher leaked remote credentials into process argv or lost TLS scheme.");
+        AssertThrows<ArgumentException>(()=>HostLaunchPlan.Build(
+            @"C:\Host.exe",@"C:\Worker.exe",@"C:\OS","0.0.0.0",
+            8000,false,"basic-viewing",@"C:\snapshots",
+            true,true,"127.0.0.1",false,null,"token",null),
+            "Remote LAN sharing cannot use loopback IPv4 as its published address.");
+        AssertThrows<ArgumentException>(()=>HostLaunchPlan.Build(
+            @"C:\Host.exe",@"C:\Worker.exe",@"C:\OS","127.0.0.1",
+            8000,false,"basic-viewing",@"C:\snapshots",
+            true,false,"127.0.0.1",true,@"C:\Certs\abc.pfx","token",null),
+            "Launcher accepted TLS startup without a certificate password.");
+        AssertThrows<ArgumentException>(()=>HostLaunchPlan.Build(
+            @"C:\Host.exe",@"C:\Worker.exe",@"C:\OS","127.0.0.1",
+            8000,false,"not-a-profile",@"C:\snapshots",
+            true,false,"127.0.0.1",false,null,"token",null),
+            "Launcher accepted untrusted Host toolset startup arguments.");
     }
 
     private static void VerifyLauncherDeltaCredentialScope()

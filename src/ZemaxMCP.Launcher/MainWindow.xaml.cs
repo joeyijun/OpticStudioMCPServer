@@ -349,18 +349,10 @@ public partial class MainWindow : Window
         try
         {
             var snapshots = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZemaxMCP", "snapshots");
-            var networkAllowlist = ShareOnLan.IsChecked == true
-                ? $" --allowed-host {GetLanAddress()} --allowed-origin {(LocalTlsEnabled ? "https" : "http")}://{GetLanAddress()}:*"
-                : string.Empty;
-            var tlsArgs = LocalTlsEnabled
-                ? " --tls-pfx \"" + LocalTlsPfxPath.Replace("\"", "") + "\""
-                : "";
-            var startInfo = new ProcessStartInfo(bridge,
-                $"--server \"{server}\" --zemax-root \"{Installation.Root}\" --host {HostName} --port {port} --read-only {(ReadOnlyMode.IsChecked == true ? "true" : "false")} --toolset {SelectedToolsetProfile} --snapshot-dir \"{snapshots}\" " + OfficialTasksSettings.HostArgument(OfficialTasks.IsChecked == true) + networkAllowlist + tlsArgs)
-            { UseShellExecute = false, CreateNoWindow = true };
-            startInfo.EnvironmentVariables["ZEMAX_MCP_TOKEN"] = _localAccessToken;
-            if (LocalTlsEnabled)
-                startInfo.EnvironmentVariables["ZEMAX_MCP_TLS_PFX_PASSWORD"] = TlsPfxPassword.Password;
+            var startInfo=HostLaunchPlan.Build(bridge,server,Installation.Root,HostName,
+                port,ReadOnlyMode.IsChecked==true,SelectedToolsetProfile,snapshots,
+                OfficialTasks.IsChecked==true,ShareOnLan.IsChecked==true,GetLanAddress(),
+                LocalTlsEnabled,LocalTlsPfxPath,_localAccessToken,TlsPfxPassword.Password);
             process = Process.Start(startInfo);
         }
         catch (Exception ex)
