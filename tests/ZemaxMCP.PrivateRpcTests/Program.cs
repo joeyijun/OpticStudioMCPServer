@@ -256,6 +256,20 @@ internal static class Program
         if (!lease.RetainForJob("client-a", "job-1", generation: 7))
             throw new InvalidOperationException("The owning client could not retain control for its background job.");
 
+        // The original owner must NOT start another mutation while its own
+        // background COM Job is active; serialization of RPC calls alone
+        // cannot guarantee that a started Job has finished.
+        try
+        {
+            using var _ = await lease.AcquireAsync("client-a", "zemax_set_surface", CancellationToken.None).ConfigureAwait(false);
+            throw new InvalidOperationException("The owning client mutated the model while its background Job remained active.");
+        }
+        catch (ControlLeaseConflictException ex)
+        {
+            if (!ex.Message.Contains("background Job", StringComparison.Ordinal))
+                throw new InvalidOperationException("Own-job mutation conflict must explain how to recover.", ex);
+        }
+
         await Task.Delay(80).ConfigureAwait(false);
         try
         {

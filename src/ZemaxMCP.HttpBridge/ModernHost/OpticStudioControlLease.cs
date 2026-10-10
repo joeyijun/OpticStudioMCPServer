@@ -6,6 +6,8 @@ internal sealed class ControlLeaseConflictException : InvalidOperationException
 {
     public ControlLeaseConflictException()
         : base("OpticStudio control is currently leased to another MCP client. Diagnostic status checks do not require control; wait for the current optical operation or owner to release control.") { }
+
+    public ControlLeaseConflictException(string message) : base(message) { }
 }
 
 /// <summary>
@@ -38,6 +40,10 @@ internal sealed class OpticStudioControlLease
         // semaphore. A caller may cancel during that wait.
         lock (_sync)
         {
+            // A background COM Job retains the exclusive model lifecycle for
+            // all clients, including its creator. Without this check its
+            // creator could start a second mutation while that Job is running.
+            if (_jobHolds.Count > 0) throw ActiveJobConflict();
             if (!IsExpiredLocked() &&
                 _ownerClientId != null &&
                 !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
@@ -52,6 +58,9 @@ internal sealed class OpticStudioControlLease
             cancellationToken.ThrowIfCancellationRequested();
             lock (_sync)
             {
+                // A job could have started while this caller waited for the
+                // foreground gate. Check again before granting the edit lease.
+                if (_jobHolds.Count > 0) throw ActiveJobConflict();
                 if (IsExpiredLocked()) _ownerClientId = null;
                 if (_ownerClientId != null &&
                     !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
@@ -95,6 +104,9 @@ internal sealed class OpticStudioControlLease
             throw;
         }
     }
+
+    private static ControlLeaseConflictException ActiveJobConflict() =>
+        new("An OpticStudio background Job is active; additional mutations are blocked until it reaches a terminal state. Query or cancel the existing Job first.");
 
     private bool IsExpiredLocked() =>
         _ownerClientId != null &&
