@@ -67,6 +67,18 @@ internal static class Program
             Environment.SetEnvironmentVariable("ZEMAX_MCP_TOOLSET", "basic-viewing");
             Environment.SetEnvironmentVariable("ZEMAX_MCP_READ_ONLY", "1");
             var catalog = new ToolCatalogTool();
+            // All seven engineering workflows begin with a single bounded,
+            // profile-visible model preflight rather than dumping the LDE.
+            foreach (var intent in new[] {
+                "clipping", "imaging", "straylight", "energy",
+                "optimize", "tolerance", "safe-edit" })
+            {
+                var playbook = catalog.Execute(task: intent).Playbooks.Single();
+                Assert(playbook.AvailableSteps.Concat(playbook.UnavailableSteps).FirstOrDefault() ==
+                           "zemax_system_summary" &&
+                       playbook.AvailableSteps.Contains("zemax_system_summary"),
+                    "Task plan must first expose bounded model metadata for " + intent);
+            }
             var clipping = catalog.Execute(task: "clipping");
             Assert(clipping.Playbooks.Count == 1 && clipping.Playbooks[0].Id == "clipping",
                 "Task planner should return the requested focused playbook.");
