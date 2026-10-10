@@ -26,9 +26,29 @@ internal sealed class BackgroundJobView
             (!ProgressFraction.HasValue || ProgressFraction.Value <= 0 || ProgressFraction.Value >= 1);
         public string ProgressHint => IsProgressIndeterminate
             ? (State.Equals("Queued", StringComparison.OrdinalIgnoreCase) ? "Queued" : "In progress") +
-                " · elapsed " + Elapsed + " · no intermediate estimate reported"
-            : ProgressFraction.HasValue ? Math.Round(ProgressFraction.Value * 100) + "% reported · elapsed " + Elapsed
+                " · elapsed " + Elapsed + " · no numeric Worker progress reported"
+            : ProgressFraction.HasValue ? Math.Round(ProgressFraction.Value * 100) + "% Worker-reported progress · elapsed " + Elapsed
             : "No numeric progress reported.";
+        public string RecommendedAction
+        {
+            get
+            {
+                if (Message.IndexOf("expired", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return "Result retention expired; run a new analysis rather than interpreting missing data as zero.";
+                if (Message.IndexOf("license", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return "Open Diagnostics, check OpticStudio licensing, and retry after it is valid.";
+                if (Message.IndexOf("worker", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                    (Message.IndexOf("offline", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                     Message.IndexOf("generation", StringComparison.OrdinalIgnoreCase) >= 0))
+                    return "Use Overview > Check connection, then inspect Diagnostics. Interrupted jobs cannot be resumed.";
+                if (State.Equals("Failed", StringComparison.OrdinalIgnoreCase) ||
+                    Message.IndexOf("error", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return "Inspect the Worker error in Diagnostics and verify model inputs before retrying.";
+                if (State.Equals("Cancelling", StringComparison.OrdinalIgnoreCase))
+                    return "Cancellation requested but not yet confirmed; check task status again.";
+                return "";
+            }
+        }
         public string SelectionKey => IsOfficialTask ? "task:" + TaskId : "job:" + JobId;
         public string ActivitySubtitle => (IsOfficialTask ? "MCP Task" : "Worker Job") + " · " + Elapsed +
             (string.IsNullOrWhiteSpace(Progress) ? "" : Progress);

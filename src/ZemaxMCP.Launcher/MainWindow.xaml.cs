@@ -495,7 +495,9 @@ public partial class MainWindow : Window
         TasksPageProgress.IsIndeterminate = selected?.IsProgressIndeterminate == true;
         TasksPageProgress.Value = (selected?.ProgressFraction ?? 0) * 100;
         TasksPageProgressHint.Text = selected?.ProgressHint ?? "No numeric progress reported.";
-        TasksPageMessage.Text = selected?.Message ?? "";
+        TasksPageMessage.Text = selected == null ? "" :
+            selected.Message + (selected.RecommendedAction.Length == 0 ? "" :
+                "\nSuggested action: " + selected.RecommendedAction);
         TasksPageDetail.Text = selected == null ? "Select a Job to inspect its details." :
             (selected.IsOfficialTask ? "Task ID: " + selected.TaskId + "\nLinked Job: " + selected.JobId :
                 "Job ID: " + selected.JobId) + "\nTool: " + selected.ToolName +
@@ -506,6 +508,7 @@ public partial class MainWindow : Window
             "\nProgress: " + (string.IsNullOrWhiteSpace(selected.Progress) ? "Not reported" : selected.Progress) +
             "\nQueue: " + (string.IsNullOrWhiteSpace(selected.Queue) ? "Not queued" : selected.Queue) +
             "\nWorker message / failure reason: " + selected.Message +
+            (selected.RecommendedAction.Length == 0 ? "" : "\nSuggested action: " + selected.RecommendedAction) +
             "\n\n'View result' calls Tasks/get for owned official Tasks or job_status for Worker Jobs. "+
             "A completed Job may have expired its result; official Tasks require their separate Task ID.";
     }
