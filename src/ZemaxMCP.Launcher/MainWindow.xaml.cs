@@ -38,6 +38,8 @@ public partial class MainWindow : Window
     private string _localAccessToken = "";
     private string _remoteEndpoint = "";
     private string _remoteAccessToken = "";
+    private bool LocalTlsEnabled => EnableTls.IsChecked == true;
+    private string LocalTlsPfxPath => TlsPfxPath.Text.Trim();
     private string _fullDiagnostics = "Status has not been checked yet.";
     private readonly Forms.NotifyIcon _trayIcon;
     private readonly DispatcherTimer _statusTimer;
@@ -210,13 +212,38 @@ public partial class MainWindow : Window
     private string HostName => ShareOnLan.IsChecked == true ? "0.0.0.0" : "127.0.0.1";
     private void RefreshEndpoint() => Endpoint.Text = Url;
     private ZemaxInstallation? Installation => ZemaxVersions.SelectedItem as ZemaxInstallation;
-    private string Url => "http://" + (ShareOnLan.IsChecked == true ? GetLanAddress() : "127.0.0.1") + ":" + Port.Text + "/mcp";
+    private string Url => (LocalTlsEnabled ? "https://" : "http://") +
+        (ShareOnLan.IsChecked == true ? GetLanAddress() : "127.0.0.1") + ":" + Port.Text + "/mcp";
     private bool IsRemoteEndpointConfigured => Uri.TryCreate(_remoteEndpoint, UriKind.Absolute, out var remote) &&
         (remote.Scheme == Uri.UriSchemeHttp || remote.Scheme == Uri.UriSchemeHttps) && !string.IsNullOrWhiteSpace(_remoteAccessToken);
     private string McpUrl => Uri.TryCreate(_remoteEndpoint, UriKind.Absolute, out var remote) &&
         (remote.Scheme == Uri.UriSchemeHttp || remote.Scheme == Uri.UriSchemeHttps) ? remote.ToString().TrimEnd('/') : Url;
     private string McpToken => IsRemoteEndpointConfigured ? _remoteAccessToken : _localAccessToken;
     private string SelectedToolsetProfile => (ToolsetProfile.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag?.ToString() ?? "full-expert";
+
+    private void BrowseTlsPfx_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Filter = "PKCS#12 certificates (*.pfx)|*.pfx|All files (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+        if (dialog.ShowDialog(this) == true)
+        {
+            TlsPfxPath.Text = dialog.FileName;
+            SaveSettings();
+        }
+    }
+
+    private void TlsSettings_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_windowLoaded) return;
+        RefreshEndpoint();
+        SaveSettings();
+        Report("TLS preferences saved. Stop/Start only when no optical Job is active. " +
+               "Remote clients must trust the certificate and verify its endpoint name.");
+    }
 
     private void ShareOnLan_Changed(object sender, RoutedEventArgs e)
     {
@@ -289,6 +316,12 @@ public partial class MainWindow : Window
             Report("Port must be a number from 1 to 65535.");
             return;
         }
+        if (LocalTlsEnabled && (!File.Exists(LocalTlsPfxPath) ||
+                                string.IsNullOrWhiteSpace(TlsPfxPassword.Password)))
+        {
+            Report("TLS startup requires an existing PFX file and password in Settings.");
+            return;
+        }
         StopBridge();
         if (!automaticRestart) _bridgeRestartAttempts = 0;
         SaveSettings();
@@ -307,12 +340,17 @@ public partial class MainWindow : Window
         {
             var snapshots = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZemaxMCP", "snapshots");
             var networkAllowlist = ShareOnLan.IsChecked == true
-                ? $" --allowed-host {GetLanAddress()} --allowed-origin http://{GetLanAddress()}:*"
+                ? $" --allowed-host {GetLanAddress()} --allowed-origin {(LocalTlsEnabled ? "https" : "http")}://{GetLanAddress()}:*"
                 : string.Empty;
+            var tlsArgs = LocalTlsEnabled
+                ? " --tls-pfx \"" + LocalTlsPfxPath.Replace("\"", "") + "\""
+                : "";
             var startInfo = new ProcessStartInfo(bridge,
-                $"--server \"{server}\" --zemax-root \"{Installation.Root}\" --host {HostName} --port {port} --read-only {(ReadOnlyMode.IsChecked == true ? "true" : "false")} --toolset {SelectedToolsetProfile} --snapshot-dir \"{snapshots}\" " + OfficialTasksSettings.HostArgument(OfficialTasks.IsChecked == true) + networkAllowlist)
+                $"--server \"{server}\" --zemax-root \"{Installation.Root}\" --host {HostName} --port {port} --read-only {(ReadOnlyMode.IsChecked == true ? "true" : "false")} --toolset {SelectedToolsetProfile} --snapshot-dir \"{snapshots}\" " + OfficialTasksSettings.HostArgument(OfficialTasks.IsChecked == true) + networkAllowlist + tlsArgs)
             { UseShellExecute = false, CreateNoWindow = true };
             startInfo.EnvironmentVariables["ZEMAX_MCP_TOKEN"] = _localAccessToken;
+            if (LocalTlsEnabled)
+                startInfo.EnvironmentVariables["ZEMAX_MCP_TLS_PFX_PASSWORD"] = TlsPfxPassword.Password;
             process = Process.Start(startInfo);
         }
         catch (Exception ex)
@@ -1381,6 +1419,9 @@ public partial class MainWindow : Window
             ShareOnLan.IsChecked = settings["shareOnLan"]?.Value<bool>() ?? false;
             ReadOnlyMode.IsChecked = settings["readOnly"]?.Value<bool>() ?? false;
             OfficialTasks.IsChecked = OfficialTasksSettings.IsEnabled(settings["enableOfficialTasks"]);
+            EnableTls.IsChecked = settings["enableTls"]?.Value<bool>() ?? false;
+            TlsPfxPath.Text = settings["tlsPfxPath"]?.ToString() ?? "";
+            TlsPfxPassword.Password = UnprotectSecret(settings["tlsPfxPasswordProtected"]?.ToString());
             SelectToolsetProfile(settings["toolsetProfile"]?.ToString());
             StartOnLogin.IsChecked = settings["startOnLogin"]?.Value<bool>() ?? false;
             _clientSetupPrompted = settings["clientSetupPrompted"]?.Value<bool>() ?? false;
@@ -1410,6 +1451,9 @@ public partial class MainWindow : Window
                 ["shareOnLan"] = ShareOnLan.IsChecked == true,
                 ["readOnly"] = ReadOnlyMode.IsChecked == true,
                 ["enableOfficialTasks"] = OfficialTasks.IsChecked == true,
+                ["enableTls"] = LocalTlsEnabled,
+                ["tlsPfxPath"] = LocalTlsPfxPath,
+                ["tlsPfxPasswordProtected"] = ProtectSecret(TlsPfxPassword.Password),
                 ["toolsetProfile"] = SelectedToolsetProfile,
                 ["startOnLogin"] = StartOnLogin.IsChecked == true,
                 ["windowMaterial"] = "mica",
