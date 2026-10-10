@@ -138,7 +138,21 @@ internal sealed class OfficialTasksAdapter
         var snapshot = GetOwned(owner, taskId);
         if (snapshot.State == "working")
         {
-            await RefreshAsync(owner, snapshot, cancellationToken).ConfigureAwait(false);
+            if (_worker.HasForegroundTool)
+            {
+                // A running COM-bound foreground RPC owns Worker admission.
+                // Querying job_status here would line up behind that RPC and
+                // could stall an otherwise healthy Tasks/get poll for minutes.
+                // Use generation-matched progress already observed by the
+                // Host instead; the next unblocked poll fetches the real result.
+                if (_worker.TryGetJobStatus(snapshot.Generation, snapshot.JobId, out var observed) &&
+                    observed != null)
+                    _ledger.ObserveJob(snapshot.Generation, observed);
+            }
+            else
+            {
+                await RefreshAsync(owner, snapshot, cancellationToken).ConfigureAwait(false);
+            }
             snapshot = GetOwned(owner, taskId);
         }
 
