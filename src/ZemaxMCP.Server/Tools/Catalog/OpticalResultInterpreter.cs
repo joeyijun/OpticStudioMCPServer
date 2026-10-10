@@ -17,7 +17,7 @@ public static class OpticalResultInterpreter
             throw new ArgumentException("Result JSON must be 2..131072 characters.");
         if(toolName is not ("zemax_energy_budget" or "zemax_ray_footprint" or
             "zemax_get_nsc_detector" or "zemax_nsc_energy_budget" or
-            "zemax_run_nsc_ray_trace" or "zemax_system_summary"))
+            "zemax_run_nsc_ray_trace" or "zemax_audit_native_zrd" or "zemax_system_summary"))
             throw new ArgumentException("Unsupported tool. Interpret only a recognized finished read-only optical result.");
         using var doc=JsonDocument.Parse(resultJson);
         var json=doc.RootElement;
@@ -79,6 +79,17 @@ public static class OpticalResultInterpreter
                 }
                 warnings.Add("Surface intercepts and measured mechanical outlines must be in the same local LDE coordinate frame.");
                 warnings.Add("Mechanical outside fractions exclude rays already rejected by the optical model.");
+                if(json.TryGetProperty("opaqueCadMeshPath",out var cad) &&
+                    cad.ValueKind==JsonValueKind.Object)
+                {
+                    Add(cad,"sampledRays","CAD mesh sampled optical rays","sampled ray paths",
+                        "normalized pupil grid, not measured source photon/radiant power");
+                    Add(cad,"firstBlockedRays","CAD mesh first intersections","sampled ray paths",
+                        "first hit only; does not double count downstream triangles");
+                    Add(cad,"unknownRays","CAD mesh uncertain ray paths","sampled ray paths",
+                        "untraced, degenerate or ambiguous, not counted as transmitted");
+                    warnings.Add("Opaque triangle mesh counts are geometrical first hits on surviving consecutive LDE chords; not a watertight CAD solid and not independently calibrated power.");
+                }
                 if(surfaces.Length>5) warnings.Add("Only the first five inspected surfaces are summarized.");
                 next.Add("zemax_diagnose_clipping");
                 break;
@@ -142,6 +153,26 @@ public static class OpticalResultInterpreter
                 if(detectors.Length>8) warnings.Add("Only the first eight detector observations are summarized.");
                 next.Add("zemax_get_nsc_detector");
                 next.Add("zemax_nsc_energy_budget");
+                break;
+            }
+            case "zemax_audit_native_zrd":
+            {
+                if(!json.TryGetProperty("topology",out var graph) ||
+                    graph.ValueKind!=JsonValueKind.Object)
+                    throw new ArgumentException("Native ZRD result must include completed topology evidence.");
+                Add(json,"nativeRayRecords","ZRD native ray records","ray records",
+                    "existing explicitly named local .ZRD; not verified same NSC trace");
+                Add(json,"nativeSegmentRecords","ZRD native ray segments","segments",
+                    "bounded native ZOS-API reader");
+                Add(graph,"rootIntensitySum","ZRD candidate root intensity","native intensity proxy",
+                    "validated algebraic parent/branch graph only");
+                Add(graph,"positiveUnexplainedTransitionDifference","ZRD unexplained transition decrease",
+                    "native intensity proxy","not assigned to coatings, material, or mechanical clipping");
+                warnings.Add("ZRD file hash does NOT prove these segments were produced by the same trace as separately sampled NSC detectors.");
+                warnings.Add("Native parent semantics, polarization, hit-object and detector revisits require version/hardware verification.");
+                warnings.Add("ZRD transition differences are NOT verified coating absorption, material absorption, escaped flux or CAD clipping.");
+                warnings.Add("Never add detector hit intensity observations across multiple detector objects unless physical disjointness is proven.");
+                next.Add("zemax_run_nsc_ray_trace");
                 break;
             }
             case "zemax_system_summary":

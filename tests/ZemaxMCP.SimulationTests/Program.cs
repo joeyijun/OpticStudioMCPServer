@@ -88,6 +88,18 @@ internal static class Program
         AssertThrows<ArgumentException>(()=>OpticalResultInterpreter.Explain(
             "zemax_run_nsc_ray_trace","{\"success\":true,\"state\":\"Queued\"}"),
             "Unfinished NSC trace was interpreted as physical source-to-detector data.");
+        const string zrd = "{\"success\":true,\"nativeRayRecords\":4,\"nativeSegmentRecords\":10,\"topology\":{\"rootIntensitySum\":2,\"positiveUnexplainedTransitionDifference\":0.25,\"physicalEnergyClosureEstablished\":false}}";
+        var topology=OpticalResultInterpreter.Explain("zemax_audit_native_zrd",zrd);
+        Assert(topology.Metrics.Any(x=>x.Name.Contains("unexplained transition")) &&
+            !topology.Metrics.Any(x=>x.Name.Contains("absorption")) &&
+            topology.Caveats.Any(x=>x.Contains("NOT verified coating absorption")) &&
+            topology.Caveats.Any(x=>x.Contains("same trace")),
+            "ZRD interpreter assigned topology gaps to unsupported physical losses.");
+        const string mesh = "{\"success\":true,\"surfaces\":[],\"opaqueCadMeshPath\":{\"sampledRays\":20,\"firstBlockedRays\":7,\"unknownRays\":3}}";
+        var meshExplain=OpticalResultInterpreter.Explain("zemax_ray_footprint",mesh);
+        Assert(meshExplain.Metrics.Any(x=>x.Name.Contains("CAD mesh first")) &&
+            meshExplain.Caveats.Any(x=>x.Contains("watertight")),
+            "Triangle mesh output lost geometric provenance in AI explanation.");
         AssertThrows<ArgumentException>(()=>OpticalResultInterpreter.Explain("zemax_energy_budget",
             "{\"success\":false,\"cases\":[]}"),
             "Failed optical results were interpreted as numerical evidence.");

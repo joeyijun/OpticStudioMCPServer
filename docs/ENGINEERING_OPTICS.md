@@ -578,3 +578,15 @@ detector hit events disjoint, infer absorption from intensity
 differences or claim source-to-detector power closure. Use it to
 investigate the parent/branch topology of a known native trace;
 treat unknown energy categories as unknown, not as zero.
+
+### E8 deterministic evidence interpretation for native ZRD and triangle CAD
+
+`zemax_explain_result` additionally accepts successful
+`zemax_audit_native_zrd` JSON and `zemax_ray_footprint` output with
+`opaqueCadMeshPath`. It distinguishes bounded candidate ZRD
+parent/child intensity differences from **verified** material/coating
+absorption, and expresses opaque mesh first-hit counts in sampled ray
+paths rather than watts. A ZRD hash is never treated as evidence that
+its contents came from the same execution as an NSC detector snapshot.
+Neither explanation closes the energy budget or multiplies separately
+estimated optical coating losses into already traced detector flux.
