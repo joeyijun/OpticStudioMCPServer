@@ -213,7 +213,8 @@ public sealed class RayFootprintTool
                                                     rays[i].X,rays[i].Y,rays[i].Z)));
                                         }
                                         globalSegment=GlobalRaySegmentBoundary.Assess(
-                                            mechanicalGlobalPolygon,segments,mechanicalPlaneTolerance);
+                                            mechanicalGlobalPolygon,segments,mechanicalPlaneTolerance,
+                                            maxPointsPerSurface);
                                     }
                                 }
                             }

@@ -422,3 +422,11 @@ intermediate optical interactions, or a solid-body CAD model still
 needs an explicit multi-segment/solid intersection analysis.
 `globalMechanicalMode:"surface"` retains the original strict
 plane-coincidence assessment. The analysis makes NO model edits.
+
+The segment assessment also returns the exact
+`mostCriticalIntersection` global XYZ at the minimum signed edge
+clearance. With `maxPointsPerSurface>0`, the first 1–128 actual
+stop-plane intersections can be returned in `sampleIntersections`
+alongside an explicit `samplesTruncated` flag. These positions
+belong to the **user-specified mechanical plane**, not the final
+optical image plane.

@@ -16,17 +16,22 @@ public static class GlobalRaySegmentBoundary
         double? MinimumSignedApertureClearance,
         double? OutsideFractionOfPlaneIntersections,
         double? OutsideFractionOfValidSegments,
-        string CoordinateFrame, string Interpretation);
+        string CoordinateFrame, string Interpretation,
+        GlobalFootprintProjection.Point3? MostCriticalIntersection = null,
+        IReadOnlyList<GlobalFootprintProjection.Point3>? SampleIntersections = null,
+        bool SamplesTruncated = false);
 
     internal static Assessment Assess(double[][] polygon,
-        IReadOnlyList<Segment> segments,double tolerance)
+        IReadOnlyList<Segment> segments,double tolerance,int sampleLimit=0)
     {
         var p=GlobalPlanarMechanicalBoundary.Build(polygon,tolerance);
         if(segments==null)throw new ArgumentNullException(nameof(segments));
-        if(segments.Count>2601)
-            throw new ArgumentOutOfRangeException(nameof(segments),"Ray segment analysis is bounded to a 51x51 normalized-pupil grid.");
+        if(segments.Count>2601 || sampleLimit is <0 or >128)
+            throw new ArgumentOutOfRangeException(nameof(segments),"Ray segment analysis is bounded to a 51x51 pupil and <=128 retained intersections.");
         var hits=0;var outside=0;var noCross=0;var ambiguous=0;var degenerate=0;
         var worst=double.PositiveInfinity;
+        GlobalFootprintProjection.Point3? mostCritical=null;
+        var retained=new List<GlobalFootprintProjection.Point3>();
         static double Dot3(double[] x,double[] y)=>x[0]*y[0]+x[1]*y[1]+x[2]*y[2];
         foreach(var seg in segments)
         {
@@ -65,7 +70,9 @@ public static class GlobalRaySegmentBoundary
                 throw new InvalidDataException("Non-finite aperture clearance at ray-plane intersection.");
             hits++;
             if(clearance<0)outside++;
-            worst=Math.Min(worst,clearance);
+            var intersection=new GlobalFootprintProjection.Point3(xyz[0],xyz[1],xyz[2]);
+            if(retained.Count<sampleLimit)retained.Add(intersection);
+            if(clearance<worst) { worst=clearance; mostCritical=intersection; }
         }
         var valid=segments.Count-degenerate-ambiguous;
         return new Assessment(segments.Count,hits,hits-outside,outside,
@@ -73,6 +80,7 @@ public static class GlobalRaySegmentBoundary
             hits>0?worst:null,hits>0?(double)outside/hits:null,
             valid>0?(double)outside/valid:null,
             "OpticStudio global XYZ (lens units)",
-            "Finite straight ray segments from adjacent sequential LDE surfaces (both optically clear), independently projected via each surface's GetGlobalMatrix and actual ray sag Z. Out-of-aperture plane intersections are potential CAD clipping if the polygon is an opaque stop with its allowed opening INSIDE. Parallel/out-of-segment/coplanar/degenerate rays are not fabricated as cuts. Ratios refer only to valid surviving two-surface segments, not source throughput; failures/vignetting before either endpoint are excluded. No generalized solid CAD or diffraction.");
+            "Finite straight ray segments from adjacent sequential LDE surfaces (both optically clear), independently projected via each surface's GetGlobalMatrix and actual ray sag Z. Out-of-aperture plane intersections are potential CAD clipping if the polygon is an opaque stop with its allowed opening INSIDE. Parallel/out-of-segment/coplanar/degenerate rays are not fabricated as cuts. Ratios refer only to valid surviving two-surface segments, not source throughput; failures/vignetting before either endpoint are excluded. No generalized solid CAD or diffraction.",
+            mostCritical,retained,hits>retained.Count);
     }
 }

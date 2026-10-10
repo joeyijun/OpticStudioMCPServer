@@ -264,8 +264,13 @@ internal static class Program
                result.NoPlaneIntersection==2 && result.CoplanarAmbiguous==1 &&
                result.DegenerateSegments==1 &&
                Math.Abs(result.MinimumSignedApertureClearance!.Value+1)<1e-12 &&
-               Math.Abs(result.OutsideFractionOfPlaneIntersections!.Value-0.5)<1e-12,
-            "Finite 3D stop crossing counts or signed aperture clearance are wrong.");
+               Math.Abs(result.OutsideFractionOfPlaneIntersections!.Value-0.5)<1e-12 &&
+               result.MostCriticalIntersection==
+                   new GlobalFootprintProjection.Point3(3,0,5),
+            "Finite 3D stop crossing counts, exact hit location or signed aperture clearance are wrong.");
+        var sampled=GlobalRaySegmentBoundary.Assess(polygon,segments,0.01,1);
+        Assert(sampled.SampleIntersections?.Count==1 && sampled.SamplesTruncated,
+            "Bounded global stop plotting samples were not truncated honestly.");
         var reverse=GlobalRaySegmentBoundary.Assess(polygon,
             new[]{Line(3,10,0)},0.01);
         Assert(reverse.IntersectedPlane==1 && reverse.ApertureOutside==1,
