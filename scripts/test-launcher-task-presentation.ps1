@@ -49,14 +49,21 @@ if ($items.Count -ne 5 -or !$items[4].IsOfficialTask -or $items[4].WorkerGenerat
 $health['tasks'][0]['generation'] = [Newtonsoft.Json.Linq.JValue]::new([long]3)
 $xaml = [IO.File]::ReadAllText((Join-Path $root 'src\ZemaxMCP.Launcher\MainWindow.xaml'))
 if ($xaml -notmatch 'Title="Zemax MCP"') { throw 'Window title must match the product name.' }
-$parse = $type.GetMethod('SelectMcpSseResponse', $flags)
+$diagnosticsType = $assembly.GetType('ZemaxMCP.Launcher.McpDiagnosticsClient')
+if ($null -eq $diagnosticsType) { throw 'Extracted non-UI MCP diagnostics adapter is missing.' }
+$parse = $diagnosticsType.GetMethod('SelectMcpSseResponse', $flags)
+if ($null -eq $parse) { throw 'Request-ID-aware SSE response parser must remain accessible on the diagnostic adapter.' }
 $sse = ': keepalive' + "`n`n" + 'data: {"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":42}}' + "`n`n" + 'data: {"jsonrpc":"2.0","id":7,"result":{"ignored":true}}' + "`n`n" + 'data: {"jsonrpc":"2.0","id":2741,' + "`n" + 'data: "result":{"resultType":"task","taskId":"task-1"}}' + "`n`n"
 $parseArguments = New-Object object[] 2
 $parseArguments[0]=$sse; $parseArguments[1]=[Newtonsoft.Json.Linq.JValue]::new(2741)
 $response = $parse.Invoke($null,$parseArguments)
 if ($response['result']['taskId'].ToString() -ne 'task-1') { throw 'SSE progress/unrelated messages hid the final Task response.' }
-$source = [IO.File]::ReadAllText((Join-Path $root 'src\ZemaxMCP.Launcher\MainWindow.xaml.cs'))
-$probe = $source.Substring($source.IndexOf('private static string TestMcpFunctionality'))
-$probe = $probe.Substring(0,$probe.IndexOf('private async void TasksPageGetTask_Click'))
+$source = [IO.File]::ReadAllText((Join-Path $root 'src\ZemaxMCP.Launcher\McpDiagnosticsClient.cs'))
+if ($source -notmatch 'internal static string TestMcpFunctionality' -or
+    $source -notmatch 'private static void AddAuthorization') {
+    throw 'Extracted diagnostic client is missing a required read-only MCP probe.'
+}
+$probe = $source.Substring($source.IndexOf('internal static string TestMcpFunctionality'))
+$probe = $probe.Substring(0,$probe.IndexOf('private static void AddAuthorization'))
 if ($probe -match '"initialize"' -or $probe -notmatch '"server/discover"') { throw 'Modern capability probe regressed to legacy initialize.' }
 Write-Output 'Task presentation: linked same-generation Task/Job deduplication, honest progress, restart isolation, elapsed time and SSE request-ID filtering passed.'
