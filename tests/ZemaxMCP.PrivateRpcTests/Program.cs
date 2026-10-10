@@ -398,6 +398,11 @@ internal static class Program
         AssertThrows<ArgumentException>(()=>HostLaunchPlan.Build(
             @"C:\Host.exe",@"C:\Worker.exe",@"C:\OS","0.0.0.0",
             8000,false,"basic-viewing",@"C:\snapshots",
+            true,true,"192.168.1.12",false,null,"",null),
+            "Remote LAN binding accepted an empty bearer credential.");
+        AssertThrows<ArgumentException>(()=>HostLaunchPlan.Build(
+            @"C:\Host.exe",@"C:\Worker.exe",@"C:\OS","0.0.0.0",
+            8000,false,"basic-viewing",@"C:\snapshots",
             true,true,"0.0.0.0",false,null,"token",null),
             "LAN address must not use unspecified bind-all IPv4 as its published origin.");
         AssertThrows<ArgumentException>(()=>HostLaunchPlan.Build(

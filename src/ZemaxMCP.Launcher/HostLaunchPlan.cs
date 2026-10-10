@@ -41,8 +41,10 @@ internal static class HostLaunchPlan
         if(tlsEnabled && (!cert.EndsWith(".pfx",StringComparison.OrdinalIgnoreCase) ||
             string.IsNullOrWhiteSpace(pfxPassword)))
             throw new ArgumentException("TLS requires a .pfx certificate and nonempty environment-only password.");
-        if(bearerToken.IndexOfAny(new[]{'\r','\n','\0'})>=0)
-            throw new ArgumentException("Bearer credential contains invalid control characters.");
+        if(bearerToken==null || bearerToken.IndexOfAny(new[]{'\r','\n','\0'})>=0)
+            throw new ArgumentException("Bearer credential is missing or contains invalid control characters.");
+        if(shareLan && string.IsNullOrWhiteSpace(bearerToken))
+            throw new ArgumentException("LAN sharing requires a nonempty bearer credential; remote unauthenticated access is forbidden.");
         var args="--server \""+worker+"\" --zemax-root \""+root+"\" "+
             "--host "+bindHost+" --port "+port+" --read-only "+
             (readOnly?"true":"false")+" --toolset "+profile+
