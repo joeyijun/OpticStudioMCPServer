@@ -31,6 +31,10 @@ public static class CadMultiSegmentAudit
            stops.Any(s=>s.AfterSurface-firstSurface>=chords) ||
            rayPaths.Any(path=>path==null||path.Count!=chords))
             throw new ArgumentException("All rays must preserve the same bounded consecutive-LDE segment indexing.");
+        // Validate and project each stop only ONCE. Rebuilding polygons for
+        // every sampled pupil ray would scale poorly for 12 stops x 2601 rays.
+        var bases=stops.Select(s=>GlobalPlanarMechanicalBoundary.Build(
+            s.AperturePolygon,s.PlaneTolerance)).ToArray();
         var blocked=new int[stops.Count];
         var margin=Enumerable.Repeat(double.PositiveInfinity,stops.Count).ToArray();
         var critical=new GlobalFootprintProjection.Point3?[stops.Count];
@@ -48,9 +52,8 @@ public static class CadMultiSegmentAudit
                 foreach(var indexed in stops.Select((stop,i)=>(stop,i))
                     .Where(x=>x.stop.AfterSurface==firstSurface+segmentIndex))
                 {
-                    var assessment=GlobalRaySegmentBoundary.Assess(
-                        indexed.stop.AperturePolygon,
-                        new[]{segment},indexed.stop.PlaneTolerance,1);
+                    var assessment=GlobalRaySegmentBoundary.AssessOnBasis(
+                        bases[indexed.i],new[]{segment},indexed.stop.PlaneTolerance,1);
                     if(assessment.CoplanarAmbiguous>0 ||
                        assessment.DegenerateSegments>0)
                     {uncertain=true;break;}

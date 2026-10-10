@@ -25,6 +25,12 @@ public static class GlobalRaySegmentBoundary
         IReadOnlyList<Segment> segments,double tolerance,int sampleLimit=0)
     {
         var p=GlobalPlanarMechanicalBoundary.Build(polygon,tolerance);
+        return AssessOnBasis(p,segments,tolerance,sampleLimit);
+    }
+
+    internal static Assessment AssessOnBasis(GlobalPlanarMechanicalBoundary.Basis p,
+        IReadOnlyList<Segment> segments,double tolerance,int sampleLimit=0)
+    {
         if(segments==null)throw new ArgumentNullException(nameof(segments));
         if(segments.Count>2601 || sampleLimit is <0 or >128)
             throw new ArgumentOutOfRangeException(nameof(segments),"Ray segment analysis is bounded to a 51x51 pupil and <=128 retained intersections.");
