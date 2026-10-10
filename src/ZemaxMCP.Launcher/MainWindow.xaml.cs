@@ -41,8 +41,8 @@ public partial class MainWindow : Window
     private string _localAccessToken = "";
     private string _remoteEndpoint = "";
     private string _remoteAccessToken = "";
-    private bool LocalTlsEnabled => EnableTls.IsChecked == true;
-    private string LocalTlsPfxPath => TlsPfxPath.Text.Trim();
+    private string _tlsPfxPath = "";
+    private string _tlsPfxPassword = "";
     private string _fullDiagnostics = "Status has not been checked yet.";
     private readonly Forms.NotifyIcon _trayIcon;
     private readonly DispatcherTimer _statusTimer;
@@ -202,7 +202,6 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(setup)) return;
         if (!TryApplySecureSetup(setup))
         {
-            Report("Paste the complete secure setup copied from the OpticStudio computer. It includes both the MCP address and access token.");
             return;
         }
         SaveSettings();
@@ -222,57 +221,37 @@ public partial class MainWindow : Window
     private string HostName => ShareOnLan.IsChecked == true ? "0.0.0.0" : "127.0.0.1";
     private void RefreshEndpoint() => Endpoint.Text = Url;
     private ZemaxInstallation? Installation => ZemaxVersions.SelectedItem as ZemaxInstallation;
-    private string Url => (LocalTlsEnabled ? "https://" : "http://") +
+    private string Url => "https://" +
         (ShareOnLan.IsChecked == true ? GetLanAddress() : "127.0.0.1") + ":" + Port.Text + "/mcp";
     private bool IsRemoteEndpointConfigured => Uri.TryCreate(_remoteEndpoint, UriKind.Absolute, out var remote) &&
-        (remote.Scheme == Uri.UriSchemeHttp || remote.Scheme == Uri.UriSchemeHttps) && !string.IsNullOrWhiteSpace(_remoteAccessToken);
-    private string McpUrl => Uri.TryCreate(_remoteEndpoint, UriKind.Absolute, out var remote) &&
-        (remote.Scheme == Uri.UriSchemeHttp || remote.Scheme == Uri.UriSchemeHttps) ? remote.ToString().TrimEnd('/') : Url;
+        remote.Scheme == Uri.UriSchemeHttps && !string.IsNullOrWhiteSpace(_remoteAccessToken);
+    private string McpUrl => IsRemoteEndpointConfigured ? _remoteEndpoint.TrimEnd('/') : Url;
     private string McpToken => IsRemoteEndpointConfigured ? _remoteAccessToken : _localAccessToken;
     private string SelectedToolsetProfile => (ToolsetProfile.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag?.ToString() ?? "full-expert";
 
-    private void BrowseTlsPfx_Click(object sender, RoutedEventArgs e)
+    private bool EnsureLocalHttps(bool startingHost = false)
     {
-        var dialog = new Microsoft.Win32.OpenFileDialog
-        {
-            Filter = "PKCS#12 certificates (*.pfx)|*.pfx|All files (*.*)|*.*",
-            CheckFileExists = true,
-            Multiselect = false
-        };
-        if (dialog.ShowDialog(this) == true)
-        {
-            TlsPfxPath.Text = dialog.FileName;
-            SaveSettings();
-        }
-    }
-
-    private void TlsSettings_Changed(object sender, RoutedEventArgs e)
-    {
-        if (!_windowLoaded) return;
-        RefreshEndpoint();
-        SaveSettings();
-        Report("TLS preferences saved. Stop/Start only when no optical Job is active. " +
-               "Remote clients must trust the certificate and verify its endpoint name.");
-    }
-
-    private void AutomaticHttps_Click(object sender, RoutedEventArgs e)
-    {
-        if (!LauncherDialog.Confirm(this, "Set up HTTPS", "Create a private server certificate for this computer? Existing clients need the new HTTPS setup. This does not restart the service or trust any remote certificate.", "Create certificate")) return;
+        if (_settingsLoadFailed) { Report("Restore saved preferences before starting HTTPS; the existing file is preserved."); return false; }
         try
         {
             var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZemaxMCP", "https");
-            var setup = AutomaticHttps.Create(directory, ShareOnLan.IsChecked == true ? GetLanAddress() : "");
-            TlsPfxPath.Text = setup.PfxPath;
-            TlsPfxPassword.Password = setup.Password;
-            EnableTls.IsChecked = true;
-            SaveSettings();
-            RefreshEndpoint();
+            var address = ShareOnLan.IsChecked == true ? GetLanAddress() : "127.0.0.1";
+            var setup = AutomaticHttps.Ensure(directory, _tlsPfxPath, _tlsPfxPassword, address, GetLanAddress());
+            if (!startingHost && _bridge != null && !_bridge.HasExited && setup.PfxPath != _tlsPfxPath)
+            { Report("The HTTPS certificate needs renewal. Stop / Start when no optical Job is active, then copy connection setup again."); return false; }
+            _tlsPfxPath = setup.PfxPath;
+            _tlsPfxPassword = setup.Password;
+            if (!SaveSettings()) throw new IOException("HTTPS preferences could not be saved. Check access to launcher-settings.json.");
             using var certificate = AutomaticHttps.ReadPublic(setup.PublicCertificate);
-            if (LauncherDialog.Confirm(this, "Trust this computer's HTTPS certificate?", "Trust only this server certificate for your Windows user. No administrator rights or global certificate-validation bypass.\n\nSHA-256: " + setup.Fingerprint, "Trust certificate"))
+            if (!AutomaticHttps.IsTrusted(certificate))
+            {
+                if (!LauncherDialog.Confirm(this, "Allow secure local connections?", "Zemax MCP prepared HTTPS automatically. Trust this server certificate for your Windows user to continue. No administrator rights are required.\n\nSHA-256: " + setup.Fingerprint, "Trust and continue"))
+                { Report("HTTPS requires certificate trust. Select Start or Copy connection setup to try again; HTTP fallback is disabled."); return false; }
                 AutomaticHttps.TrustCurrentUser(certificate);
-            Report("HTTPS prepared. Stop/Start when no optical Job is active, then copy the new connection setup. Remote users must confirm the same certificate fingerprint. Existing HTTP settings on other computers were not changed.");
+            }
+            return true;
         }
-        catch (Exception ex) { Report("Automatic HTTPS setup failed: " + ex.Message); }
+        catch (Exception ex) { Report("HTTPS could not be prepared: " + ex.Message + " Certificate checks remain enabled."); return false; }
     }
 
     private void ShareOnLan_Changed(object sender, RoutedEventArgs e)
@@ -346,12 +325,7 @@ public partial class MainWindow : Window
             Report("Port must be a number from 1 to 65535.");
             return;
         }
-        if (LocalTlsEnabled && (!File.Exists(LocalTlsPfxPath) ||
-                                string.IsNullOrWhiteSpace(TlsPfxPassword.Password)))
-        {
-            Report("TLS startup requires an existing PFX file and password in Settings.");
-            return;
-        }
+        if (!EnsureLocalHttps(true)) return;
         StopBridge();
         if (!automaticRestart) _bridgeRestartAttempts = 0;
         SaveSettings();
@@ -372,7 +346,7 @@ public partial class MainWindow : Window
             var startInfo=HostLaunchPlan.Build(bridge,server,Installation.Root,HostName,
                 port,ReadOnlyMode.IsChecked==true,SelectedToolsetProfile,snapshots,
                 OfficialTasks.IsChecked==true,ShareOnLan.IsChecked==true,GetLanAddress(),
-                LocalTlsEnabled,LocalTlsPfxPath,_localAccessToken,TlsPfxPassword.Password);
+                true,_tlsPfxPath,_localAccessToken,_tlsPfxPassword);
             process = Process.Start(startInfo);
         }
         catch (Exception ex)
@@ -896,12 +870,12 @@ public partial class MainWindow : Window
     private void CopyEndpoint_Click(object sender, RoutedEventArgs e) { System.Windows.Clipboard.SetText(McpUrl); Report("MCP address copied: " + McpUrl); }
     private void CopySecureSetup_Click(object sender, RoutedEventArgs e)
     {
+        if (!EnsureLocalHttps()) return;
         var setup = new JObject { ["endpoint"] = Url, ["accessToken"] = _localAccessToken };
-        if (LocalTlsEnabled)
         {
             try
             {
-                using var certificate = new System.Security.Cryptography.X509Certificates.X509Certificate2(LocalTlsPfxPath, TlsPfxPassword.Password,
+                using var certificate = new System.Security.Cryptography.X509Certificates.X509Certificate2(_tlsPfxPath, _tlsPfxPassword,
                     System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.EphemeralKeySet);
                 // Share leaf public bytes only, NEVER PFX/password/private key.
                 setup["serverCertificate"] = Convert.ToBase64String(certificate.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Cert));
@@ -910,8 +884,7 @@ public partial class MainWindow : Window
             catch (Exception ex) { Report("Could not read HTTPS certificate: " + ex.Message); return; }
         }
         System.Windows.Clipboard.SetText(setup.ToString(Newtonsoft.Json.Formatting.None));
-        Report("Connection setup copied. Treat the Bearer token like a password." +
-            (ShareOnLan.IsChecked == true && !LocalTlsEnabled ? " WARNING: plaintext LAN HTTP does not encrypt tokens or optical data." : ""));
+        Report("HTTPS connection setup copied. Treat the Bearer token like a password.");
     }
     private void RegenerateToken_Click(object sender, RoutedEventArgs e)
     {
@@ -936,17 +909,18 @@ public partial class MainWindow : Window
             var endpoint = setup["endpoint"]?.ToString();
             var token = setup["accessToken"]?.ToString();
             if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ||
-                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) || string.IsNullOrWhiteSpace(token)) return false;
+                uri.Scheme != Uri.UriSchemeHttps || string.IsNullOrWhiteSpace(token))
+                throw new ArgumentException("Paste complete HTTPS connection setup from the OpticStudio computer. HTTP connections are not supported.");
             if (setup["serverCertificate"] != null)
             {
-                if (uri.Scheme != Uri.UriSchemeHttps) throw new ArgumentException("Certificate setup requires HTTPS.");
                 using var certificate = AutomaticHttps.ReadPublic(setup["serverCertificate"]!.ToString());
                 var fingerprint = AutomaticHttps.Fingerprint(certificate);
                 if (!string.Equals(fingerprint, setup["certificateSha256"]?.ToString(), StringComparison.OrdinalIgnoreCase))
                     throw new ArgumentException("Certificate fingerprint does not match setup.");
                 if (!AutomaticHttps.IsTrusted(certificate))
                 {
-                    if (!LauncherDialog.Confirm(this, "Trust the OpticStudio computer?", "Only accept setup received directly from your trusted OpticStudio computer. Compare this SHA-256 fingerprint on BOTH computers; a matching value in the same JSON alone does not prove identity.\n\nEndpoint: " + uri.GetLeftPart(UriPartial.Authority) + "\nSHA-256: " + fingerprint + "\n\nAdds only this server leaf certificate to your Windows user's trusted store. Client TLS still checks the endpoint name and expiration.", "Trust this server")) return false;
+                    if (!LauncherDialog.Confirm(this, "Trust the OpticStudio computer?", "Only accept setup received directly from your trusted OpticStudio computer. Compare this SHA-256 fingerprint on BOTH computers; a matching value in the same JSON alone does not prove identity.\n\nEndpoint: " + uri.GetLeftPart(UriPartial.Authority) + "\nSHA-256: " + fingerprint + "\n\nAdds only this server leaf certificate to your Windows user's trusted store. Client TLS still checks the endpoint name and expiration.", "Trust this server"))
+                    { Report("Connection setup was not applied; certificate trust was not confirmed."); return false; }
                     AutomaticHttps.TrustCurrentUser(certificate);
                 }
             }
@@ -954,13 +928,10 @@ public partial class MainWindow : Window
             _remoteAccessToken = token!;
             RemoteSecureSetup.Text = "";
             UpdateRemoteSetupStatus();
-            Report("Connection setup accepted for " + _remoteEndpoint + "." +
-                (uri.Scheme == Uri.UriSchemeHttp && !uri.IsLoopback
-                    ? " WARNING: remote HTTP sends the Bearer token and optical data unencrypted; use HTTPS."
-                    : ""));
+            Report("HTTPS connection setup accepted for " + _remoteEndpoint + ".");
             return true;
         }
-        catch { return false; }
+        catch (Exception ex) { Report("HTTPS connection setup could not be accepted: " + ex.Message); return false; }
     }
     private void UpdateRemoteSetupStatus()
     {
@@ -1217,15 +1188,16 @@ public partial class MainWindow : Window
             var settings = LauncherSettingsStore.Load(SettingsPath);
             Port.Text = settings["port"]?.ToString() ?? Port.Text;
             _remoteEndpoint = settings["remoteEndpoint"]?.ToString() ?? "";
+            if (Uri.TryCreate(_remoteEndpoint, UriKind.Absolute, out var previous) && previous.Scheme == Uri.UriSchemeHttp)
+                _remoteEndpoint = new UriBuilder(previous) { Scheme = Uri.UriSchemeHttps, Port = previous.Port }.Uri.ToString().TrimEnd('/');
             _remoteAccessToken = UnprotectSecret(settings["remoteTokenProtected"]?.ToString());
             _localAccessToken = UnprotectSecret(settings["localTokenProtected"]?.ToString());
             if (string.IsNullOrWhiteSpace(_localAccessToken)) _localAccessToken = GenerateAccessToken();
             ShareOnLan.IsChecked = settings["shareOnLan"]?.Value<bool>() ?? false;
             ReadOnlyMode.IsChecked = settings["readOnly"]?.Value<bool>() ?? false;
             OfficialTasks.IsChecked = OfficialTasksSettings.IsEnabled(settings["enableOfficialTasks"]);
-            EnableTls.IsChecked = settings["enableTls"]?.Value<bool>() ?? false;
-            TlsPfxPath.Text = settings["tlsPfxPath"]?.ToString() ?? "";
-            TlsPfxPassword.Password = UnprotectSecret(settings["tlsPfxPasswordProtected"]?.ToString());
+            _tlsPfxPath = settings["tlsPfxPath"]?.ToString() ?? "";
+            _tlsPfxPassword = UnprotectSecret(settings["tlsPfxPasswordProtected"]?.ToString());
             SelectToolsetProfile(settings["toolsetProfile"]?.ToString());
             StartOnLogin.IsChecked = settings["startOnLogin"]?.Value<bool>() ?? false;
             _clientSetupPrompted = settings["clientSetupPrompted"]?.Value<bool>() ?? false;
@@ -1240,9 +1212,9 @@ public partial class MainWindow : Window
             UpdateRemoteSetupStatus();
         }
     }
-    private void SaveSettings()
+    private bool SaveSettings()
     {
-        if (!_windowLoaded || _settingsLoadFailed) return;
+        if (!_windowLoaded || _settingsLoadFailed) return false;
         try
         {
             LauncherSettingsStore.Save(SettingsPath, new JObject
@@ -1255,16 +1227,17 @@ public partial class MainWindow : Window
                 ["shareOnLan"] = ShareOnLan.IsChecked == true,
                 ["readOnly"] = ReadOnlyMode.IsChecked == true,
                 ["enableOfficialTasks"] = OfficialTasks.IsChecked == true,
-                ["enableTls"] = LocalTlsEnabled,
-                ["tlsPfxPath"] = LocalTlsPfxPath,
-                ["tlsPfxPasswordProtected"] = ProtectSecret(TlsPfxPassword.Password),
+                ["enableTls"] = true,
+                ["tlsPfxPath"] = _tlsPfxPath,
+                ["tlsPfxPasswordProtected"] = ProtectSecret(_tlsPfxPassword),
                 ["toolsetProfile"] = SelectedToolsetProfile,
                 ["startOnLogin"] = StartOnLogin.IsChecked == true,
                 ["windowMaterial"] = "mica",
                 ["clientSetupPrompted"] = _clientSetupPrompted
             });
+            return true;
         }
-        catch { /* Preferences are non-essential. */ }
+        catch { return false; }
     }
     private void SelectToolsetProfile(string? value)
     {
@@ -1326,14 +1299,11 @@ internal static class FirewallRule
     {
         try
         {
-            var rule = "Zemax MCP HTTP " + port;
-            var user = Environment.UserDomainName + "\\" + Environment.UserName;
-            var firewall = "netsh advfirewall firewall add rule name=\"" + rule + "\" dir=in action=allow protocol=TCP localport=" + port + " profile=private";
-            var urlAcl = "netsh http add urlacl url=http://+:" + port + "/mcp/ user=\"" + user + "\"";
-            // cmd.exe lets one UAC confirmation configure both HTTP.SYS and the
-            // private-network firewall rule. Existing URL ACLs are harmless.
-            var arguments = "/c \"" + firewall + " & " + urlAcl + " & exit /b 0\"";
-            using (var process = Process.Start(new ProcessStartInfo("cmd.exe", arguments) { Verb = "runas", UseShellExecute = true }))
+            var rule = "Zemax MCP HTTPS " + port;
+            var arguments = "advfirewall firewall add rule name=\"" + rule + "\" dir=in action=allow protocol=TCP localport=" + port + " profile=private";
+            // Kestrel owns TLS directly; no HTTP.SYS URL ACL or certificate
+            // binding is necessary. Only the private-network firewall needs UAC.
+            using (var process = Process.Start(new ProcessStartInfo("netsh.exe", arguments) { Verb = "runas", UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden }))
             {
                 process.WaitForExit();
                 return process.ExitCode == 0;

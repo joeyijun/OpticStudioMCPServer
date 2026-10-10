@@ -16,6 +16,22 @@ try {
     $password=Property $setup 'Password'
     $public=Property $setup 'PublicCertificate'
     $fingerprint=Property $setup 'Fingerprint'
+    $ensure=$type.GetMethod('Ensure',$flags)
+    $ensureArgs=New-Object object[] 5
+    $ensureArgs[0]=[string]$directory; $ensureArgs[1]=[string]$path; $ensureArgs[2]=[string]$password
+    $ensureArgs[3]='192.168.8.1'; $ensureArgs[4]='192.168.8.1'
+    $reused=$ensure.Invoke($null,$ensureArgs)
+    if ((Property $reused 'PfxPath') -ne $path -or (Property $reused 'Fingerprint') -ne $fingerprint) {throw 'Restart or upgrade changed a valid certificate.'}
+    $ensureArgs[2]='wrong-password'
+    $invalid=$ensure.Invoke($null,$ensureArgs)
+    if ((Property $invalid 'PfxPath') -eq $path) {throw 'Invalid credentials were reused.'}
+    $ensureArgs[2]=[string]$password
+    $ensureArgs[3]='192.168.8.2'; $ensureArgs[4]='192.168.8.2'
+    $replaced=$ensure.Invoke($null,$ensureArgs)
+    if ((Property $replaced 'PfxPath') -eq $path -or !(Test-Path -LiteralPath $path)) {throw 'Address change did not create a replacement while preserving the old certificate.'}
+    $ensureArgs[1]=''; $ensureArgs[2]=''; $ensureArgs[3]='127.0.0.1'
+    $firstRun=$ensure.Invoke($null,$ensureArgs)
+    if (!(Test-Path -LiteralPath (Property $firstRun 'PfxPath'))) {throw 'First run did not automatically prepare HTTPS.'}
     $readArgs=New-Object object[] 1
     $readArgs[0]=[string]$public
     $certificate=$type.GetMethod('ReadPublic',$flags).Invoke($null,$readArgs)
@@ -25,6 +41,10 @@ try {
         if ($type.GetMethod('IsTrusted',$flags).Invoke($null,@($certificate))) { throw 'Generation silently modified the trust store.' }
         $san=[BitConverter]::ToString($certificate.Extensions['2.5.29.17'].RawData).Replace('-','')
         if ($san -notmatch '8704C0A80801' -or $san -notmatch '87047F000001') { throw 'Selected LAN or loopback IP SAN missing.' }
+        $covers=$type.GetMethod('CoversAddress',$flags)
+        if (!$covers.Invoke($null,@($certificate,[Net.IPAddress]::Parse('127.0.0.1'))) -or
+            !$covers.Invoke($null,@($certificate,[Net.IPAddress]::Parse('192.168.8.1'))) -or
+            $covers.Invoke($null,@($certificate,[Net.IPAddress]::Parse('192.168.8.2')))) {throw 'Certificate IP identity validation failed.'}
         $pfx=[Security.Cryptography.X509Certificates.X509Certificate2]::new($path,$password,[Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)
         try { if (-not $pfx.HasPrivateKey) { throw 'Host PFX has no private key.' } } finally { $pfx.Dispose() }
         $acl=Get-Acl -LiteralPath $directory

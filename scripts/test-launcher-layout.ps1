@@ -31,6 +31,12 @@ function Render($window, [string]$name) {
 }
 try {
  Render $owner 'dashboard.png'
+ foreach ($name in @('EnableTls','TlsPfxPath','TlsPfxPassword')) {
+  if ($owner.FindName($name)) {throw "Manual HTTPS control must not appear: $name"}
+ }
+ $owner.Content.SelectedIndex = 2
+ Render $owner 'settings-automatic-https.png'
+ $owner.Content.SelectedIndex = 0
  if ($owner.Width -ne 960 -or $owner.Height -ne 740) { throw 'Compact default window size regressed.' }
  $tabs = $owner.Content
  if ($tabs -isnot [System.Windows.Controls.TabControl] -or $tabs.Items.Count -ne 4) { throw 'Launcher must expose four focused pages.' }

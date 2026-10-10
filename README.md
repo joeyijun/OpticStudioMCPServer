@@ -115,16 +115,17 @@ The Data folder is resolved from `ZEMAX_DATA_ROOT`, the OpticStudio user registr
 
 For an unusual portable layout, set `ZEMAX_ROOT` to the program directory and optionally `ZEMAX_DATA_ROOT` to the Data directory before starting the launcher.
 
-## Simple HTTPS setup (development branch)
+## Automatic HTTPS
 
-On the OpticStudio computer, open **Settings → Set up HTTPS automatically**.
-The launcher generates a server-only certificate with localhost and the selected
-LAN IP, restricts private-key file access, and protects the saved PFX password
-with Windows DPAPI. Confirm local trust if desired, then Stop/Start the Host
-when no optical Job is active. No OpenSSL, administrator session, Internet
-connection, or manually prepared PFX is required.
+The launcher uses HTTPS automatically. There is no transport switch, setup
+wizard or certificate configuration panel. On first Start it prepares a
+server-only certificate for loopback and the detected LAN IP, restricts
+private-key file access, and protects the saved password with Windows DPAPI.
+Confirm trust once for the current Windows user. Valid existing certificates
+and settings are reused across restarts and upgrades. No OpenSSL, Internet
+connection or manually prepared PFX is required.
 
-Copy the new connection setup to the AI computer. It includes only the leaf
+Use **Copy connection setup** and paste it on the AI computer. It includes only the leaf
 **public** certificate and its SHA-256 fingerprint, never its private key or
 PFX password. Compare the fingerprint on both computers before accepting the
 explicit current-user trust prompt. TLS hostname and expiry validation remain
@@ -132,12 +133,13 @@ enabled. Group policy can prevent certificate trust; the launcher reports the
 failure rather than bypassing validation. A client with its own CA store may
 still need client-specific trust configuration.
 
-Existing HTTP settings are preserved, not silently migrated: changing the
-scheme without updating remote clients and trust would break connections.
-HTTPS is recommended for LAN use. Custom organization-issued PFX certificates
-remain available under **Advanced: custom certificate**. If the LAN address
-changes or the generated certificate expires, create a replacement and confirm
-its new fingerprint on the AI computers; old trust is not silently removed.
+Launcher-managed endpoints are HTTPS-only; there is no plaintext fallback.
+When upgrading from HTTP, update both computers and copy fresh connection
+setup, then reconfigure the AI clients. A missing, expired or address-mismatched
+certificate is replaced automatically at Start. Confirm the new certificate
+fingerprint on the AI computers; old trust is not silently removed. Existing
+valid custom certificates in saved settings remain usable without a visible
+advanced configuration panel.
 
 ## AI client configuration
 

@@ -672,21 +672,7 @@
                        LostFocus="Port_LostFocus"/>
               <Button Grid.Column="2" Content="New token" Style="{StaticResource SmallButton}" HorizontalAlignment="Right" Click="RegenerateToken_Click"/>
             </Grid>
-            <Button Content="Set up HTTPS automatically" Style="{StaticResource ActionButton}" Margin="0,12,0,0" Click="AutomaticHttps_Click"/>
-            <CheckBox x:Name="EnableTls" Content="Use HTTPS" Margin="0,8,0,0"
-                      ToolTip="Use a trusted PFX certificate with a private key. Changes apply at next Start." Checked="TlsSettings_Changed" Unchecked="TlsSettings_Changed"/>
-            <Expander Header="Advanced: custom certificate" Margin="0,6,0,0"><StackPanel>
-            <Grid Margin="0,6,0,0">
-              <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-              <TextBox x:Name="TlsPfxPath" Style="{StaticResource InputBox}" ToolTip="Full path to a trusted PKCS#12 (.pfx) certificate."
-                       LostFocus="TlsSettings_Changed"/>
-              <Button Grid.Column="1" Content="PFX…" Style="{StaticResource SmallButton}" Margin="6,0,0,0" Click="BrowseTlsPfx_Click"/>
-            </Grid>
-            <PasswordBox x:Name="TlsPfxPassword" Margin="0,6,0,0" Padding="7,5"
-                         ToolTip="PFX password is DPAPI protected for this Windows user. Only the child Host receives it."
-                         LostFocus="TlsSettings_Changed"/>
-            </StackPanel></Expander>
-            <TextBlock Text="Clients must trust the certificate, with a matching DNS name or IP. Restart Host to apply."
+            <TextBlock Text="HTTPS is automatic. Copy setup to connect another computer."
                        Style="{StaticResource HelperText}" Margin="0,5,0,0"/>
             <Button Content="Copy connection setup" Style="{StaticResource ActionButton}" HorizontalAlignment="Stretch" Margin="0,10,0,0" Click="CopySecureSetup_Click"/>
           </StackPanel>
@@ -705,7 +691,7 @@
                        ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
               <Button Grid.Column="1" Content="Copy" Style="{StaticResource ActionButton}" MinWidth="70" Margin="9,0,0,0" Click="CopyEndpoint_Click"/>
             </Grid>
-            <TextBlock Text="Use Copy secure setup to connect another computer." Style="{StaticResource HelperText}" Margin="0,10,0,0"/>
+            <TextBlock Text="Use Copy connection setup to connect another computer." Style="{StaticResource HelperText}" Margin="0,10,0,0"/>
           </StackPanel>
         </Border>
         <Border Grid.Column="2" Style="{StaticResource Card}">

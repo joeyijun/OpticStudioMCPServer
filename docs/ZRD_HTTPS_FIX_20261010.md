@@ -34,7 +34,7 @@ because the adapter has better diagnostics.
 
 ## HTTPS usability and trust boundary
 
-Settings now has automatic RSA-3072 server-certificate generation. LAN IP,
+The Launcher now has automatic RSA-3072 server-certificate generation. LAN IP,
 machine name, localhost, IPv4/IPv6 loopback SANs are explicit. It produces a
 one-year non-CA, server-auth-only certificate. A unique password-protected PFX
 is kept under a directory restricted to the current SID and SYSTEM; passwords
@@ -47,14 +47,19 @@ independent identity proof: compare with the trusted source computer before
 approval. No process-wide certificate-validation callback is weakened and no
 trust store is modified during generation or tests.
 
-Existing installations keep their HTTP settings and running service unchanged.
-The new setup action prepares HTTPS; Stop/Start applies it. A universal silent
-HTTPS default would require trust distribution to all independently managed AI
-clients, which is not guaranteed, especially under corporate policy. Advanced
-organization-managed PFX remains available. There is no claimed transparent
-Node/custom-CA-store compatibility or automatic certificate renewal.
+Launcher-managed connections are HTTPS-only. Start automatically prepares or
+reuses the certificate; Settings only exposes Copy connection setup, not TLS
+switches or PFX fields. Trust remains explicitly confirmed. On upgrade from
+HTTP, refresh both computers' connection setup and AI-client configurations.
+Certificates that are missing, invalid, expired or do not cover the current
+endpoint IP are replaced at Start; remote users must confirm new fingerprints.
+Existing valid saved PFX credentials are reused. Clients with independent CA
+stores may still need their own trust configuration.
 
 Local tests passed generation, SAN encoding, public/private separation, PFX
 load, ACL isolation, absence of implicit trust, rejection of CA input and the
-full offline desktop regression/render suite. Real cross-computer trusted TLS
-acceptance is still pending deployment and explicit user trust.
+full offline desktop regression/render suite, first-run preparation, reuse and
+address-change replacement. Real Windows HTTPS handshake, authenticated MCP
+discovery and tool calls pass an isolated Fake Worker E2E. The user confirmed
+both computers work with the preceding HTTPS handshake-fix package; the new
+simplified Launcher still needs deployment confirmation.

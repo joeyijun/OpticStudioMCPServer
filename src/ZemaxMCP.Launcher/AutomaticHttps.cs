@@ -20,6 +20,61 @@ internal static class AutomaticHttps
         internal string Fingerprint { get; set; } = "";
     }
 
+    // Preserve a usable certificate across upgrades and restarts. Replace only
+    // missing/invalid/expired credentials or certificates for a changed address.
+    internal static Setup Ensure(string directory, string path, string password, string requiredAddress, string lanAddress)
+    {
+        if (File.Exists(path) && !string.IsNullOrWhiteSpace(password))
+        {
+            try
+            {
+                using var pfx = new X509Certificate2(path, password, X509KeyStorageFlags.EphemeralKeySet);
+                using var certificate = ReadPublic(Convert.ToBase64String(pfx.RawData));
+                if (pfx.HasPrivateKey && CoversAddress(certificate, IPAddress.Parse(requiredAddress)))
+                    return new Setup { PfxPath = path, Password = password,
+                        PublicCertificate = Convert.ToBase64String(certificate.RawData), Fingerprint = Fingerprint(certificate) };
+            }
+            catch (CryptographicException) { }
+            catch (ArgumentException) { }
+        }
+        return Create(directory, lanAddress);
+    }
+
+    internal static bool CoversAddress(X509Certificate2 certificate, IPAddress address)
+    {
+        var data = certificate.Extensions["2.5.29.17"]?.RawData;
+        if (data == null || data.Length < 2 || data[0] != 0x30) return false;
+        var offset = 1;
+        int ReadLength()
+        {
+            if (offset >= data.Length) throw new ArgumentException("Invalid certificate SAN.");
+            var length = (int)data[offset++];
+            if (length < 128) return length;
+            var count = length & 127;
+            if (count == 0 || count > 2 || offset + count > data.Length) throw new ArgumentException("Invalid certificate SAN length.");
+            length = 0;
+            while (count-- > 0) length = (length << 8) | data[offset++];
+            return length;
+        }
+        var sequenceLength = ReadLength();
+        if (sequenceLength != data.Length - offset) return false;
+        var expected = address.GetAddressBytes();
+        while (offset < data.Length)
+        {
+            var tag = data[offset++];
+            var length = ReadLength();
+            if (length > data.Length - offset) return false;
+            if (tag == 0x87 && length == expected.Length)
+            {
+                var matches = true;
+                for (var i = 0; i < length; i++) matches &= data[offset + i] == expected[i];
+                if (matches) return true;
+            }
+            offset += length;
+        }
+        return false;
+    }
+
     internal static Setup Create(string directory, string lanAddress)
     {
         directory = Path.GetFullPath(directory);
