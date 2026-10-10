@@ -37,7 +37,7 @@ public static class ZemaxOperationMetadata
         {
             new OperationPolicy(ZemaxOperationImpact.ReadOnly, new[]
             {
-                "ApertureThroughput", "SequentialEnergyBudget", "RayFootprint", "DiagnoseClipping", "CardinalPoints", "ChromaticFocalShift", "DiffractionEncircledEnergy", "FftMtfVsField", "FftPsf",
+                "ApertureThroughput", "SequentialEnergyBudget", "GetCoatingRta", "RayFootprint", "DiagnoseClipping", "CardinalPoints", "ChromaticFocalShift", "DiffractionEncircledEnergy", "FftMtfVsField", "FftPsf",
                 "FieldCurvatureDistortion", "GeometricEncircledEnergy", "GeometricImageAnalysis", "GeometricMTF", "GeometricMtfVsField",
                 "GetAdvancedSystemSettings", "GetAfocalMode", "GetApertureSettings", "GetApodization", "GetAsphericSurface", "GetConfiguration",
                 "GetConfigurationOperands", "GetExtraData", "GetFieldSettings", "GetFirstOrderData", "GetGlobalMatrix", "GetMaterialCatalogSettings",
