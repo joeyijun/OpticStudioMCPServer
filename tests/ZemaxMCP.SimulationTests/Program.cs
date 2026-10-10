@@ -128,6 +128,22 @@ internal static class Program
             ledger.CoatingLossStatus=="not directly measured" &&
             ledger.MechanicalClippingStatus=="not directly measured",
             "Same-trace ledger summed overlapping detectors or invented unavailable R/T/A/geometry losses.");
+        var configured=NscSameTraceLedger.Build(null,new[]{
+            (Id:2,Type:"DetectorRectangle",Flux:4.0,Hits:12.0)
+        },true,new[]{
+            new NscSameTraceLedger.ConfiguredSource(1,3.0,1000,1),
+            new NscSameTraceLedger.ConfiguredSource(5,2.0,0,0)
+        });
+        Assert(configured.ConfiguredSourcePowerSum==5 &&
+               configured.Detectors[0].FractionOfDeclaredSource==null &&
+               !configured.AdditiveSourceToDetectorBalanceValid &&
+               configured.ConfiguredSourcePowerInterpretation.Contains("not measured"),
+            "Native configured power was confused with measured launched flux.");
+        AssertThrows<ArgumentException>(()=>NscSameTraceLedger.Build(null,new[]{
+            (Id:2,Type:"DetectorRectangle",Flux:4.0,Hits:12.0)
+        },true,new[]{
+            new NscSameTraceLedger.ConfiguredSource(1,double.NaN,1000,1)
+        }),"Nonfinite source power metadata accepted.");
         var withoutSource=NscSameTraceLedger.Build(null,new[]{
             (Id:2,Type:"DetectorRectangle",Flux:4.0,Hits:12.0)
         },true);

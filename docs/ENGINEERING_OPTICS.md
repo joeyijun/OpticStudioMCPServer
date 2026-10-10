@@ -495,3 +495,24 @@ checked to a bounded numerical tolerance. A discontinuity produces
 `uncertainRays`; it cannot yield an invented first obstruction
 at a downstream CAD stop. This protects ray identity across
 coordinate breaks and trace inconsistencies.
+
+### Configured NSC source-power readback (NOT automatically source efficiency)
+
+With `snapshotDetectorObjects` on
+`zemax_run_nsc_ray_trace`, optional
+`includeConfiguredSourcePower:true` reads up to 128 NCE
+`IObjectSources.Power`, `NumberOfAnalysisRays`, and
+`WaveNumber` values inside the same ZOS session after that trace.
+`sameTraceEnergy.configuredSources` and
+`configuredSourcePowerSum` expose model settings separately from the
+native **post-trace detector readings**.
+
+A source's configured Power is not an independently measured number of
+watts or verified launched-ray power. Emitter visibility, source
+selection, inactive sources, filters and special source types matter;
+the configured sum MUST NOT silently become the efficiency denominator.
+Detector `fractionOfDeclaredSource` therefore remains NULL unless
+`declaredLaunchedFlux` is explicitly supplied by the caller and
+verified against the actual source set. The source sum does not
+reclassify missing power as coating absorption, bulk absorption or CAD
+clipping.

@@ -11,6 +11,9 @@ public static class NscSameTraceLedger
     public sealed record DetectorReading(int ObjectNumber,string ObjectType,
         double IncidentFlux,double Hits,double? FractionOfDeclaredSource);
 
+    public sealed record ConfiguredSource(int ObjectNumber,double ConfiguredPower,
+        int AnalysisRayCount,int WaveNumber);
+
     public sealed record Report(
         string EvidenceKind,string DenominatorKind,bool SameTraceCaptured,
         bool DetectorsClearedBeforeTrace,bool DetectorsMayOverlap,
@@ -19,11 +22,15 @@ public static class NscSameTraceLedger
         bool AdditiveSourceToDetectorBalanceValid,
         double? UnassignedEnergy,
         string CoatingLossStatus,string MaterialLossStatus,
-        string MechanicalClippingStatus,string Interpretation);
+        string MechanicalClippingStatus,string Interpretation,
+        IReadOnlyList<ConfiguredSource>? ConfiguredSources = null,
+        double? ConfiguredSourcePowerSum = null,
+        string ConfiguredSourcePowerInterpretation = "not read; source power is not independently measured");
 
     internal static Report Build(double? declaredFlux,
         IReadOnlyList<(int Id,string Type,double Flux,double Hits)> detectorReadings,
-        bool clearedAllDetectors)
+        bool clearedAllDetectors,
+        IReadOnlyList<ConfiguredSource>? configuredSources = null)
     {
         if(!clearedAllDetectors)
             throw new ArgumentException("Same-trace detector ledger requires clearing ALL detector buffers before this trace.");
@@ -35,6 +42,19 @@ public static class NscSameTraceLedger
             throw new ArgumentException("Provide 1..16 unique detectors with finite nonnegative native flux and hits.");
         if(declaredFlux.HasValue && (!double.IsFinite(declaredFlux.Value)||declaredFlux.Value<=0))
             throw new ArgumentException("Declared source flux must be finite and positive.");
+        if(configuredSources is {Count:>128} ||
+           configuredSources?.Any(x=>x.ObjectNumber<1 ||
+               !double.IsFinite(x.ConfiguredPower) || x.ConfiguredPower<0 ||
+               x.AnalysisRayCount<0 || x.WaveNumber<0)==true ||
+           configuredSources?.Select(x=>x.ObjectNumber).Distinct().Count()!=configuredSources?.Count)
+            throw new ArgumentException("Native configured sources must be unique and finite (up to 128).");
+        double? configuredTotal=null;
+        if(configuredSources != null)
+        {
+            configuredTotal=configuredSources.Sum(x=>x.ConfiguredPower);
+            if(!double.IsFinite(configuredTotal.Value))
+                throw new InvalidDataException("Configured source power sum overflowed.");
+        }
         var rows=detectorReadings.Select(x=>
             new DetectorReading(x.Id,x.Type,x.Flux,x.Hits,
                 declaredFlux is null ? null : x.Flux/declaredFlux.Value)).ToArray();
@@ -51,6 +71,13 @@ public static class NscSameTraceLedger
             "Source power is user-declared and must represent the SAME trace, source set and native units; no source power was independently measured. " +
             "OpticStudio's detector may record multiple hits or overlap another detector. " +
             "Coating reflectance/transmittance/absorption, bulk material absorption, and mechanical clipping are NOT independently attributed from detector totals: the residual and additive energy closure are UNKNOWN, not assigned to arbitrary losses. " +
-            "No repeated multiplication of native ray intensities by R/T/A, no model edits, no ZRD, no watts claim without native unit validation.");
+            "No repeated multiplication of native ray intensities by R/T/A, no model edits, no ZRD, no watts claim without native unit validation.",
+            configuredSources,configuredTotal,
+            configuredSources==null ? "not read; source power is not independently measured" :
+                "NCE IObjectSources configured Power and analysis-ray count read in the same session. " +
+                "This is a declared optical model source power SUM, not a measured actually emitted or launched flux. " +
+                "Sources with zero configured analysis rays, ignored/disabled sources, imported/special sources, " +
+                "ray filters, source coupling and hidden non-source emitters can prevent treating this sum as a conserved " +
+                "denominator. It is diagnostic only: detector fractions continue to use explicitly user-declared flux.");
     }
 }

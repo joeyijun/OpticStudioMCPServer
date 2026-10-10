@@ -104,7 +104,8 @@ internal static class StaticToolManifestAssertions
             throw new InvalidOperationException("Footprint tool must advertise explicit local mechanical boundary controls.");
         var traceArguments=StaticToolManifest.GetRequired("zemax_run_nsc_ray_trace").InputSchema.GetProperty("properties");
         if(!traceArguments.TryGetProperty("snapshotDetectorObjects",out _) ||
-           !traceArguments.TryGetProperty("declaredLaunchedFlux",out _))
+           !traceArguments.TryGetProperty("declaredLaunchedFlux",out _) ||
+           !traceArguments.TryGetProperty("includeConfiguredSourcePower",out _))
             throw new InvalidOperationException("NSC trace must expose explicitly scoped post-trace detector evidence.");
 
         var detectorInputs = StaticToolManifest.GetRequired("zemax_get_nsc_detector").InputSchema.GetProperty("properties");
