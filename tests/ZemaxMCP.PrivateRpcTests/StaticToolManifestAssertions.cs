@@ -100,6 +100,11 @@ internal static class StaticToolManifestAssertions
             !footprintInputs.TryGetProperty("mechanicalPolygon", out _) ||
             !footprintInputs.TryGetProperty("mechanicalSurface", out _))
             throw new InvalidOperationException("Footprint tool must advertise explicit local mechanical boundary controls.");
+        var traceArguments=StaticToolManifest.GetRequired("zemax_run_nsc_ray_trace").InputSchema.GetProperty("properties");
+        if(!traceArguments.TryGetProperty("snapshotDetectorObjects",out _) ||
+           !traceArguments.TryGetProperty("declaredLaunchedFlux",out _))
+            throw new InvalidOperationException("NSC trace must expose explicitly scoped post-trace detector evidence.");
+
         var detectorInputs = StaticToolManifest.GetRequired("zemax_get_nsc_detector").InputSchema.GetProperty("properties");
         if (!detectorInputs.TryGetProperty("includeTilePlan", out _) ||
             !detectorInputs.TryGetProperty("tilePlanPage", out _) ||

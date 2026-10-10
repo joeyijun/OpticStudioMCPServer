@@ -17,6 +17,7 @@
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\CoatingPerformanceReflection.cs" Link="Server\CoatingPerformanceReflection.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscDetectorTilePreview.cs" Link="Server\NscDetectorTilePreview.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscDetectorCsvExport.cs" Link="Server\NscDetectorCsvExport.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscSameTraceLedger.cs" Link="Server\NscSameTraceLedger.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\SystemSummaryComparer.cs" Link="Server\SystemSummaryComparer.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\ModelPreflightChecks.cs" Link="Server\ModelPreflightChecks.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\ModelWorkflowValidator.cs" Link="Server\ModelWorkflowValidator.cs" />

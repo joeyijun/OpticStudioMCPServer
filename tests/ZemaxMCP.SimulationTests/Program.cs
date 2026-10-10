@@ -27,6 +27,7 @@ internal static class Program
             VerifyNativeCoatingReflection();
             VerifyNativeDetectorTiles();
             VerifyDetectorCsvExport();
+            VerifySameTraceLedger();
             VerifyModelSummaryDiff();
             VerifyModelPreflight();
             VerifyPurposePreflight();
@@ -112,6 +113,35 @@ internal static class Program
         var unknown=SystemSummaryComparer.Compare(first,unmatched);
         Assert(unknown.ChangedProperties==0 && unknown.Warnings.Any(x=>x.Contains("UNKNOWN")),
             "Unmatched bounded sample must not imply a verified surface deletion.");
+    }
+
+    private static void VerifySameTraceLedger()
+    {
+        var ledger=NscSameTraceLedger.Build(10,new[]{
+            (Id:2,Type:"DetectorRectangle",Flux:4.0,Hits:12.0),
+            (Id:4,Type:"DetectorRectangle",Flux:3.0,Hits:9.0)
+        },true);
+        Assert(ledger.SameTraceCaptured && ledger.Detectors.Count==2 &&
+            Math.Abs(ledger.Detectors[0].FractionOfDeclaredSource!.Value-0.4)<1e-12 &&
+            !ledger.AdditiveSourceToDetectorBalanceValid && ledger.UnassignedEnergy==null &&
+            ledger.CoatingLossStatus=="not directly measured" &&
+            ledger.MechanicalClippingStatus=="not directly measured",
+            "Same-trace ledger summed overlapping detectors or invented unavailable R/T/A/geometry losses.");
+        var withoutSource=NscSameTraceLedger.Build(null,new[]{
+            (Id:2,Type:"DetectorRectangle",Flux:4.0,Hits:12.0)
+        },true);
+        Assert(withoutSource.Detectors.Single().FractionOfDeclaredSource==null,
+            "Missing source denominator was fabricated.");
+        AssertThrows<ArgumentException>(()=>NscSameTraceLedger.Build(10,new[]{
+            (Id:2,Type:"DetectorRectangle",Flux:4.0,Hits:12.0)
+        },false),"Old un-cleared detector readings treated as same trace.");
+        AssertThrows<ArgumentException>(()=>NscSameTraceLedger.Build(10,new[]{
+            (Id:2,Type:"DetectorRectangle",Flux:4.0,Hits:12.0),
+            (Id:2,Type:"DetectorRectangle",Flux:1.0,Hits:2.0)
+        },true),"Duplicate detector flux contributions were accepted.");
+        AssertThrows<ArgumentException>(()=>NscSameTraceLedger.Build(10,new[]{
+            (Id:2,Type:"DetectorRectangle",Flux:double.NaN,Hits:12.0)
+        },true),"Nonfinite detector flux passed a native ledger.");
     }
 
     private static void VerifyDetectorCsvExport()

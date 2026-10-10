@@ -430,3 +430,34 @@ stop-plane intersections can be returned in `sampleIntersections`
 alongside an explicit `samplesTruncated` flag. These positions
 belong to the **user-specified mechanical plane**, not the final
 optical image plane.
+
+### Same-trace NSC detector/source snapshot: measured vs inferred evidence
+
+`zemax_run_nsc_ray_trace` accepts optional `snapshotDetectorObjects`
+(1..16 unique native scalar NSC detector IDs) and optional
+`declaredLaunchedFlux` (strictly positive user-supplied same-trace,
+same-source-set native flux). A snapshot REQUIRES
+`clearDetectors:true, detectorObject:0`: all detectors must be cleared
+immediately before tracing to exclude accumulated previous-run values.
+Immediately after **this same** successful trace, in the same serialized
+ZOS session before releasing it, the tool reads `GetDetectorData(id,0,0)`
+and `GetDetectorData(id,-3,0)`. This makes each detector reading
+time/provenance consistent with the tool's trace, unlike a later
+standalone detector query. In background mode the ledger is returned
+only in the finished Job result; the initial Queued response has no
+detector samples.
+
+The `sameTraceEnergy` ledger states that launched source flux is
+**user-declared**, not independently measured by ZOS; computes **only
+individual detector** native flux / declared source flux ratios; and
+marks `additiveSourceToDetectorBalanceValid:false`,
+`unassignedEnergy:null`, and independent coating/bulk/mechanical
+losses **not directly measured**. Multiple NSC detectors may register
+the *same ray*, so their summed flux is NOT source-conserved. A native
+coating S/P interface R/T/A sample from sequential LDE or a separate
+geometry/clipping proxy must **not** be multiplied or subtracted from
+an NSC detector flux that already includes those interactions.
+Full per-interaction energy conservation requires separately verifiable
+same-trace ray path/absorption provenance (e.g., validated ZRD), which
+is NOT produced by this trace tool. This bounded design deliberately
+avoids fabricating a complete optical energy ledger from incomplete data.
