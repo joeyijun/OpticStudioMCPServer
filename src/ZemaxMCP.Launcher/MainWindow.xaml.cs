@@ -787,6 +787,9 @@ public partial class MainWindow : Window
                 "; status: " + (statusFresh ? "fresh" : workerBusy ? "cached while Worker is busy" : "last known / unavailable") +
                 (statusAge.HasValue ? " (validated " + Math.Round(statusAge.Value).ToString(System.Globalization.CultureInfo.InvariantCulture) + "s ago)" : " (never validated)") + "\n" +
                 "Security: " + (authenticationRequired ? "Bearer token required" : "no token") +
+                "; network encryption: " + (health["tlsEnabled"]?.Value<bool>() == true ? "TLS" :
+                    (Uri.TryCreate(endpoint, UriKind.Absolute, out var activeUri) && activeUri.IsLoopback
+                        ? "local loopback HTTP" : "UNENCRYPTED HTTP — token exposed in transit")) +
                 "; Origin validation: " + (originValidationEnabled ? "enabled" : "not reported") +
                 "; lens access: " + (readOnly ? "read-only" : "read/write with pre-change snapshots") + "\n" +
                 "Snapshot folder: " + (string.IsNullOrWhiteSpace(snapshotDirectory) ? "not reported" : snapshotDirectory) +
@@ -1038,7 +1041,8 @@ public partial class MainWindow : Window
     {
         var setup = new JObject { ["endpoint"] = Url, ["accessToken"] = _localAccessToken }.ToString(Newtonsoft.Json.Formatting.None);
         System.Windows.Clipboard.SetText(setup);
-        Report("Secure connection setup copied. Treat it like a password and paste it into the Secure setup field on the AI computer.");
+        Report("Connection setup copied. Treat the Bearer token like a password." +
+            (ShareOnLan.IsChecked == true ? " WARNING: plaintext LAN HTTP does not encrypt tokens or optical data." : ""));
     }
     private void RegenerateToken_Click(object sender, RoutedEventArgs e)
     {
@@ -1068,7 +1072,10 @@ public partial class MainWindow : Window
             _remoteAccessToken = token!;
             RemoteSecureSetup.Text = "";
             UpdateRemoteSetupStatus();
-            Report("Secure connection setup accepted for " + _remoteEndpoint + ".");
+            Report("Connection setup accepted for " + _remoteEndpoint + "." +
+                (uri.Scheme == Uri.UriSchemeHttp && !uri.IsLoopback
+                    ? " WARNING: remote HTTP sends the Bearer token and optical data unencrypted; use HTTPS."
+                    : ""));
             return true;
         }
         catch { return false; }
@@ -1083,9 +1090,13 @@ public partial class MainWindow : Window
             return;
         }
         var endpoint = new Uri(_remoteEndpoint);
-        RemoteSetupDot.Fill = System.Windows.Media.Brushes.SeaGreen;
-        RemoteSetupStatus.Foreground = System.Windows.Media.Brushes.SeaGreen;
-        RemoteSetupStatus.Text = "Remote endpoint active: " + endpoint.Host + ":" + endpoint.Port + " · token protected for this Windows user.";
+        var unencrypted = endpoint.Scheme == Uri.UriSchemeHttp && !endpoint.IsLoopback;
+        RemoteSetupDot.Fill = unencrypted ? System.Windows.Media.Brushes.DarkOrange : System.Windows.Media.Brushes.SeaGreen;
+        RemoteSetupStatus.Foreground = unencrypted ? System.Windows.Media.Brushes.DarkOrange : System.Windows.Media.Brushes.SeaGreen;
+        RemoteSetupStatus.Text = "Remote endpoint: " + endpoint.Host + ":" + endpoint.Port +
+            (unencrypted ? " · WARNING: plaintext HTTP exposes the Bearer token in transit; use HTTPS." :
+             endpoint.Scheme == Uri.UriSchemeHttps ? " · TLS encrypted (verify certificate trust)." :
+             " · local loopback HTTP.");
     }
     private static string GenerateAccessToken()
     {
