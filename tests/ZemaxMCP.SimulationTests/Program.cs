@@ -4,6 +4,7 @@ using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Services.Jobs;
 using ZemaxMCP.Server.Tools.Analysis;
 using ZemaxMCP.Server.Tools.NonSequential;
+using ZemaxMCP.Server.Tools.Catalog;
 using ZemaxMCP.Server.Tools.Base;
 
 internal static class Program
