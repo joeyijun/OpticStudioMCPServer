@@ -96,6 +96,11 @@ public sealed class TaskPlanTool
                     warnings.Add("Available steps reflect the configured Host toolset/read-only mode; per-token permissions and current lease can be stricter. Query tools/list.");
 
                     var definitions = ToolCatalog.GetPlaybooks(normalized, _ => true)[0];
+                    // Positional stage descriptions are intentional (safe-edit
+                    // revisits the same GetSurface/Snapshot tools). Fail closed
+                    // if catalog steps change without matching descriptions.
+                    if (definitions.AvailableSteps.Count != Purposes[normalized].Length)
+                        throw new InvalidOperationException("Task playbook and stage descriptions are out of sync.");
                     var steps = definitions.AvailableSteps.Select((name, index) =>
                     {
                         var domain = ToolsetCatalog.GetDomain(name).Id;
@@ -104,7 +109,7 @@ public sealed class TaskPlanTool
                                 ? domain is "non-sequential" or "system" or "administration"
                                 : domain != "non-sequential"));
                         return new PlanStep(index + 1, name,
-                            index < Purposes[normalized].Length ? Purposes[normalized][index] : "Inspect or verify optical result",
+                            Purposes[normalized][index],
                             playbook.AvailableSteps.Contains(name), applicable,
                             StaticToolManifest.GetRequired(name).Impact != "ReadOnly");
                     }).ToArray();
