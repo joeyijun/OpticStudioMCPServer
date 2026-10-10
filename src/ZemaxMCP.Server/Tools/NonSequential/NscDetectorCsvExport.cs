@@ -69,8 +69,11 @@ public static class NscDetectorCsvExport
                 writer.Flush();
             }
             cancellationToken.ThrowIfCancellationRequested();
-            using var file=File.OpenRead(temp);
-            var digest=Convert.ToHexString(SHA256.HashData(file)).ToLowerInvariant();
+            string digest;
+            // Windows cannot atomically move/replace an open CSV. Dispose
+            // the hash read handle before committing the sibling temp file.
+            using(var file=File.OpenRead(temp))
+                digest=Convert.ToHexString(SHA256.HashData(file)).ToLowerInvariant();
             cancellationToken.ThrowIfCancellationRequested();
             if(overwrite && File.Exists(target)) File.Replace(temp,target,null);
             else File.Move(temp,target);
