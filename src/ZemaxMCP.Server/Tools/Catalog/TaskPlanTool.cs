@@ -28,22 +28,22 @@ public sealed class TaskPlanTool
     private static readonly IReadOnlyDictionary<string, string[]> Purposes =
         new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
-            ["clipping"] = new[] { "Confirm active system", "Read target surface", "Inspect physical aperture",
+            ["clipping"] = new[] { "Summarize active model, units and key optical elements", "Confirm active system", "Read target surface", "Inspect physical aperture",
                 "Return a ranked, cross-checked clipping diagnosis", "Trace failing rays",
                 "Calculate footprint envelope", "Cross-check geometric pupil fraction" },
-            ["imaging"] = new[] { "Read optical system", "Read field sampling", "Measure RMS spot",
+            ["imaging"] = new[] { "Summarize active model, units and key optical elements", "Read optical system", "Read field sampling", "Measure RMS spot",
                 "Inspect PSF", "Inspect MTF" },
-            ["straylight"] = new[] { "Inspect NSC system settings", "Summarize scene",
+            ["straylight"] = new[] { "Summarize active model, units and key optical elements", "Inspect NSC system settings", "Summarize scene",
                 "Inspect NSC object IDs", "Trace rays (explicitly confirm detector clearing)",
                 "Read native detector ROI", "Compare non-additive detector flux against an explicit source denominator" },
-            ["energy"] = new[] { "Inspect source wavelengths", "Inspect fields",
+            ["energy"] = new[] { "Summarize active model, units and key optical elements", "Inspect source wavelengths", "Inspect fields",
                 "Trace sequential energy path", "Cross-check pupil loss", "Inspect footprint",
                 "Check non-sequential objects", "Read detector pixels", "Compute detector/source ratios" },
-            ["optimize"] = new[] { "Read baseline", "Read merit function",
+            ["optimize"] = new[] { "Summarize active model, units and key optical elements", "Read baseline", "Read merit function",
                 "Inspect variables", "Locate snapshot", "Run optimization only after approval" },
-            ["tolerance"] = new[] { "Inspect tolerance criterion", "Inspect tolerance operands",
+            ["tolerance"] = new[] { "Summarize active model, units and key optical elements", "Inspect tolerance criterion", "Inspect tolerance operands",
                 "Run bounded tolerancing after approval" },
-            ["safe-edit"] = new[] { "Read baseline", "Inspect target surface", "Check existing snapshots",
+            ["safe-edit"] = new[] { "Summarize active model, units and key optical elements", "Read baseline", "Inspect target surface", "Check existing snapshots",
                 "Edit only after approval", "Read back changed surface",
                 "Check snapshot reference", "Review diff", "Save only after approval" }
         };
@@ -100,7 +100,9 @@ public sealed class TaskPlanTool
                     {
                         var domain = ToolsetCatalog.GetDomain(name).Id;
                         var applicable = compatible && (normalized != "energy" ||
-                            (isNsc ? domain == "non-sequential" : domain != "non-sequential"));
+                            (isNsc
+                                ? domain is "non-sequential" or "system" or "administration"
+                                : domain != "non-sequential"));
                         return new PlanStep(index + 1, name,
                             index < Purposes[normalized].Length ? Purposes[normalized][index] : "Inspect or verify optical result",
                             playbook.AvailableSteps.Contains(name), applicable,
