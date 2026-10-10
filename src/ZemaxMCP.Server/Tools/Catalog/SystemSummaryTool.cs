@@ -144,8 +144,10 @@ public sealed class SystemSummaryTool
                     warnings.Add("Field/wavelength lists are truncated; index-dependent calculations must use the full configuration readback.");
                 if (!wavelengths.Any(x => x.IsPrimary) && wavelengthCount > wavelengths.Count)
                     warnings.Add("The primary wavelength may lie beyond the sampled wavelength list.");
-                if (!system.NeedsSave && string.IsNullOrWhiteSpace(system.SystemFile))
+                if (string.IsNullOrWhiteSpace(system.SystemFile))
                     warnings.Add("Active system has no reported saved file path; an in-memory design is not evidence of a durable snapshot.");
+                else if (system.NeedsSave)
+                    warnings.Add("The current model has unsaved changes. A file path does not prove that edits have been saved.");
 
                 return new Result(true, null, system.Mode.ToString(),
                     system.SystemFile, sys.TitleNotes.Title, system.NeedsSave,
