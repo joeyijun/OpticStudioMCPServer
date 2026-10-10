@@ -42,7 +42,13 @@ public sealed class GetNscDetectorTool
         double? RoiFractionOfLaunchedFlux = null,
         double? TotalDetectorFractionOfLaunchedFlux = null,
         double? MissedRayCount = null,
-        string? NormalizationCaveat = null);
+        string? NormalizationCaveat = null,
+        double? RoiPixelMin = null,
+        double? RoiPixelMax = null,
+        double? RoiPixelMean = null,
+        int? RoiNonzeroPixelCount = null,
+        int? RoiPeakRow = null,
+        int? RoiPeakColumn = null);
 
     [ZemaxTool(Name = "zemax_get_nsc_detector")]
     [Description("Read NSC detector dimensions, total incident flux, ray hits and optionally a bounded ROI flux/irradiance pixel matrix. Pixel values are native OpticStudio data (not automatically power-normalized). Use after tracing and verify source-power units.")]
@@ -159,6 +165,8 @@ public sealed class GetNscDetectorTool
                 double[][]? pixelGrid = null;
                 double? roiSum = null, roiIntegral = null, roiDetectorFraction = null,
                     roiLaunchedFraction = null;
+                double? pixelMin = null, pixelMax = null, pixelMean = null;
+                int? nonzeroCount = null, peakRow = null, peakColumn = null;
                 if (includePixels)
                 {
                     var height = rowCount == 0 ? (long)rows - startRow : rowCount;
@@ -185,6 +193,16 @@ public sealed class GetNscDetectorTool
                         }
                     }
                     roiSum = pixelGrid.Sum(line => line.Sum());
+                    var pixels = pixelGrid.SelectMany(line => line).ToArray();
+                    pixelMin = pixels.Min();
+                    pixelMax = pixels.Max();
+                    pixelMean = roiSum / pixels.Length;
+                    nonzeroCount = pixels.Count(x => x != 0);
+                    var peakIndex = Array.IndexOf(pixels, pixelMax.Value);
+                    peakRow = startRow + peakIndex / (int)width;
+                    peakColumn = startColumn + peakIndex % (int)width;
+                    // Pixel extrema and their position are native quantities,
+                    // not total power or throughput. Use ROI integration below.
                     // Flux-per-area integrates to flux only if a real, uniform
                     // physical pixel area is known; volume dataType=1 is
                     // absorbed flux and is NOT area-weighted.
@@ -214,7 +232,10 @@ public sealed class GetNscDetectorTool
                     null,
                     "Detector hit counts may include repeated or split ray hits; total rays that missed the detector cannot be inferred from them. " +
                     "ROI pixel summation is incoherent. source normalization requires identical units, sources and trace. " +
-                    "For non-rectangular detectors the exact pixel physical area and ROI flux-integral may be unavailable.");
+                    "For non-rectangular detectors the exact pixel physical area and ROI flux-integral may be unavailable. " +
+                    "DetectorVolume dataType=1 integrates ABSORBED flux: its launched-flux ratio is absorption, not collection throughput. " +
+                    "ROI pixel maxima are not integrated detector power.",
+                    pixelMin, pixelMax, pixelMean, nonzeroCount, peakRow, peakColumn);
             }, cancellationToken);
         }
         catch (OperationCanceledException)
