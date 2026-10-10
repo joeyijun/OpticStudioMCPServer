@@ -35,7 +35,8 @@ public sealed class SequentialEnergyBudgetTool
     public sealed record Result(bool Success, string? Error, int GridSize,
         int NumberOfPupilSamples, string EnergyMetric, string WavelengthUnit,
         IReadOnlyList<FieldWavelengthBudget> Cases, string Limitations,
-        IReadOnlyList<WeightedFieldBudget>? WeightedFields = null);
+        IReadOnlyList<WeightedFieldBudget>? WeightedFields = null,
+        CoatingRtaAudit.Audit? AssumedCoatingRta = null);
 
     [ZemaxTool(Name = "zemax_energy_budget")]
     [Description("Calculate a BOUNDED sequential field/wavelength/surface energy budget for a consecutive LDE window using the same circular normalized pupil ray sampling as aperture throughput. Reports geometric clipping, ray failures and unpolarized ray-intensity attenuation per surface. Does NOT equate ray intensity to absolute watts, or invent separate coating reflectance/absorption/transmission or NSC detector efficiency.")]
@@ -46,6 +47,8 @@ public sealed class SequentialEnergyBudgetTool
         [Description("Circular normalized pupil grid dimension from 5 to 41.")] int gridSize = 15,
         [Description("First LDE surface in a <=24-surface window. For long LDEs use overlapping windows (1..24, 24..47).")] int startSurface = 1,
         [Description("Optional relative SOURCE power per wavelength (same order as wavelengths; finite >=0, at least one >0). Does not include detector response and does not turn ray-intensity proxy into watts.")] double[]? relativeSourceSpectralWeights = null,
+        [Description("Optional USER-assumed passive R/T/A rows [[R,T,A],...] for EACH LDE surface in this bounded window. These values are not retrieved from OpticStudio coatings; same grey assumption for all selected wavelengths.")] double[][]? assumedSurfaceRta = null,
+        [Description("Required with assumedSurfaceRta. One boolean per selected surface: true = follow reflection, false = follow transmission. Other branch is diverted, not assumed absorbed.")] bool[]? followReflectedBranch = null,
         CancellationToken cancellationToken = default)
     {
         const string limits = "The first surface in a selected window has no preceding-surface transfer. For long LDEs use overlapping windows (1..24, 24..47). Each surface still reports full-entrance pupil survival; do not multiply cumulative fractions from separate windows. Geometric survival excludes vignetted rays but reports trace errors separately. Equal pupil-area ray sampling is NOT source radiance, Watts, instrument efficiency or an NSC detector measurement. Optional source spectral weights combine dimensionless sampled-ray proxies only, not calibrated radiometry. Ray intensity follows the OpticStudio unpolarized real-ray engine (coatings/material path); reflection, transmission, scattering and absorption are not separately identifiable from this scalar intensity. Material=MIRROR is merely a surface interaction hint. A real NSC detector requires a separate trace and launched-flux denominator.";
@@ -58,12 +61,15 @@ public sealed class SequentialEnergyBudgetTool
             foreach (var v in selectedFields) SequentialPupilSampler.ValidateField(v[0], v[1]);
             if (gridSize is < 5 or > 41)
                 throw new ArgumentException("gridSize must be 5..41.");
+            if ((assumedSurfaceRta==null)!=(followReflectedBranch==null))
+                throw new ArgumentException("Assumed coating R/T/A and selected branch flags must be supplied together.");
 
             return await _session.ExecuteAsync("SequentialEnergyBudget",
                 new Dictionary<string, object?> {
                     ["fields"] = selectedFields, ["wavelengths"] = wavelengths,
                     ["finalSurface"] = finalSurface, ["startSurface"] = startSurface,
-                    ["gridSize"] = gridSize, ["relativeSourceSpectralWeights"] = relativeSourceSpectralWeights
+                    ["gridSize"] = gridSize, ["relativeSourceSpectralWeights"] = relativeSourceSpectralWeights,
+                    ["assumedSurfaceRta"] = assumedSurfaceRta, ["followReflectedBranch"] = followReflectedBranch
                 }, system =>
                 {
                     if (system.Mode != SystemType.Sequential)
@@ -71,6 +77,10 @@ public sealed class SequentialEnergyBudgetTool
 
                     var lastLde = system.LDE.NumberOfSurfaces - 1;
                     var (first, last, surfaceCount) = SequentialEnergySurfaceRange.Resolve(startSurface, finalSurface, lastLde);
+                    if (assumedSurfaceRta != null && assumedSurfaceRta.Length != surfaceCount)
+                        throw new ArgumentException("User R/T/A row count must equal the exact number of surfaces in the selected LDE window.");
+                    var assumedAudit = assumedSurfaceRta == null ? null
+                        : CoatingRtaAudit.Evaluate(first,assumedSurfaceRta,followReflectedBranch!);
 
                     var waveData = system.SystemData.Wavelengths;
                     var primary = Enumerable.Range(1, waveData.NumberOfWavelengths)
@@ -166,7 +176,7 @@ public sealed class SequentialEnergyBudgetTool
                     }
                     return new Result(true, null, gridSize, pupil.Length,
                         "equal-area normalized-pupil ray intensity proxy (dimensionless)",
-                        "micrometers", output, limits, weighted);
+                        "micrometers", output, limits, weighted, assumedAudit);
                 }, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }

@@ -42,6 +42,16 @@ Example MCP `tools/call` arguments:
   proxies**, not detector-collected watts or absolute throughput; no source
   spectrum is silently assumed. A zero weight is allowed but all-zero,
   negative, non-finite and wrong-length inputs fail.
+- Optional `assumedSurfaceRta` plus `followReflectedBranch` permits a
+  **separately labeled USER-assumed, passive grey R/T/A ledger** over the
+  selected window. Supply one [R,T,A] triple and reflection/transmission
+  branch flag per LDE surface. It validates R+T+A<=1, tracks diverted
+  other-branch power separately from absorption, and refuses nonfinite,
+  negative or non-passive coefficients. **These are NOT OpticStudio coating
+  properties** and must not be multiplied into ZOS real-ray intensity (which
+  may already include the coating), nor treated as a trace-calibrated watt
+  result. The independent ledger can audit known coating datasheet values
+  before a later physical power-balance acceptance.
 - Calls are bounded to <=6 fields, <=6 wavelengths, <=24 consecutive
   surfaces per call, and <=150000 surface/ray samples. For a long LDE use
   absolute `startSurface` and `finalSurface`, with **one shared boundary

@@ -19,6 +19,7 @@ internal static class Program
             VerifySequentialEnergyWindows();
             VerifySpectralWeights();
             VerifyMechanicalFootprint();
+            VerifyUserCoatingRta();
             VerifyNativeDetectorTiles();
             VerifyModelSummaryDiff();
             VerifyGlassCatalogSafety();
@@ -75,6 +76,24 @@ internal static class Program
         AssertThrows<ArgumentException>(
             ()=>NscDetectorTilePreview.MeanHeatmap(pixels,1),
             "Unsupported heatmap bin count accepted.");
+    }
+
+    private static void VerifyUserCoatingRta()
+    {
+        var passive=CoatingRtaAudit.Evaluate(4,
+            new[]{new[]{0.9,0.08,0.02},new[]{0.04,0.95,0.01}},
+            new[]{true,false});
+        Assert(passive.Surfaces.Count==2 && passive.Surfaces[0].Surface==4 &&
+            Math.Abs(passive.RemainingSelectedPath-0.855)<1e-12 &&
+            Math.Abs(passive.RemainingSelectedPath+passive.TotalAbsorbed+
+                passive.TotalOtherBranch+passive.TotalUnresolved-1)<1e-12,
+            "User R/T/A ledger is not branch-consistent or conservative.");
+        AssertThrows<ArgumentException>(()=>CoatingRtaAudit.Evaluate(1,
+            new[]{new[]{0.8,0.3,0.0}},new[]{true}),
+            "Non-passive coating was accepted.");
+        AssertThrows<ArgumentException>(()=>CoatingRtaAudit.Evaluate(1,
+            new[]{new[]{double.NaN,0.5,0.2}},new[]{false}),
+            "Non-finite coating accepted.");
     }
 
     private static void VerifyMechanicalFootprint()
