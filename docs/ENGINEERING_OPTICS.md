@@ -250,3 +250,22 @@ Only use a **known source power** for `-NscLaunchedFlux`; the number 1.0
 above is an example, not a universal normalization assumption. The scripts
 copy fixtures before opening. CI checks and schema validation cannot prove
 physical accuracy of these numerical results.
+
+### Privileged NSC scalar detector CSV export
+
+`zemax_export_nsc_detector_csv` writes explicitly selected **native NSC pixel
+values** as `row,column,value` CSV in the existing directory on the **OpticStudio
+computer**, not on the AI client's computer. This is a **HighImpact file write**,
+unavailable in `basic-viewing` and blocked by global read-only mode. It never
+runs a trace, clears detectors, or changes the optical model.
+
+Specify `objectNumber`, `csvPath`, positive `rowCount`/`columnCount`,
+0-based `startRow`/`startColumn`, `dataType` and optional `overwrite`
+(default false). One export is bounded to **262144 pixels**; subdivide bigger
+arrays into successive ROI files and join their native row/column indices.
+File writes use a sibling temporary file and atomic commit so cancellation,
+missing or nonfinite detector data cannot publish partial results. The
+returned summary includes native pixel count, min/max/sum and a SHA-256
+digest of the resulting CSV. Color/polar detectors are not supported by this
+generic scalar API. Data type 1 is *absorbed flux* for DetectorVolume, not
+irradiance, and absolute orientation is not inferred from the display.

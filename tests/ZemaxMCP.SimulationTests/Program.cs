@@ -21,6 +21,7 @@ internal static class Program
             VerifyMechanicalFootprint();
             VerifyUserCoatingRta();
             VerifyNativeDetectorTiles();
+            VerifyDetectorCsvExport();
             VerifyModelSummaryDiff();
             VerifyModelPreflight();
             VerifyGlassCatalogSafety();
@@ -70,6 +71,41 @@ internal static class Program
         var unknown=SystemSummaryComparer.Compare(first,unmatched);
         Assert(unknown.ChangedProperties==0 && unknown.Warnings.Any(x=>x.Contains("UNKNOWN")),
             "Unmatched bounded sample must not imply a verified surface deletion.");
+    }
+
+    private static void VerifyDetectorCsvExport()
+    {
+        var dir=Path.Combine(Path.GetTempPath(),"ZemaxCsvTest-"+Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path=Path.Combine(dir,"detector.csv");
+        try
+        {
+            var summary=NscDetectorCsvExport.Write(path,false,2,3,0,1,2,2,
+                (y,x)=>y*10+x,CancellationToken.None);
+            Assert(summary.PixelCount==4 && summary.Sum==26 &&
+                summary.Minimum==1 && summary.Maximum==12 &&
+                summary.Sha256.Length==64,"Atomic native detector CSV metadata incorrect.");
+            var lines=File.ReadAllLines(path);
+            Assert(lines.SequenceEqual(new[]{
+                "row,column,value","0,1,1","0,2,2","1,1,11","1,2,12"}),
+                "Native row/column CSV ordering or format incorrect.");
+            AssertThrows<IOException>(()=>NscDetectorCsvExport.Write(path,false,2,3,0,0,1,1,
+                (_,_)=>99,CancellationToken.None),"Accidental CSV overwrite was permitted.");
+            AssertThrows<ArgumentException>(()=>NscDetectorCsvExport.Write(path,true,1024,1024,0,0,1024,1024,
+                (_,_)=>0,CancellationToken.None),"Unbounded export was accepted.");
+            AssertThrows<InvalidDataException>(()=>NscDetectorCsvExport.Write(path,true,2,3,0,0,1,2,
+                (_,x)=>x==0?1:double.NaN,CancellationToken.None),
+                "Invalid pixel data was committed.");
+            Assert(File.ReadAllLines(path).Length==5,"Failed CSV replacement corrupted existing file.");
+            using var cancelled=new CancellationTokenSource();
+            cancelled.Cancel();
+            AssertThrows<OperationCanceledException>(()=>NscDetectorCsvExport.Write(path,true,2,3,0,0,1,1,
+                (_,_)=>42,cancelled.Token),"Cancelled export wrote its final destination.");
+            Assert(File.ReadAllLines(path).Length==5 &&
+                Directory.GetFiles(dir).Length==1,
+                "A cancelled/failed export left a temporary or replaced CSV.");
+        }
+        finally { Directory.Delete(dir,true); }
     }
 
     private static void VerifyNativeDetectorTiles()

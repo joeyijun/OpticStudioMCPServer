@@ -9,8 +9,8 @@ internal static class StaticToolManifestAssertions
     [ModuleInitializer]
     internal static void VerifyStaticToolManifestContract()
     {
-        if (StaticToolManifest.All.Count != 141)
-            throw new InvalidOperationException("Static Host tool manifest must contain all 141 Worker commands.");
+        if (StaticToolManifest.All.Count != 142)
+            throw new InvalidOperationException("Static Host tool manifest must contain all 142 Worker commands.");
         if (StaticToolManifest.ContractFingerprint.Length != 64 ||
             StaticToolManifest.ContractFingerprint.Any(character => !Uri.IsHexDigit(character)))
             throw new InvalidOperationException("Static tool contract fingerprint must be a SHA-256 hex digest.");
@@ -39,9 +39,9 @@ internal static class StaticToolManifestAssertions
         {
             ["basic-viewing"] = 39,
             ["sequential-design"] = 84,
-            ["nonsequential-stray-light"] = 27,
+            ["nonsequential-stray-light"] = 28,
             ["optimization-tolerance"] = 71,
-            ["full-expert"] = 141
+            ["full-expert"] = 142
         };
         foreach (var pair in expectedProfileCounts)
         {
@@ -62,6 +62,18 @@ internal static class StaticToolManifestAssertions
         if (budgetSchema.GetProperty("properties").GetProperty("detectorObjects").GetProperty("type").GetString() != "array" ||
             !budgetSchema.GetProperty("required").EnumerateArray().Any(x => x.GetString() == "detectorObjects"))
             throw new InvalidOperationException("NSC energy budgeting must require an array of detector IDs.");
+
+        var csvExport = StaticToolManifest.GetRequired("zemax_export_nsc_detector_csv");
+        var csvExportProperties = csvExport.InputSchema.GetProperty("properties");
+        if (csvExport.DomainId != "files" || csvExport.Impact != "HighImpact" ||
+            !StaticToolManifest.IsAllowed("nonsequential-stray-light",csvExport.Name,false) ||
+            StaticToolManifest.IsAllowed("nonsequential-stray-light",csvExport.Name,true) ||
+            StaticToolManifest.IsAllowed("basic-viewing",csvExport.Name,false) ||
+            !csvExportProperties.TryGetProperty("csvPath",out _) ||
+            !csvExportProperties.TryGetProperty("rowCount",out _) ||
+            !csvExportProperties.TryGetProperty("columnCount",out _) ||
+            !csvExportProperties.TryGetProperty("overwrite",out _))
+            throw new InvalidOperationException("Filesystem-writing NSC CSV export must be privileged and explicitly bounded.");
 
         var detectorSchema = StaticToolManifest.GetRequired("zemax_get_nsc_detector").InputSchema.GetProperty("properties");
         foreach (var field in new[] { "includePixels", "dataType", "startRow", "startColumn", "rowCount", "columnCount" })

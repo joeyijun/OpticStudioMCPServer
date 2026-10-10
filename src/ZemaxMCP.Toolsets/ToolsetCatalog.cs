@@ -74,6 +74,7 @@ public static class ToolsetCatalog
         ["zemax_diffraction_encircled_energy"] = "analysis",
         ["zemax_disconnect"] = "administration",
         ["zemax_export_analysis"] = "files",
+        ["zemax_export_nsc_detector_csv"] = "files",
         ["zemax_export_glass_catalog"] = "files",
         ["zemax_fft_mtf"] = "analysis",
         ["zemax_fft_mtf_vs_field"] = "analysis",
@@ -229,7 +230,7 @@ public static class ToolsetCatalog
     private static readonly HashSet<string> HighImpactTools = new HashSet<string>(StringComparer.Ordinal)
     {
         "zemax_add_configuration_operand", "zemax_add_operand", "zemax_add_surface", "zemax_batch_set_surfaces", "zemax_clear_vignetting", "zemax_constrained_optimize",
-        "zemax_delete_configuration_operand", "zemax_export_analysis", "zemax_export_glass_catalog", "zemax_forbes_merit_function", "zemax_global_search",
+        "zemax_delete_configuration_operand", "zemax_export_analysis", "zemax_export_nsc_detector_csv", "zemax_export_glass_catalog", "zemax_forbes_merit_function", "zemax_global_search",
         "zemax_hammer", "zemax_load_merit_function_file", "zemax_multistart_optimize", "zemax_new_system", "zemax_optimization_wizard", "zemax_optimize",
         "zemax_pop", "zemax_quick_focus", "zemax_remove_operand", "zemax_remove_surface", "zemax_snapshot_restore", "zemax_save_file", "zemax_save_merit_function_file", "zemax_scale_lens",
         "zemax_set_afocal_mode", "zemax_set_aperture", "zemax_set_apodization", "zemax_set_aspheric_surface", "zemax_set_clear_semi_diameter_margin",
@@ -290,7 +291,7 @@ public static class ToolsetCatalog
                 "zemax_get_polarization", "zemax_get_nonsequential_system_settings",
                 "zemax_get_nsc_objects", "zemax_get_nsc_object_parameters", "zemax_get_nsc_detector",
                 "zemax_nsc_scene_summary", "zemax_nsc_energy_budget", "zemax_run_nsc_ray_trace",
-                "zemax_job_status", "zemax_job_list", "zemax_job_cancel", "zemax_export_analysis"),
+                "zemax_job_status", "zemax_job_list", "zemax_job_cancel", "zemax_export_analysis", "zemax_export_nsc_detector_csv"),
 
             [OptimizationTolerance] = NewToolSet(
                 "zemax_status", "zemax_tool_catalog", "zemax_task_plan", "zemax_system_summary", "zemax_connect", "zemax_disconnect",
