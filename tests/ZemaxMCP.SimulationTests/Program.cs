@@ -289,7 +289,7 @@ internal static class Program
                 new(Point(2,0),Point(2,10)),new(Point(2,10),Point(2,20))
             },
             new GlobalRaySegmentBoundary.Segment?[]{
-                new(Point(0,0),Point(0,10)),new(Point(2,10),Point(2,20))
+                new(Point(0,0),Point(0,10)),new(Point(0,10),Point(4,20))
             },
             new GlobalRaySegmentBoundary.Segment?[]{
                 null,new(Point(2,10),Point(2,20))
@@ -313,6 +313,14 @@ internal static class Program
         });
         Assert(order.Stops[1].FirstBlockedRays==1 && order.Stops[0].FirstBlockedRays==0,
             "Same-chord mechanical stops must be ordered by real crossing location.");
+        var broken=CadMultiSegmentAudit.Assess(2,stops,new List<IReadOnlyList<GlobalRaySegmentBoundary.Segment?>> {
+            new GlobalRaySegmentBoundary.Segment?[]{
+                new(Point(0,0),Point(0,10)),new(Point(2,10),Point(2,20))
+            }
+        });
+        Assert(broken.FirstBlockedRays==0 && broken.UncertainRays==1 &&
+               broken.DiscontinuousRayPaths==1,
+            "Two spatially disconnected ray segments were silently joined into a fabricated optical path.");
     }
 
     private static void VerifyFiniteRaySegmentBoundary()

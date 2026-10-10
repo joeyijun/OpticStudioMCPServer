@@ -485,3 +485,13 @@ to ZOS-native ray intensity or native NSC detector flux, both of which
 can already include physical aperture interactions. All chosen stops
 are user-supplied opaque plane plates with a clear polygonal opening;
 it does not intersect arbitrary solids or curved CAD.
+
+### Multi-segment geometric continuity
+
+When separate LDE target traces are stitched into a path, the
+**shared global XYZ vertex** of each pair of adjacent segments is
+checked to a bounded numerical tolerance. A discontinuity produces
+`multiStopCadPath.discontinuousRayPaths` and contributes to
+`uncertainRays`; it cannot yield an invented first obstruction
+at a downstream CAD stop. This protects ray identity across
+coordinate breaks and trace inconsistencies.

@@ -12,7 +12,8 @@ public static class CadMultiSegmentAudit
         GlobalFootprintProjection.Point3? WorstIntersection);
     public sealed record Report(int SampledPupilRays,int FirstBlockedRays,
         int FullyCheckedUnblockedRays,int UncertainRays,
-        IReadOnlyList<StopReport> Stops,string Interpretation);
+        IReadOnlyList<StopReport> Stops,string Interpretation,
+        int DiscontinuousRayPaths = 0);
 
     internal static Report Assess(int firstSurface,
         IReadOnlyList<Stop> stops,
@@ -38,7 +39,7 @@ public static class CadMultiSegmentAudit
         var blocked=new int[stops.Count];
         var margin=Enumerable.Repeat(double.PositiveInfinity,stops.Count).ToArray();
         var critical=new GlobalFootprintProjection.Point3?[stops.Count];
-        var totalBlocked=0;var unknown=0;var passed=0;
+        var totalBlocked=0;var unknown=0;var passed=0;var discontinuous=0;
         for(var ray=0;ray<rayPaths.Count;ray++)
         {
             var path=rayPaths[ray];
@@ -47,6 +48,22 @@ public static class CadMultiSegmentAudit
             {
                 var segment=path[segmentIndex];
                 if(segment==null) {uncertain=true;break;}
+                if(segmentIndex>0 && path[segmentIndex-1] is { } previous)
+                {
+                    // The two separately traced hits at the shared LDE
+                    // surface must describe the SAME global ray vertex.
+                    // A broken path is unknown; never create a fake chord.
+                    var dx=previous.End.X-segment.Start.X;
+                    var dy=previous.End.Y-segment.Start.Y;
+                    var dz=previous.End.Z-segment.Start.Z;
+                    var distance=Math.Sqrt(dx*dx+dy*dy+dz*dz);
+                    var length=Math.Sqrt(segment.Start.X*segment.Start.X+
+                        segment.Start.Y*segment.Start.Y+
+                        segment.Start.Z*segment.Start.Z);
+                    if(!double.IsFinite(distance)||!double.IsFinite(length) ||
+                       distance>1e-6*Math.Max(1,length))
+                    {uncertain=true;discontinuous++;break;}
+                }
                 var candidates=new List<(int Index,double Fraction,
                     double Signed,GlobalFootprintProjection.Point3 Hit)>();
                 foreach(var indexed in stops.Select((stop,i)=>(stop,i))
@@ -97,8 +114,9 @@ public static class CadMultiSegmentAudit
             blocked[i],blocked[i]>0?margin[i]:null,critical[i])).ToArray();
         return new Report(rayPaths.Count,totalBlocked,passed,unknown,reports,
             "First possible CAD stop per ray, along actual consecutive LDE 3D ray chords. " +
-            "Rays with missing/vignetted endpoints or coplanar ambiguous intersections are UNKNOWN, not credited to a later stop. " +
+            "Rays with missing/vignetted endpoints, disconnected shared LDE vertices or coplanar ambiguous intersections are UNKNOWN, not credited to a later stop. " +
             "Two stops cannot both receive the same blocked ray. Multiple physical planes in one segment are sorted by actual crossing location, not caller order. " +
-            "Only a straight segment between ADJACENT optical LDE vertices is assumed; no arbitrary solids, partial transparency, diffraction, or calibrated radiant power.");
+            "Only a straight segment between ADJACENT optical LDE vertices is assumed; no arbitrary solids, partial transparency, diffraction, or calibrated radiant power.",
+            discontinuous);
     }
 }
