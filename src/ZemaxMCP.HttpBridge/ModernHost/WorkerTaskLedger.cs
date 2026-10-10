@@ -83,16 +83,35 @@ internal sealed class WorkerTaskLedger
         public DateTimeOffset UpdatedAt { get; set; }
     }
 
+    private static JournalRecord[] ReadJournal(string path)
+    {
+        var file = new FileInfo(path);
+        if (file.Length > 1024 * 1024)
+            throw new InvalidDataException("Task journal exceeds its one-megabyte safety bound.");
+        return JsonSerializer.Deserialize<JournalRecord[]>(File.ReadAllText(path))
+            ?? throw new InvalidDataException("Task journal cannot be null.");
+    }
+
     private void RestoreJournal()
     {
-        if (_journalPath == null || !File.Exists(_journalPath)) return;
+        if (_journalPath == null) return;
+        var backup = _journalPath + ".bak";
+        if (!File.Exists(_journalPath) && !File.Exists(backup)) return;
         try
         {
-            var file = new FileInfo(_journalPath);
-            if (file.Length > 1024 * 1024)
-                throw new InvalidDataException("Task journal exceeds its one-megabyte safety bound.");
-            var saved = JsonSerializer.Deserialize<JournalRecord[]>(File.ReadAllText(_journalPath))
-                ?? Array.Empty<JournalRecord>();
+            JournalRecord[] saved;
+            var recoveredBackup = false;
+            try
+            {
+                saved = ReadJournal(_journalPath);
+            }
+            catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or InvalidDataException)
+            {
+                Serilog.Log.Warning(ex, "Primary Task journal is unavailable; attempting bounded metadata-only backup");
+                if (!File.Exists(backup)) return;
+                saved = ReadJournal(backup);
+                recoveredBackup = true;
+            }
             foreach (var record in saved.OrderBy(x => x.Sequence).TakeLast(_maxRecords))
             {
                 if (record.TaskId.Length is < 1 or > 128 ||
@@ -127,6 +146,12 @@ internal sealed class WorkerTaskLedger
                 _tasks.Add(entry.TaskId, entry);
                 _byJob.Add((entry.Generation, entry.JobId), entry.TaskId);
                 _sequence = Math.Max(_sequence, entry.Sequence);
+            }
+            if (recoveredBackup && File.Exists(_journalPath))
+            {
+                // Never let File.Replace rotate the corrupted primary INTO
+                // the good .bak during the first repair write.
+                File.Delete(_journalPath);
             }
             PersistLocked(force: true);
         }
@@ -169,7 +194,7 @@ internal sealed class WorkerTaskLedger
             var temp = _journalPath + ".tmp";
             File.WriteAllText(temp, json);
             if (File.Exists(_journalPath))
-                File.Replace(temp, _journalPath, null);
+                File.Replace(temp, _journalPath, _journalPath + ".bak");
             else File.Move(temp, _journalPath);
             _lastJournalWrite = DateTimeOffset.UtcNow;
         }

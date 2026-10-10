@@ -205,10 +205,19 @@ internal static class WorkerTaskLedgerAssertions
                 "Restored Task journal must preserve exact owner isolation.");
             Assert(!secondHost.TryRequestCancel("token:scoped:alice", runningTaskId, 41, out _),
                 "A restarted Host cannot cancel a Worker Job from a dead generation.");
+            Assert(File.Exists(file + ".bak"),
+                "A bounded second journal generation should be retained as a repair backup.");
             File.WriteAllText(file, "{ INVALID JOURNAL");
+            var repaired = new WorkerTaskLedger(maxRecords: 5, journalPath: file);
+            Assert(repaired.ListOwnedMetadata("token:scoped:alice").Count > 0 &&
+                   repaired.ListOwnedMetadata("scoped:foreign").Count == 0 &&
+                   !File.ReadAllText(file).Contains("SECRET-OPTICAL-DATA", StringComparison.Ordinal),
+                "A corrupt primary must recover only valid owner-scoped metadata from the backup.");
+            File.WriteAllText(file, "{ INVALID JOURNAL");
+            File.WriteAllText(file + ".bak", "{ INVALID BACKUP");
             var invalid = new WorkerTaskLedger(journalPath: file);
             Assert(invalid.ListOwnedMetadata("token:scoped:alice").Count == 0,
-                "Corrupt journal must fail closed instead of exposing arbitrary Tasks.");
+                "Two corrupt journals must fail closed instead of exposing arbitrary Tasks.");
         }
         finally
         {
