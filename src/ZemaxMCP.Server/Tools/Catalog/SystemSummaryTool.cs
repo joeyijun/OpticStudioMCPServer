@@ -35,7 +35,8 @@ public sealed class SystemSummaryTool
         IReadOnlyList<WavelengthSummary> Wavelengths,
         int OmittedSurfaces, int OmittedFields, int OmittedWavelengths,
         IReadOnlyList<string> Warnings, string Interpretation,
-        SystemSummaryComparer.Comparison? BaselineComparison = null);
+        SystemSummaryComparer.Comparison? BaselineComparison = null,
+        IReadOnlyList<ModelPreflightChecks.Finding>? PreflightFindings = null);
 
     private static double? Finite(double value) =>
         double.IsNaN(value) || double.IsInfinity(value) ? null : value;
@@ -164,10 +165,12 @@ public sealed class SystemSummaryTool
                     Math.Max(0, fieldCount - fields.Count),
                     Math.Max(0, wavelengthCount - wavelengths.Count), warnings, meaning);
             }, cancellationToken).ConfigureAwait(false);
-            if (baselineSummaryJson == null || !current.Success) return current;
+            if (!current.Success) return current;
             var serialized = JsonSerializer.Serialize(current, new JsonSerializerOptions(JsonSerializerDefaults.Web));
             return current with {
-                BaselineComparison = SystemSummaryComparer.Compare(baselineSummaryJson, serialized)
+                PreflightFindings = ModelPreflightChecks.Evaluate(serialized),
+                BaselineComparison = baselineSummaryJson == null ? null :
+                    SystemSummaryComparer.Compare(baselineSummaryJson, serialized)
             };
         }
         catch (OperationCanceledException) { throw; }

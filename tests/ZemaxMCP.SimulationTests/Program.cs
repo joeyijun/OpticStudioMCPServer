@@ -22,6 +22,7 @@ internal static class Program
             VerifyUserCoatingRta();
             VerifyNativeDetectorTiles();
             VerifyModelSummaryDiff();
+            VerifyModelPreflight();
             VerifyGlassCatalogSafety();
             await VerifyStaDispatcherAsync();
             await VerifyJobManagerAsync();
@@ -35,6 +36,23 @@ internal static class Program
             Console.Error.WriteLine(exception);
             return 1;
         }
+    }
+
+    private static void VerifyModelPreflight()
+    {
+        const string empty = "{\"success\":true,\"mode\":\"NonSequential\",\"numberOfNscObjects\":0,\"numberOfWavelengths\":1,\"configurations\":1,\"filePath\":\"test.zos\"}";
+        var findings=ModelPreflightChecks.Evaluate(empty);
+        Assert(findings.Any(x=>x.Code=="empty_nsc_scene" && x.Severity=="blocker") &&
+               findings.All(x=>x.NextAction.Length>0),
+            "Empty NSC scene must produce actionable bounded preflight finding.");
+        const string seq = "{\"success\":true,\"mode\":\"Sequential\",\"numberOfSurfaces\":20,\"numberOfWavelengths\":1,\"numberOfFields\":1,\"omittedSurfaces\":12,\"filePath\":\"design.zmx\",\"needsSave\":true,\"keySurfaces\":[{\"isCoordinateBreak\":true}]}";
+        findings=ModelPreflightChecks.Evaluate(seq);
+        Assert(findings.Any(x=>x.Code=="bounded_lde") &&
+               findings.Any(x=>x.Code=="local_coordinate_frame") &&
+               findings.Any(x=>x.Code=="unsaved_or_unlocated"),
+            "Limited LDE/coordinate-break and unsaved warnings were lost.");
+        AssertThrows<ArgumentException>(()=>ModelPreflightChecks.Evaluate("{\"success\":false}"),
+            "Failed summary unexpectedly passed preflight.");
     }
 
     private static void VerifyModelSummaryDiff()
