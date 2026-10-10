@@ -162,5 +162,10 @@ try {
   if ($dialog.Owner -ne $owner -or $dialog.ShowInTaskbar -or $dialog.ResizeMode -ne 'NoResize') { throw 'Dialog ownership regressed.' }
   if ($dialog.ActualHeight -gt $dialog.MaxHeight) { throw 'Dialog exceeds work-area height.' }
  } finally {$dialog.Close()}
+ $arguments[1]='Cancel optical task?'
+ $arguments[2]='Request cooperative cancellation? A running optical operation may take time to stop safely.'
+ $arguments[3]='Cancel task'; $arguments[4]=$null
+ $cancelDialog=$constructor.Invoke($arguments)
+ try {Render $cancelDialog 'task-cancel-dialog.png'} finally {$cancelDialog.Close()}
  Write-Output 'Offline dashboard and client dialog render passed; no service was started.'
 } finally {$owner.Close()}

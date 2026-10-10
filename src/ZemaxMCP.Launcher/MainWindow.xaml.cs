@@ -511,11 +511,10 @@ public partial class MainWindow : Window
 
     private async Task RequestCancellationAsync(BackgroundJobView selection)
     {
-        var decision = System.Windows.MessageBox.Show(
+        if (!LauncherDialog.Confirm(this, "Cancel optical task?",
             "Request cooperative cancellation of " + selection.DisplayText +
-            "?\nOnly the authenticated Job owner may cancel; other clients will be denied.",
-            "Cancel optical Job", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (decision != MessageBoxResult.Yes) return;
+            "?\nOnly the authenticated owner may cancel. A running optical operation may take time to stop safely.",
+            "Cancel task")) return;
         var endpoint = McpUrl;
         var token = McpToken;
         TasksPageCancel.IsEnabled = false;
@@ -1299,7 +1298,7 @@ public partial class MainWindow : Window
         {
             e.Cancel = true;
             Hide();
-            _trayIcon.ShowBalloonTip(2500, "Zemax MCP is still running", "Use the tray icon to reopen it. Choose Exit to stop the MCP service.", Forms.ToolTipIcon.Info);
+            _trayIcon.ShowBalloonTip(2500, DesktopIdentity.DisplayName, "Still running in the system tray. Click the icon to reopen; choose Exit to stop the service.", Forms.ToolTipIcon.Info);
         }
         base.OnClosing(e);
     }

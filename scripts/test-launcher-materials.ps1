@@ -5,6 +5,15 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 $root = Split-Path $PSScriptRoot -Parent
 & (Join-Path $PSScriptRoot 'test-automatic-https.ps1') -Configuration $Configuration
 $assembly = [Reflection.Assembly]::LoadFrom((Join-Path $root "src\ZemaxMCP.Launcher\bin\$Configuration\net48\Start-Zemax-MCP.exe"))
+$identity=$assembly.GetType('ZemaxMCP.Launcher.DesktopIdentity')
+$identityFlags=[Reflection.BindingFlags]'Static,NonPublic'
+if ($identity.GetField('DisplayName',$identityFlags).GetRawConstantValue() -ne 'Zemax MCP' -or
+    $identity.GetField('AppId',$identityFlags).GetRawConstantValue() -ne 'ZemaxMCP.Desktop') {throw 'Friendly desktop notification identity regressed.'}
+$metadata=[Diagnostics.FileVersionInfo]::GetVersionInfo($assembly.Location)
+if ($metadata.ProductName -ne 'Zemax MCP' -or $metadata.FileDescription -ne 'Zemax MCP') {throw 'Windows notification fallback exposes the executable name.'}
+$mainSource=Get-Content -Raw (Join-Path $root 'src\ZemaxMCP.Launcher\MainWindow.xaml.cs')
+if ($mainSource -match 'MessageBox.Show' -or $mainSource -notmatch 'ShowBalloonTip\(2500, DesktopIdentity.DisplayName') {throw 'Business confirmation or tray notification branding regressed.'}
+Write-Output 'Desktop identity and file metadata passed without registration or displaying notifications.'
 Add-Type -Path (Join-Path $root "src\ZemaxMCP.Launcher\bin\$Configuration\net48\Newtonsoft.Json.dll")
 $tasksPreference = $assembly.GetType('ZemaxMCP.Launcher.OfficialTasksSettings')
 $binding = [Reflection.BindingFlags]'Static,NonPublic'

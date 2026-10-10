@@ -5,6 +5,9 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>Start-Zemax-MCP</AssemblyName>
+    <AssemblyTitle>Zemax MCP</AssemblyTitle>
+    <Product>Zemax MCP</Product>
+    <Description>Zemax MCP optical workspace</Description>
     <RootNamespace>ZemaxMCP.Launcher</RootNamespace>
     <ApplicationIcon>Assets\ZemaxMCP.ico</ApplicationIcon>
   </PropertyGroup>
