@@ -48,7 +48,7 @@ public static class ZemaxOperationMetadata
                 "RelativeIllumination", "RmsSpot", "SeidelCoefficients", "SnapshotDiff", "SpotDiagram", "TaskPlan"
             }, new[]
             {
-            "zemax_aperture_throughput", "zemax_energy_budget", "zemax_ray_footprint", "zemax_cardinal_points", "zemax_chromatic_focal_shift", "zemax_diffraction_encircled_energy", "zemax_fft_mtf", "zemax_fft_mtf_vs_field",
+            "zemax_aperture_throughput", "zemax_energy_budget", "zemax_ray_footprint", "zemax_diagnose_clipping", "zemax_cardinal_points", "zemax_chromatic_focal_shift", "zemax_diffraction_encircled_energy", "zemax_fft_mtf", "zemax_fft_mtf_vs_field",
             "zemax_fft_psf", "zemax_field_curvature_distortion", "zemax_filter_glasses", "zemax_geometric_encircled_energy", "zemax_geometric_image_analysis",
             "zemax_geometric_mtf", "zemax_geometric_mtf_vs_field", "zemax_get_advanced_system_settings", "zemax_get_afocal_mode", "zemax_get_aperture_settings",
             "zemax_get_apodization", "zemax_get_aspheric_surface", "zemax_get_clear_semi_diameter_margin", "zemax_get_configuration",
