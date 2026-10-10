@@ -1025,6 +1025,46 @@ internal static class Program
                     throw new InvalidOperationException("Worker Job falsely accepted an unsolicited Task input response.");
             }
 
+            // With a long COM-bound foreground read in progress, tasks/get
+            // must use the Host's already-authorized Task state rather than
+            // queuing job_status behind the busy Worker RPC. This is a real
+            // concurrent HTTP smoke test, not just a static code assertion.
+            var longModelRead = SendScopedAsync(client, endpoint, 1173, "tools/call",
+                "zemax_get_system", otherWriter);
+            var workerBusySeen = false;
+            for (var poll = 0; poll < 20 && !workerBusySeen; poll++)
+            {
+                await Task.Delay(75).ConfigureAwait(false);
+                using var busyHealth = await SendScopedGetAsync(client,
+                    new Uri(endpoint, endpoint.AbsolutePath.TrimEnd('/') + "/health"),
+                    otherWriter).ConfigureAwait(false);
+                using var healthJson = JsonDocument.Parse(
+                    await busyHealth.Content.ReadAsStringAsync().ConfigureAwait(false));
+                workerBusySeen = busyHealth.IsSuccessStatusCode &&
+                    healthJson.RootElement.GetProperty("workerBusy").GetBoolean();
+            }
+            if (!workerBusySeen)
+                throw new InvalidOperationException("Scoped long-read fixture never entered Worker busy state.");
+            var taskPollTimer = Stopwatch.StartNew();
+            using (var nonBlockingPoll = await SendTaskAsync(client, endpoint, 1174, "tasks/get", null,
+                       otherWriter, taskId).ConfigureAwait(false))
+            {
+                taskPollTimer.Stop();
+                var payload = await ReadFirstMcpPayloadAsync(nonBlockingPoll).ConfigureAwait(false);
+                if (!nonBlockingPoll.IsSuccessStatusCode ||
+                    !payload.Contains("\"working\"", StringComparison.Ordinal) ||
+                    taskPollTimer.Elapsed > TimeSpan.FromSeconds(2))
+                    throw new InvalidOperationException(
+                        "tasks/get blocked behind a running Worker COM-bound RPC: " +
+                        taskPollTimer.Elapsed.TotalMilliseconds + "ms; " + payload);
+            }
+            using (var modelRead = await longModelRead.ConfigureAwait(false))
+            {
+                var result = await ReadFirstMcpPayloadAsync(modelRead).ConfigureAwait(false);
+                if (!modelRead.IsSuccessStatusCode || !result.Contains("echo-ok", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Long read fixture did not complete: " + result);
+            }
+
             using (var working = await SendTaskAsync(client, endpoint, 118, "tasks/get", null,
                        otherWriter, taskId).ConfigureAwait(false))
             {
