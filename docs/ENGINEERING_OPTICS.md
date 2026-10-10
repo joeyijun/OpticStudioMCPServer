@@ -258,7 +258,10 @@ owner-authenticated Job with no Worker status yet is reported with explicit
 `zemax_job_status` or the next valid progress event. An unchanged response has
 `snapshot: null`, preventing redundant Job/Task data transfer.
 Cursors are process-local, HMAC-protected, owner-specific and reset across
-Host/Worker generations; neither cross-client event counts nor raw optical
+Host/Worker generations. For scoped credentials, `workerBusy` and
+`statusAvailable` in this endpoint refer to **visible owned Job states**,
+not global Worker load/freshness, so another client's execution cannot move
+this owner's cursor. Neither cross-client event counts nor raw optical
 tool results are embedded. An active COM operation does not stall this
 endpoint because no Worker status RPC is issued.
 

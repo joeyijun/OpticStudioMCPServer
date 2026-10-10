@@ -74,7 +74,19 @@ internal sealed class McpJobTaskDeltaMonitor
         // Shared/local diagnostics never expose someone else's official Task
         // IDs. Only scoped bearer credentials have owner-scoped Task metadata.
         var tasks = scoped ? ownerTasks.Take(25).ToArray() : Array.Empty<object>();
-        var snapshot = new Snapshot(generation, scoped, busy, statusAvailable, jobs, tasks);
+        // For scoped credentials, global WorkerBusy/StatusAvailable may change
+        // solely because another owner is tracing. Do NOT fold those flags into
+        // this owner's HMAC cursor. Use only owned Job observations instead.
+        var visibleBusy = scoped
+            ? jobs.Any(j => j.State.Equals("Queued",StringComparison.OrdinalIgnoreCase) ||
+                            j.State.Equals("Running",StringComparison.OrdinalIgnoreCase) ||
+                            j.State.Equals("Cancelling",StringComparison.OrdinalIgnoreCase) ||
+                            j.State.Equals("Working",StringComparison.OrdinalIgnoreCase))
+            : busy;
+        var visibleStatus = scoped
+            ? jobs.Any(j => !j.State.Equals("Unknown",StringComparison.OrdinalIgnoreCase))
+            : statusAvailable;
+        var snapshot = new Snapshot(generation, scoped, visibleBusy, visibleStatus, jobs, tasks);
 
         // A random process-local HMAC key prevents offline probing of a tiny
         // state space such as "queued"/"completed". Scoped cursors are unique

@@ -355,9 +355,9 @@ internal static class Program
                !JsonSerializer.Serialize(other).Contains("task-alice-private",StringComparison.Ordinal),
             "Owner cursors or tasks leak between scoped bearer credentials.");
         jobs[1].State="Running";jobs[1].Fraction=0.9;
-        Assert(!monitor.GetDelta("token:scoped:alice",true,alice.Cursor,17,false,true,
+        Assert(!monitor.GetDelta("token:scoped:alice",true,alice.Cursor,17,true,false,
             jobs,otherOwnerTasks,id=>id=="job-alice").Changed,
-            "Foreign Job progress changed Alice's private cursor.");
+            "Global Worker busy/freshness and foreign Job progress changed Alice's private cursor.");
         jobs[0].Fraction=0.5;
         Assert(monitor.GetDelta("token:scoped:alice",true,alice.Cursor,17,false,true,
             jobs,otherOwnerTasks,id=>id=="job-alice").Changed,
