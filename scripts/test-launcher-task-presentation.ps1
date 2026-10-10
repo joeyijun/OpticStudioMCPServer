@@ -34,19 +34,19 @@ $items = $build.Invoke($null, $arguments)
 if ($null -ne $items[3].ProgressFraction -or !$items[3].IsProgressIndeterminate) {
     throw 'Non-finite progress must not become a determinate percentage.'
 }
-$health['tasks'][0]['state'] = 'completed'
+$health['tasks'][0]['state'] = [Newtonsoft.Json.Linq.JValue]::new('completed')
 $items = $build.Invoke($null, $arguments)
 if ($items.Count -ne 4 -or $items[3].IsActive -or $null -ne $items[3].ProgressFraction -or
     $items[3].IsProgressIndeterminate) {
     throw 'A completed Task must not inherit stale fractional progress from the linked Worker Job.'
 }
-$health['tasks'][0]['state'] = 'working'
-$health['tasks'][0]['generation'] = 4
+$health['tasks'][0]['state'] = [Newtonsoft.Json.Linq.JValue]::new('working')
+$health['tasks'][0]['generation'] = [Newtonsoft.Json.Linq.JValue]::new([long]4)
 $items = $build.Invoke($null, $arguments)
 if ($items.Count -ne 5 -or !$items[4].IsOfficialTask -or $items[4].WorkerGeneration -ne '4') {
     throw 'Restored Task from a different Worker generation must not absorb a current Job of the same ID.'
 }
-$health['tasks'][0]['generation'] = 3
+$health['tasks'][0]['generation'] = [Newtonsoft.Json.Linq.JValue]::new([long]3)
 $xaml = [IO.File]::ReadAllText((Join-Path $root 'src\ZemaxMCP.Launcher\MainWindow.xaml'))
 if ($xaml -notmatch 'Title="Zemax MCP"') { throw 'Window title must match the product name.' }
 $parse = $type.GetMethod('SelectMcpSseResponse', $flags)
