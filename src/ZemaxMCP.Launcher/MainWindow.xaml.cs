@@ -470,6 +470,15 @@ public partial class MainWindow : Window
                 var taskId = record["taskId"]?.ToString() ?? "";
                 if (taskId.Length == 0) continue;
                 var linkedJobId = record["jobId"]?.ToString() ?? "";
+                var generation = record["generation"]?.ToString() ?? "";
+                // The official Task wraps this same Worker Job: showing both
+                // as separate items doubles the apparent task count. Merge
+                // only when the Job belongs to the SAME Worker generation;
+                // restarted-journal Tasks must never absorb a new Job ID.
+                var linkedJob = linkedJobId.Length == 0 ? null : items.FirstOrDefault(
+                    item => !item.IsOfficialTask && item.JobId == linkedJobId &&
+                        generation.Length > 0 && item.WorkerGeneration == generation);
+                if (linkedJob != null) items.Remove(linkedJob);
                 var state = record["state"]?.ToString() ?? "working";
                 var started = DateTimeOffset.TryParse(record["createdAt"]?.ToString(), out var born)
                     ? born : DateTimeOffset.UtcNow;
@@ -481,13 +490,17 @@ public partial class MainWindow : Window
                     TaskId = taskId,
                     JobId = linkedJobId,
                     State = state,
-                    ToolName = "Official MCP Task",
+                    ToolName = linkedJob?.ToolName ?? "Official MCP Task",
                     Owner = "This authenticated credential",
-                    WorkerGeneration = record["generation"]?.ToString() ?? "Not reported",
-                    Elapsed = Math.Max(0, elapsed).ToString("F0") + "s",
+                    WorkerGeneration = generation.Length > 0 ? generation : "Not reported",
+                    Elapsed = linkedJob?.Elapsed ?? Math.Max(0, elapsed).ToString("F0") + "s",
+                    Queue = linkedJob?.Queue ?? "",
+                    Progress = linkedJob?.Progress ?? "",
+                    ProgressFraction = linkedJob?.ProgressFraction,
                     Message = (record["message"]?.ToString() ?? "") +
                         (record["cancelRequested"]?.Value<bool>() == true ? " · cancellation requested" : "") +
-                        (record["resultExpired"]?.Value<bool>() == true ? " · result expired" : ""),
+                        (record["resultExpired"]?.Value<bool>() == true ? " · result expired" : "") +
+                        (linkedJob == null ? "" : " · " + linkedJob.Message),
                     DisplayText = "MCP Task · " + state + " · " + taskId.Substring(0, Math.Min(8, taskId.Length))
                 });
             }
