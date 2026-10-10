@@ -365,3 +365,31 @@ is `sum(source[i]*detectorResponse[i]*rayProxy[i])/sum(source[i])`,
 everywhere halves the proxy. These are sparse user-supplied spectral
 bins, NOT measured detector watts, spatial ROI coupling, continuous
 spectral integration or independently conserved input-output energy.
+
+### Real single-surface coating R/T/A from installed ZOS-API
+
+The read-only `zemax_coating_rta` tool uses the documented
+`ILDERow.GetCoatingPerformanceData()` /
+`ICoatingPerformanceData.GetCoatingPerformance(AOI, wavelen, direction)`
+API. Supply 1–24 existing sequential LDE `surfaces`, 1–6
+`anglesDegrees` (0–89.9 degrees), 1–6 existing wavelength indices
+(default primary), and `direction` (`inward`/`outward`).
+Calls are bounded to 120 total surface/wavelength/angle samples.
+Actual ZOS-API S/P reflectance, transmittance and absorptance are read
+independently, alongside an unpolarized arithmetic mean and
+`residualS`/`residualP` = 1 – R – T – A, without clamping
+or hiding energy-accounting residuals. The interface is version
+checked at runtime: on an older installation without these methods,
+the tool reports a clear failure rather than invented zeroes.
+
+This is a **single-interface** coating performance calculation for
+the explicitly supplied angle, wavelength and travel direction.
+It does not automatically determine the angle of every incident ray,
+the chosen optical branch, multiple bounces, bulk loss or detector
+coupling. **Do not** multiply these values into
+`zemax_energy_budget` ray intensities that may already include
+the coating loss. Real licensed OpticStudio numerical acceptance and
+cross-version validation are pending.
+
+Official API references: 
+https://developer.synopsys.com/docs/zemax-opticstudio-zos-api-2026-r1/reference/interface_z_o_s_a_p_i_1_1_editors_1_1_l_d_e_1_1_i_coating_performance_data.md
