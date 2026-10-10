@@ -35,7 +35,7 @@ internal static class HostLaunchPlan
         if(shareLan && (!IPAddress.TryParse(lanAddress,out var ip) ||
             ip.AddressFamily!=System.Net.Sockets.AddressFamily.InterNetwork ||
             IPAddress.IsLoopback(ip) || ip.Equals(IPAddress.Any) ||
-            ip.Equals(IPAddress.Broadcast) || ip.GetAddressBytes()[0]>=224)))
+            ip.Equals(IPAddress.Broadcast) || ip.GetAddressBytes()[0]>=224))
             throw new ArgumentException("LAN sharing requires a concrete IPv4 interface address.");
         var cert=tlsEnabled?SafePath(pfxPath??"",nameof(pfxPath)):"";
         if(tlsEnabled && (!cert.EndsWith(".pfx",StringComparison.OrdinalIgnoreCase) ||
