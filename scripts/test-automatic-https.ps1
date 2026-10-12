@@ -4,8 +4,9 @@ $root=Split-Path $PSScriptRoot -Parent
 $source=Get-Content -Raw (Join-Path $root 'src\ZemaxMCP.Launcher\MainWindow.xaml.cs')
 $trustSource=Get-Content -Raw (Join-Path $root 'src\ZemaxMCP.Launcher\AutomaticHttps.cs')
 if ($source -match 'LauncherDialog.Confirm\(this, "(Allow secure local connections|Trust the OpticStudio computer)' -or
-    $source -notmatch 'TryApplySecureSetup\(string text, bool trustApproved = false\)' -or
-    $source -notmatch 'TryApplySecureSetup\(_pendingRemoteSetup, true\)' -or
+    $source -notmatch 'ConnectRemoteSetup_Click' -or
+    $source -match 'trustApproved|RemoteTrustSection|TrustRemoteSetup_Click' -or
+    $source -notmatch 'AutomaticHttps.TrustCurrentUser\(certificate\)' -or
     $trustSource -match 'CERT_SYSTEM_STORE_UNPROTECTED_FLAG|CryptUIWizImport|ServerCertificateValidationCallback') {throw 'Single-confirmation certificate trust boundary regressed.'}
 $assembly=[Reflection.Assembly]::LoadFrom((Join-Path $root "src\ZemaxMCP.Launcher\bin\$Configuration\net48\Start-Zemax-MCP.exe"))
 $type=$assembly.GetType('ZemaxMCP.Launcher.AutomaticHttps')

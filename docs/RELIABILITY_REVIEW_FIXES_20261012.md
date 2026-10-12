@@ -23,7 +23,8 @@
    expiry, remaining days and renewal recommendation, without passwords or PFX
    paths. Copy diagnostics includes these fields and the Launcher build.
    Certificates expiring within 30 days are replaced at a safe next Start; new
-   remote trust still requires fingerprint review. No trust-store bypass is used.
+   remote trust uses explicit Connect and Windows' certificate-installation warning.
+   The fingerprint remains available in setup/diagnostics. No trust-store bypass is used.
 
 Validation is performed with Fake Workers, vendor-independent read-only safety
 boundaries and offline desktop rendering. These are not claims of new production

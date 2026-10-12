@@ -142,8 +142,9 @@ connection or manually prepared PFX is required.
 
 Use **Copy connection setup** and paste it on the AI computer. It includes only the leaf
 **public** certificate and its SHA-256 fingerprint, never its private key or
-PFX password. Compare the fingerprint on both computers using the
-inline certificate review, then select **Trust and connect**. Windows retains
+PFX password. Select **Connect** to apply the setup; only import setup obtained
+from your trusted OpticStudio computer. The public fingerprint remains available
+in connection setup and diagnostics for comparison. Windows retains
 its native certificate-installation warning; it is not suppressed. TLS hostname and expiry validation remain
 enabled. Group policy can prevent certificate trust; the launcher reports the
 failure rather than bypassing validation. A client with its own CA store may

@@ -8,8 +8,10 @@ $dll = Join-Path $root 'src\ZemaxMCP.Launcher\bin\Release\net48\Start-Zemax-MCP.
 $assembly = [Reflection.Assembly]::LoadFrom($dll)
 # Load only presentation XAML: no launcher constructor, startup, tray, settings or services.
 $xaml = [IO.File]::ReadAllText((Join-Path $root 'src\ZemaxMCP.Launcher\MainWindow.xaml'))
+if ($xaml -notmatch 'PreviewMouseWheel="RecentActivity_MouseWheel"' -or
+    $xaml -match 'LostFocus="RemoteSecureSetup_LostFocus"') {throw 'Wheel routing or explicit setup import binding regressed.'}
 $xaml = $xaml -replace '\s+x:Class="[^"]+"', '' -replace '\s+Icon="[^"]+"', ''
-$xaml = $xaml -replace '\s+(Loaded|Click|Checked|Unchecked|SelectionChanged|TextChanged|PasswordChanged|LostFocus)="[^"]+"', ''
+$xaml = $xaml -replace '\s+(Loaded|Click|Checked|Unchecked|SelectionChanged|TextChanged|PasswordChanged|LostFocus|PreviewMouseWheel)="[^"]+"', ''
 $owner = [Windows.Markup.XamlReader]::Parse($xaml)
 function Render($window, [string]$name) {
  $visual = $window.Content
@@ -79,6 +81,7 @@ try {
  $details.IsExpanded=$true
  $details.ApplyTemplate()
  if ($details.Template.FindName('DisclosureBody',$details).Visibility -ne 'Visible') {throw 'Rounded task disclosure does not expand.'}
+ if ($details.Template.FindName('DisclosureBody',$details).Padding.Top -lt 8) {throw 'Expanded details need breathing room below the header.'}
  $owner.FindName('TasksPageDetail').Text="Task result preview`n{`"success`":true}"
  $list=$owner.FindName('TasksPageJobs')
  $list.ItemsSource=@(
@@ -90,11 +93,34 @@ try {
  $details.IsExpanded=$false
  if ($details.Template.FindName('DisclosureBody',$details).Visibility -ne 'Collapsed') {throw 'Rounded task disclosure does not collapse.'}
  $tabs.SelectedIndex=2
- if ($owner.FindName('RemoteTrustSection').Visibility -ne 'Collapsed') {throw 'Certificate review must start hidden.'}
- $owner.FindName('RemoteTrustSection').Visibility='Visible'
- $owner.FindName('RemoteTrustIdentity').Text="https://192.168.8.1:8000`nSHA-256: 0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"
- Render $owner 'certificate-review-inline.png'
+ if ($owner.FindName('RemoteTrustSection')) {throw 'Duplicate certificate confirmation must not appear.'}
+ if ($owner.FindName('ConnectRemoteButton').Content -ne 'Connect') {throw 'Remote setup requires an explicit Connect action.'}
+ Render $owner 'remote-connection-setup.png'
  $tabs.SelectedIndex=1
+ # Exercise the production wheel helper without starting a launcher/service.
+ $route=$assembly.GetType('ZemaxMCP.Launcher.NestedScrollWheel').GetMethod('Route',[Reflection.BindingFlags]'Static,NonPublic')
+ $outer=[Windows.Controls.ScrollViewer]::new()
+ $outer.Content=[Windows.Controls.Border]@{Height=900;Width=200}
+ $inner=[Windows.Controls.ScrollViewer]::new()
+ $inner.Content=[Windows.Controls.Border]@{Height=400;Width=200}
+ foreach($viewer in @($outer,$inner)) {
+   $viewer.Measure([Windows.Size]::new(200,100)); $viewer.Arrange([Windows.Rect]::new(0,0,200,100)); $viewer.UpdateLayout()
+ }
+ function Wheel([int]$delta) {
+   $event=[Windows.Input.MouseWheelEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,0,$delta)
+   $event.RoutedEvent=[Windows.Input.Mouse]::PreviewMouseWheelEvent
+   $null=$route.Invoke($null,[object[]]@($inner,$outer,$event)); return $event
+ }
+ $inner.ScrollToVerticalOffset(50); $inner.UpdateLayout()
+ if ((Wheel -120).Handled) {throw 'Scrollable activity must keep its own wheel inside the list.'}
+ $inner.ScrollToBottom(); $inner.UpdateLayout()
+ if (-not (Wheel -120).Handled) {throw 'Activity bottom must hand wheel to the page.'}
+ $outer.UpdateLayout()
+ if ($outer.VerticalOffset -le 0) {throw 'Activity bottom did not scroll the outer page.'}
+ $inner.ScrollToTop(); $inner.UpdateLayout()
+ if (-not (Wheel 120).Handled) {throw 'Activity top must hand wheel to the page.'}
+ $inner.Content=[Windows.Controls.Border]@{Height=10;Width=200}; $inner.UpdateLayout()
+ if (-not (Wheel -120).Handled) {throw 'Short or empty activity must not trap the page wheel.'}
  $taskPage = $taskScroll.Content
  $taskGrid = @($taskPage.Children | Where-Object { $_ -is [System.Windows.Controls.Grid] }) | Select-Object -First 1
  if ($null -eq $taskGrid -or $taskGrid.ColumnDefinitions.Count -ne 3) {

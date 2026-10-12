@@ -41,7 +41,6 @@ public partial class MainWindow : Window
     private string _localAccessToken = "";
     private string _remoteEndpoint = "";
     private string _remoteAccessToken = "";
-    private string _pendingRemoteSetup = "";
     private string _tlsPfxPath = "";
     private string _tlsPfxPassword = "";
     private string _runningEndpoint = "";
@@ -201,7 +200,12 @@ public partial class MainWindow : Window
         Report("Using manually selected OpticStudio folder: " + selected.Root);
     }
     private void Port_LostFocus(object sender, RoutedEventArgs e) { RefreshEndpoint(); SaveSettings(); MarkConfigurationPending(); }
-    private async void RemoteSecureSetup_LostFocus(object sender, RoutedEventArgs e)
+    private void RecentActivity_MouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+    {
+        if (sender is System.Windows.Controls.ScrollViewer inner)
+            NestedScrollWheel.Route(inner, TasksPageScroll, e);
+    }
+    private async void ConnectRemoteSetup_Click(object sender, RoutedEventArgs e)
     {
         var setup = RemoteSecureSetup.Text;
         if (string.IsNullOrWhiteSpace(setup)) return;
@@ -210,20 +214,6 @@ public partial class MainWindow : Window
         {
             return;
         }
-        SaveSettings();
-        StopBridge();
-        await RefreshStatusAsync();
-    }
-    private void RemoteSecureSetup_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
-    {
-        if (!_windowLoaded) return;
-        _pendingRemoteSetup = "";
-        RemoteTrustSection.Visibility = Visibility.Collapsed;
-    }
-    private async void TrustRemoteSetup_Click(object sender, RoutedEventArgs e)
-    {
-        if (LocalBridgeRunning) { Report("Stop the local service safely before switching to a remote connection."); return; }
-        if (string.IsNullOrEmpty(_pendingRemoteSetup) || !TryApplySecureSetup(_pendingRemoteSetup, true)) return;
         SaveSettings();
         StopBridge();
         await RefreshStatusAsync();
@@ -969,7 +959,7 @@ public partial class MainWindow : Window
         RefreshClientDashboard(null);
         Report("A new access token was saved for next Start. The current connection is unchanged.");
     }
-    private bool TryApplySecureSetup(string text, bool trustApproved = false)
+    private bool TryApplySecureSetup(string text)
     {
         if (string.IsNullOrWhiteSpace(text) || !text.TrimStart().StartsWith("{", StringComparison.Ordinal)) return false;
         try
@@ -988,23 +978,11 @@ public partial class MainWindow : Window
                     throw new ArgumentException("Certificate fingerprint does not match setup.");
                 if (!AutomaticHttps.IsTrusted(certificate))
                 {
-                    if (!trustApproved)
-                    {
-                        _pendingRemoteSetup = text;
-                        RemoteTrustIdentity.Text = uri.GetLeftPart(UriPartial.Authority) + "\nSHA-256:\n" +
-                            string.Join(" ", Enumerable.Range(0, 8).Select(i => fingerprint.Substring(i * 8, 8)));
-                        RemoteTrustSection.Visibility = Visibility.Visible;
-                        Dispatcher.BeginInvoke(new Action(() => RemoteTrustSection.BringIntoView()));
-                        Report("Compare the certificate fingerprint with the OpticStudio computer, then select Trust and connect. Existing connection settings have not changed.");
-                        return false;
-                    }
                     AutomaticHttps.TrustCurrentUser(certificate);
                 }
             }
             _remoteEndpoint = uri.ToString().TrimEnd('/');
             _remoteAccessToken = token!;
-            _pendingRemoteSetup = "";
-            RemoteTrustSection.Visibility = Visibility.Collapsed;
             RemoteSecureSetup.Text = "";
             UpdateRemoteSetupStatus();
             Report("HTTPS connection setup accepted for " + _remoteEndpoint + ".");
@@ -1018,16 +996,18 @@ public partial class MainWindow : Window
         {
             RemoteSetupDot.Fill = System.Windows.Media.Brushes.SlateGray;
             RemoteSetupStatus.Foreground = System.Windows.Media.Brushes.SlateGray;
-            RemoteSetupStatus.Text = "Local MCP service selected.";
+            RemoteSetupStatus.Text = "Using this computer. Paste setup and select Connect to use remote OpticStudio.";
+            SwitchToLocalButton.Visibility = Visibility.Collapsed;
             return;
         }
         var endpoint = new Uri(_remoteEndpoint);
+        SwitchToLocalButton.Visibility = Visibility.Visible;
         var unencrypted = endpoint.Scheme == Uri.UriSchemeHttp && !endpoint.IsLoopback;
         RemoteSetupDot.Fill = unencrypted ? System.Windows.Media.Brushes.DarkOrange : System.Windows.Media.Brushes.SeaGreen;
         RemoteSetupStatus.Foreground = unencrypted ? System.Windows.Media.Brushes.DarkOrange : System.Windows.Media.Brushes.SeaGreen;
-        RemoteSetupStatus.Text = "Remote endpoint: " + endpoint.Host + ":" + endpoint.Port +
+        RemoteSetupStatus.Text = "Remote OpticStudio selected: " + endpoint.Host + ":" + endpoint.Port +
             (unencrypted ? " · WARNING: plaintext HTTP exposes the Bearer token in transit; use HTTPS." :
-             endpoint.Scheme == Uri.UriSchemeHttps ? " · TLS encrypted (verify certificate trust)." :
+             endpoint.Scheme == Uri.UriSchemeHttps ? " · HTTPS. No local service needed." :
              " · local loopback HTTP.");
     }
     private static string GenerateAccessToken()

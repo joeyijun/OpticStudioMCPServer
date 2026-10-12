@@ -145,7 +145,7 @@
                   </ControlTemplate.Triggers>
                 </ControlTemplate></ToggleButton.Template>
               </ToggleButton>
-              <Border x:Name="DisclosureBody" Visibility="Collapsed" Padding="14,0,14,14"><ContentPresenter/></Border>
+              <Border x:Name="DisclosureBody" Visibility="Collapsed" Padding="14,8,14,14"><ContentPresenter/></Border>
             </StackPanel>
           </Border>
           <ControlTemplate.Triggers>
@@ -551,7 +551,7 @@
   </ScrollViewer>
     </TabItem>
     <TabItem Header="Tasks">
-      <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <ScrollViewer x:Name="TasksPageScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="28,20,28,24">
           <TextBlock Text="Tasks" FontSize="28" FontWeight="SemiBold" Foreground="{StaticResource HeadingBrush}"/>
           <TextBlock x:Name="TasksPageSummary" Text="Waiting for task status…" Style="{StaticResource HelperText}" Margin="0,6,0,20"/>
@@ -624,7 +624,7 @@
               <ListBox x:Name="TasksPageJobs" ItemsSource="{Binding VisibleJobs}" MinHeight="280" MaxHeight="460" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="TasksPageJobs_Changed" AutomationProperties.Name="Background Job list">
                 <ListBox.Template><ControlTemplate TargetType="ListBox">
                   <Border CornerRadius="12" Background="{TemplateBinding Background}" Padding="0,3">
-                    <ScrollViewer Focusable="False" CanContentScroll="True" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"><ItemsPresenter/></ScrollViewer>
+                    <ScrollViewer Focusable="False" CanContentScroll="False" PreviewMouseWheel="RecentActivity_MouseWheel" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"><ItemsPresenter/></ScrollViewer>
                   </Border>
                 </ControlTemplate></ListBox.Template>
                 <ListBox.ItemContainerStyle>
@@ -751,22 +751,13 @@
               <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
               <TextBox x:Name="RemoteSecureSetup" Style="{StaticResource InputBox}"
                        ToolTip="Paste the complete secure setup JSON copied from the OpticStudio computer. It is stored securely after validation."
-                       LostFocus="RemoteSecureSetup_LostFocus" TextChanged="RemoteSecureSetup_TextChanged"/>
-              <Button Grid.Column="1" Content="Use local" Style="{StaticResource SmallButton}" Margin="9,2,0,2"
-                      ToolTip="Use this computer's local MCP service again" Click="ClearRemoteSetup_Click"/>
+                       AutomationProperties.Name="Remote connection setup"/>
+              <Button x:Name="ConnectRemoteButton" Grid.Column="1" Content="Connect" Style="{StaticResource PrimaryButton}" Margin="9,2,0,2"
+                      ToolTip="Apply this setup and connect to the OpticStudio computer" Click="ConnectRemoteSetup_Click"/>
             </Grid>
-            <TextBlock Text="Paste secure setup from the OpticStudio computer." Style="{StaticResource HelperText}" Margin="1,8,0,0"/>
-            <Border x:Name="RemoteTrustSection" Visibility="Collapsed" Background="{StaticResource ControlSurface}"
-                    BorderBrush="{StaticResource GlassEdge}" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,12,0,0">
-              <StackPanel>
-                <TextBlock Text="Verify your OpticStudio computer" FontWeight="SemiBold" Foreground="{StaticResource HeadingBrush}"/>
-                <TextBlock Text="Compare this fingerprint on both computers before trusting. Windows will handle certificate installation."
-                           Style="{StaticResource HelperText}" TextWrapping="Wrap" Margin="0,6,0,0"/>
-                <TextBlock x:Name="RemoteTrustIdentity" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap"
-                           Foreground="{StaticResource BodyBrush}" Margin="0,8,0,10"/>
-                <Button Content="Trust and connect" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Click="TrustRemoteSetup_Click"/>
-              </StackPanel>
-            </Border>
+            <TextBlock Text="Paste connection setup, then select Connect. Windows may ask you to trust the server certificate on first use." Style="{StaticResource HelperText}" TextWrapping="Wrap" Margin="1,8,0,0"/>
+            <Button x:Name="SwitchToLocalButton" Content="Switch to this computer instead" Style="{StaticResource SmallButton}" HorizontalAlignment="Left" Margin="0,14,0,0"
+                    ToolTip="Disconnect from the remote computer and use a local OpticStudio installation" Click="ClearRemoteSetup_Click"/>
           </StackPanel>
         </Border>
       </Grid>

@@ -20,7 +20,7 @@ $solution = Get-Content -Raw (Join-Path $root "OpticStudioMCPServer.sln")
 $architectureDoc = Join-Path $root "docs\ARCHITECTURE.md"
 $releaseWorkflow = Get-Content -Raw (Join-Path $root ".github\workflows\release.yml")
 $publishReleaseWorkflow = Get-Content -Raw (Join-Path $root ".github\workflows\publish-release.yml")
-foreach ($marker in 'AiStateDot', 'Content="Browse…"', 'Click="ChooseZemaxFolder_Click"', 'Content="Start"', 'Content="Stop"', 'Copy secure setup', 'x:Name="ToolsetProfile"') {
+foreach ($marker in 'AiStateDot', 'Content="Browse…"', 'Click="ChooseZemaxFolder_Click"', 'Content="Start"', 'Content="Stop"', 'Copy connection setup', 'x:Name="ToolsetProfile"', 'x:Name="ConnectRemoteButton"') {
   if ($launcherXaml -notmatch [regex]::Escape($marker)) { throw "The desktop UI contract is missing: $marker" }
 }
 if ($launcherCode -notmatch '"Host", "ZemaxMCP\.Host\.exe"' -or
