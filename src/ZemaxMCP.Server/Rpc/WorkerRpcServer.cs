@@ -197,6 +197,8 @@ internal sealed class WorkerRpcServer
             ConnectionMode = session.CurrentMode?.ToString() ?? "not-connected",
             ZosApiAssembly = zosLocation,
             OpticStudioDataDirectory = session.ZemaxDataDir,
+            ExecutionComputer = Environment.MachineName,
+            CurrentLensFile = session.CurrentFilePath,
             CurrentLicenseStatus = session.CurrentLicenseStatus,
             LastLicenseStatus = session.LastLicenseStatus,
             LicenseValidForApi = session.LicenseValidForApi,

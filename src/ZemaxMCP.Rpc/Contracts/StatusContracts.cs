@@ -18,6 +18,8 @@ public sealed class WorkerStatus
     public string ConnectionMode { get; set; } = "unknown";
     public string? ZosApiAssembly { get; set; }
     public string? OpticStudioDataDirectory { get; set; }
+    public string? ExecutionComputer { get; set; }
+    public string? CurrentLensFile { get; set; }
     public string? CurrentLicenseStatus { get; set; }
     public string? LastLicenseStatus { get; set; }
     public bool? LicenseValidForApi { get; set; }

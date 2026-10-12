@@ -30,11 +30,16 @@ For a single computer, the AI client uses the local MCP address. For two compute
 
 ## Highlights
 
+For remote AI use, file paths always belong to the **OpticStudio computer**, not
+the AI client's local filesystem. Start with `zemax_execution_context`; use
+`zemax_list_lens_files` for restricted server-side lens browsing. Local files
+are not uploaded automatically. See [Remote execution and file paths](docs/REMOTE_EXECUTION_CONTEXT.md).
+
 - **Refined Windows interface** — focused **Overview**, **Tasks**, **Settings**, and **Diagnostics** pages, icon-led status cards, slim rounded scrollbars, client-status setup dialogs, matching installer, and a rounded Start / Stop / Exit tray menu. **Test connection** combines connection/authentication checks with a read-only MCP tool test. The window uses **Mica** by default, without a material selector. Native Mica requires Windows 11 22H2 or later with transparency effects enabled; Remote Desktop, high contrast, and unsupported systems use a solid fallback.
 - **Upgrade-safe installation** — GUI and portable upgrades preserve connection settings, credentials, LAN sharing preferences, HTTPS keys and Task journals. A current-user-only maintenance handshake freezes new optical admission before replacement; active calls, queued requests, background Jobs or cancellation drain postpone updates. Older services must be safely exited before upgrading. The installer retries transient file locks, prevents overlapping updates, and uses versioned shortcut icon paths to avoid stale icon caches.
 - **Graphical install and update** — `Install.exe`, existing portable installs, and in-app updates converge on the same Updater replacement/rollback path for upgrades. In-app downloads and verification run asynchronously with progress, cancellation and a bounded deadline. Fresh installs copy only runtime payloads; package-only installer/update metadata is not left in the installed tree. A failed existing-install update does not start a competing portable service; portable fallback is reserved for initial-copy failures.
 - **Official .NET 10 MCP Host** — `ZemaxMCP.Host` uses stable `ModelContextProtocol.AspNetCore` 2.1 for Streamable HTTP, protocol negotiation, request IDs, SSE, cancellation, progress, and compatibility. The application does not maintain a hand-written MCP HTTP/JSON-RPC dispatcher.
-- **Static Host tool contract** — a build-time Roslyn generator produces the 150 tool names, descriptions, JSON schemas, domains, and impact levels. `tools/list` is answered by the Host without starting OpticStudio or the Worker.
+- **Static Host tool contract** — a build-time Roslyn generator produces the 152 tool names, descriptions, JSON schemas, domains, and impact levels. `tools/list` is answered by the Host without starting OpticStudio or the Worker.
 - **Hardened Host / Worker isolation** — MCP ends at the Host. The `net48` Worker accepts only private RPC v3, keeps STA/ZOS-API state, and never exposes a network transport. The Host verifies Worker PID, per-launch secret, RPC version, and the static manifest SHA-256 fingerprint before ZOS-API initialization or any OpticStudio COM operation.
 - **Transport-independent control lease** — modern MCP requests can be stateless while OpticStudio remains deliberately single-owner, single-STA, and serialized. Per-instance identity prevents supported same-machine clients from collapsing into one owner.
 - **Authenticated LAN use** — every launcher-managed request uses a random Bearer token. LAN listening is refused without a token, and token rotation is one click.
@@ -176,7 +181,7 @@ Clients capable of setting custom MCP request metadata may send `io.zemaxmcp/cli
 
 ## MCP capabilities
 
-The P1 development branch contains 150 tools; the signed v1.5.1 release contains 138. A narrower run configuration exposes only its permitted subset. AI clients discover the exact version-matched schemas through MCP `tools/list`; `zemax_tool_catalog` reads the same static manifest and returns each tool's domain, impact, description, and safety guidance. Use `zemax_tool_catalog` with `task=clipping|imaging|straylight|energy|optimize|tolerance|safe-edit` for an ordered, profile-aware shortlist. **New in PR #40:** `zemax_task_plan(task="clipping")` inspects the actual connected system mode and gives ordered preflight steps, permissions and approval gates without executing them; read [AI engineering workflows](docs/AI_ENGINEERING_PLANNING.md). The new `zemax_energy_budget` and `zemax_ray_footprint` provide bounded, read-only sequential ray-based diagnostics; NSC detector ROI pixels and a detector-specific launched-flux ratio are available separately. These are *not* absolute spectral radiometry without a sourced power denominator. See [Engineering optical analysis](docs/ENGINEERING_OPTICS.md) for limits, examples and interpretation. Use the installed package's `tools/list` as the authoritative source rather than treating this README as a complete API reference.
+The P1 development branch contains 152 tools; the signed v1.5.1 release contains 138. A narrower run configuration exposes only its permitted subset. AI clients discover the exact version-matched schemas through MCP `tools/list`; `zemax_tool_catalog` reads the same static manifest and returns each tool's domain, impact, description, and safety guidance. Use `zemax_tool_catalog` with `task=clipping|imaging|straylight|energy|optimize|tolerance|safe-edit` for an ordered, profile-aware shortlist. **New in PR #40:** `zemax_task_plan(task="clipping")` inspects the actual connected system mode and gives ordered preflight steps, permissions and approval gates without executing them; read [AI engineering workflows](docs/AI_ENGINEERING_PLANNING.md). The new `zemax_energy_budget` and `zemax_ray_footprint` provide bounded, read-only sequential ray-based diagnostics; NSC detector ROI pixels and a detector-specific launched-flux ratio are available separately. These are *not* absolute spectral radiometry without a sourced power denominator. See [Engineering optical analysis](docs/ENGINEERING_OPTICS.md) for limits, examples and interpretation. Use the installed package's `tools/list` as the authoritative source rather than treating this README as a complete API reference.
 
 ### Tool navigation, run configurations, and safety
 
@@ -184,11 +189,11 @@ The launcher can expose a smaller task-focused tool surface without renaming MCP
 
 | Launcher configuration | Enabled domains and impacts |
 |---|---|
-| **View & analyze** | 45 explicitly selected read-only inspection/analysis tools |
-| **Sequential design** | 91 explicitly selected sequential edit, system, file, snapshot, polarization, and analysis tools |
-| **Non-sequential & stray light** | 35 explicitly selected NSC inspection, tracing, Job monitoring/cancellation, system/file, snapshot, polarization, and diagnostic tools |
-| **Optimization & tolerancing** | 77 explicitly selected optimization, job, tolerance, core sequential, file, snapshot, and verification tools |
-| **Full expert** | All 150 tools and all impacts |
+| **View & analyze** | 46 explicitly selected read-only inspection/analysis tools |
+| **Sequential design** | 93 explicitly selected sequential edit, system, file, snapshot, polarization, and analysis tools |
+| **Non-sequential & stray light** | 37 explicitly selected NSC inspection, tracing, Job monitoring/cancellation, system/file, snapshot, polarization, and diagnostic tools |
+| **Optimization & tolerancing** | 79 explicitly selected optimization, job, tolerance, core sequential, file, snapshot, and verification tools |
+| **Full expert** | All 152 tools and all impacts |
 
 For authenticated multi-client Hosts, [Job ownership and scoped diagnostics](docs/MULTI_CLIENT_AUTH.md#job-ownership-and-diagnostics) prevent cross-token status, result, list, and cancel access; legacy process-global multistart status/stop are not exposed. [Official Tasks integration](docs/TASKS_ADOPTION.md) is experimental and enabled by default. On the OpticStudio computer, use **Run configuration → Enable official Tasks (experimental)** to change it, then Stop / Start when idle. The preference persists across restarts; command-line Hosts can disable it with `--enable-official-tasks false`. Compatible clients must still opt in per request; ordinary clients retain normal tool/Job responses. Fake-Worker tests pass, while licensed official Tasks completion/cancellation/recovery acceptance remains pending.
 

@@ -195,6 +195,8 @@ public static class ToolsetCatalog
         ["zemax_set_wavelengths"] = "sequential-editing",
         ["zemax_snapshot_diff"] = "files",
         ["zemax_snapshot_list"] = "files",
+        ["zemax_execution_context"] = "system",
+        ["zemax_list_lens_files"] = "files",
         ["zemax_snapshot_restore"] = "files",
         ["zemax_spot_diagram"] = "analysis",
         ["zemax_status"] = "administration",
@@ -227,7 +229,7 @@ public static class ToolsetCatalog
         "zemax_job_list", "zemax_job_status", "zemax_lateral_color", "zemax_list_surface_types", "zemax_longitudinal_aberration", "zemax_multistart_status",
         "zemax_opd_fan", "zemax_operand_help", "zemax_pupil_aberration_fan", "zemax_ray_fan", "zemax_ray_trace", "zemax_ray_trace_diagnostics", "zemax_ray_trace_extended",
         "zemax_relative_illumination", "zemax_rms_spot", "zemax_search_operands", "zemax_seidel_coefficients", "zemax_snapshot_diff", "zemax_snapshot_list",
-        "zemax_spot_diagram", "zemax_status", "zemax_tool_catalog", "zemax_task_plan", "zemax_validate_model", "zemax_explain_result", "zemax_system_summary", "zemax_workflow_baseline", "zemax_workflow_verify", "zemax_compare_analyses", "zemax_preview_surface_edits"
+        "zemax_spot_diagram", "zemax_status", "zemax_tool_catalog", "zemax_task_plan", "zemax_validate_model", "zemax_explain_result", "zemax_system_summary", "zemax_workflow_baseline", "zemax_workflow_verify", "zemax_compare_analyses", "zemax_preview_surface_edits", "zemax_execution_context", "zemax_list_lens_files"
     };
 
     private static readonly HashSet<string> CautionTools = new HashSet<string>(StringComparer.Ordinal)
@@ -255,7 +257,7 @@ public static class ToolsetCatalog
         new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
         {
             [BasicViewing] = NewToolSet(
-                "zemax_status", "zemax_tool_catalog", "zemax_task_plan", "zemax_validate_model", "zemax_explain_result", "zemax_system_summary", "zemax_workflow_baseline", "zemax_workflow_verify", "zemax_compare_analyses", "zemax_preview_surface_edits",
+                "zemax_status", "zemax_execution_context", "zemax_tool_catalog", "zemax_task_plan", "zemax_validate_model", "zemax_explain_result", "zemax_system_summary", "zemax_workflow_baseline", "zemax_workflow_verify", "zemax_compare_analyses", "zemax_preview_surface_edits",
                 "zemax_get_system", "zemax_get_system_metadata", "zemax_get_environment", "zemax_get_units",
                 "zemax_get_aperture_settings", "zemax_get_advanced_system_settings", "zemax_get_ray_aiming_settings",
                 "zemax_get_material_catalog_settings", "zemax_get_configuration", "zemax_get_field_settings",
@@ -268,8 +270,8 @@ public static class ToolsetCatalog
                 "zemax_diffraction_encircled_energy"),
 
             [SequentialDesign] = NewToolSet(
-                "zemax_status", "zemax_tool_catalog", "zemax_task_plan", "zemax_validate_model", "zemax_explain_result", "zemax_system_summary", "zemax_workflow_baseline", "zemax_workflow_verify", "zemax_compare_analyses", "zemax_preview_surface_edits", "zemax_connect", "zemax_disconnect",
-                "zemax_open_file", "zemax_save_file", "zemax_new_system", "zemax_snapshot_list", "zemax_snapshot_diff", "zemax_snapshot_restore", "zemax_export_analysis",
+                "zemax_status", "zemax_execution_context", "zemax_tool_catalog", "zemax_task_plan", "zemax_validate_model", "zemax_explain_result", "zemax_system_summary", "zemax_workflow_baseline", "zemax_workflow_verify", "zemax_compare_analyses", "zemax_preview_surface_edits", "zemax_connect", "zemax_disconnect",
+                "zemax_list_lens_files", "zemax_open_file", "zemax_save_file", "zemax_new_system", "zemax_snapshot_list", "zemax_snapshot_diff", "zemax_snapshot_restore", "zemax_export_analysis",
                 "zemax_get_system", "zemax_get_system_metadata", "zemax_get_environment", "zemax_get_units",
                 "zemax_get_aperture_settings", "zemax_get_advanced_system_settings", "zemax_get_ray_aiming_settings",
                 "zemax_get_material_catalog_settings", "zemax_get_polarization", "zemax_get_mtf_units",
@@ -293,8 +295,8 @@ public static class ToolsetCatalog
                 "zemax_seidel_coefficients", "zemax_geometric_mtf", "zemax_huygens_psf"),
 
             [NonSequentialStrayLight] = NewToolSet(
-                "zemax_status", "zemax_tool_catalog", "zemax_task_plan", "zemax_validate_model", "zemax_explain_result", "zemax_system_summary", "zemax_workflow_baseline", "zemax_workflow_verify", "zemax_compare_analyses", "zemax_preview_surface_edits", "zemax_connect", "zemax_disconnect",
-                "zemax_open_file", "zemax_save_file", "zemax_new_system", "zemax_snapshot_list", "zemax_snapshot_restore", "zemax_get_system_files",
+                "zemax_status", "zemax_execution_context", "zemax_tool_catalog", "zemax_task_plan", "zemax_validate_model", "zemax_explain_result", "zemax_system_summary", "zemax_workflow_baseline", "zemax_workflow_verify", "zemax_compare_analyses", "zemax_preview_surface_edits", "zemax_connect", "zemax_disconnect",
+                "zemax_list_lens_files", "zemax_open_file", "zemax_save_file", "zemax_new_system", "zemax_snapshot_list", "zemax_snapshot_restore", "zemax_get_system_files",
                 "zemax_get_system_metadata", "zemax_get_environment", "zemax_get_material_catalog_settings",
                 "zemax_get_polarization", "zemax_get_nonsequential_system_settings",
                 "zemax_get_nsc_objects", "zemax_get_nsc_object_parameters", "zemax_get_nsc_detector",
@@ -302,8 +304,8 @@ public static class ToolsetCatalog
                 "zemax_job_status", "zemax_job_list", "zemax_job_cancel", "zemax_export_analysis", "zemax_export_nsc_detector_csv"),
 
             [OptimizationTolerance] = NewToolSet(
-                "zemax_status", "zemax_tool_catalog", "zemax_task_plan", "zemax_validate_model", "zemax_explain_result", "zemax_system_summary", "zemax_workflow_baseline", "zemax_workflow_verify", "zemax_compare_analyses", "zemax_preview_surface_edits", "zemax_connect", "zemax_disconnect",
-                "zemax_open_file", "zemax_save_file", "zemax_snapshot_list", "zemax_snapshot_diff", "zemax_snapshot_restore", "zemax_get_system", "zemax_get_system_metadata",
+                "zemax_status", "zemax_execution_context", "zemax_tool_catalog", "zemax_task_plan", "zemax_validate_model", "zemax_explain_result", "zemax_system_summary", "zemax_workflow_baseline", "zemax_workflow_verify", "zemax_compare_analyses", "zemax_preview_surface_edits", "zemax_connect", "zemax_disconnect",
+                "zemax_list_lens_files", "zemax_open_file", "zemax_save_file", "zemax_snapshot_list", "zemax_snapshot_diff", "zemax_snapshot_restore", "zemax_get_system", "zemax_get_system_metadata",
                 "zemax_get_environment", "zemax_get_units", "zemax_get_field_settings", "zemax_get_wavelength_settings",
                 "zemax_get_stop_surface", "zemax_get_first_order_data", "zemax_get_surface",
                 "zemax_get_configuration", "zemax_get_configuration_operands", "zemax_get_surface_solves",

@@ -90,10 +90,14 @@ internal static class Program
             var jobTaskDelta = new McpJobTaskDeltaMonitor();
             builder.Services.AddSingleton(jobTaskDelta);
             var mcpBuilder = builder.Services
-                .AddMcpServer(server => server.ServerInfo = new()
+                .AddMcpServer(server =>
                 {
-                    Name = "zemax-mcp",
-                    Version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "unknown"
+                    server.ServerInfo = new()
+                    {
+                        Name = "zemax-mcp",
+                        Version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "unknown"
+                    };
+                    server.ServerInstructions = ExecutionLocationPolicy.Instructions;
                 })
                 .WithHttpTransport(transport => transport.Stateless = true)
                 .WithListToolsHandler(async (request, _) =>
@@ -192,9 +196,9 @@ internal static class Program
                     // observe their own Jobs even while a foreign Job owns the
                     // optical system.
                     CallToolResult result;
-                    if (request.Params.Name is "zemax_status" or "zemax_tool_catalog")
+                    if (request.Params.Name is "zemax_status" or "zemax_tool_catalog" or "zemax_execution_context" or "zemax_list_lens_files")
                     {
-                        // These two commands inspect connection metadata/static schemas only.
+                        // These commands inspect metadata/static schemas or bounded local files only.
                         // Keep authorization and Worker serialization, but never acquire or
                         // renew optical ownership for Launcher diagnostics on either computer.
                         result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
@@ -539,6 +543,9 @@ internal static class Program
                     licenseValidForApi = status?.LicenseValidForApi,
                     lastConnectionError = status?.LastConnectionError,
                     zemaxDataDirectory = status?.OpticStudioDataDirectory ?? "Not reported",
+                    executionComputer = status?.ExecutionComputer ?? "Not reported",
+                    filePathNamespace = ExecutionLocationPolicy.PathNamespace,
+                    currentLensFile = status?.CurrentLensFile,
                     loadedZosApiFiles = new { zosApi = status?.ZosApiAssembly },
                     authenticationRequired = !string.IsNullOrWhiteSpace(options.AccessToken) || credentialStore != null,
                     originValidationEnabled = true,

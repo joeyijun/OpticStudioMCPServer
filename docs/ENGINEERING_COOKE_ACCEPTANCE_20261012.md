@@ -14,9 +14,53 @@ endpoint using the installed official **Cooke 40 degree field** sample.
   solve object. No guarded design edit was attempted.
 - The user's backup was reopened; the original model DTOs matched.
 
-This is **not** a completed design/optimization acceptance. Live verification
-of the correction and the bounded focus-search scenario remains pending
-deployment.
+That initial run was **not** a completed design/optimization acceptance.
+After deployment of `4844bcc`, the bounded focus-search scenario below passed.
+
+## Completed live follow-up: 4844bcc
+
+Both the local running Launcher and the remote Worker reported this build.
+The complete final run passed **56 assertions** across **76 tool calls**.
+An additional read-only MTF tradeoff-recognition check passed.
+
+The official sample has a Variable image-gap thickness and a MarginalRayAngle
+radius solve on surface 6. Fixed and Variable thicknesses are editable in
+this experiment; derived solves must not be overwritten. The test preserved
+these definitions throughout the focus search.
+
+Only a uniquely named working copy was edited. A 0.2 mm image-gap defocus
+was introduced, then five image-gap candidates were evaluated. Every edit
+used a new baseline, a dry-run preview, a guarded batch, an independent surface
+read and workflow verification. The selected candidate returned to the
+original nominal image gap, 42.2077801 mm.
+
+| Metric | Deliberately defocused | Selected candidate |
+| --- | ---: | ---: |
+| Axial RMS spot radius | 12.0348 µm | 5.0808 µm |
+| 20° field RMS spot radius | 22.7287 µm | 11.9523 µm |
+| Axial FFT MTF, 10 cycles/mm | 0.83518 | 0.93519 |
+
+Axial RMS decreased by 57.78%. This is recovery from imposed defocus, **not**
+an improvement beyond the original official design. The numerical spot criteria
+passed, but the stricter claim that every field/component MTF improved was
+correctly rejected: 14° tangential MTF fell from 0.93013 to 0.70761 at
+10 cycles/mm. Five of six selected MTF components improved; the comparison
+returned `criteriaPassed=false` and identified the failing component.
+
+Additional live boundaries verified:
+
+- A consumed baseline was rejected with zero applied edits, unchanged guarded
+  model state and no additional safety snapshot.
+- Native angle solve setting/readback and Fixed → Variable thickness-solve
+  roundtrip succeeded; all original solve definitions were retained.
+- All 75 bounded real rays were clear, with zero API error/vignette codes.
+- The result was saved only to the test copy, then the user's unique backup
+  was reopened and model DTO equality was verified.
+
+This acceptance covers a bounded sequential imaging exercise, not all tools,
+NSC/tolerancing, every OpticStudio version, a complete lens fingerprint or
+production optical-design validation. Model files and snapshots were retained
+for diagnosis rather than deleted while an optical system could reference them.
 
 ## Correction
 

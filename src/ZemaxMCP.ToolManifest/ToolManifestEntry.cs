@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using ZemaxMCP.Toolsets;
 
 namespace ZemaxMCP.ToolManifest;
@@ -10,10 +11,16 @@ public sealed class ToolManifestEntry
     public ToolManifestEntry(string name, string description, string inputSchemaJson)
     {
         Name = name;
-        Description = description;
+        Description = ExecutionLocationPolicy.ToolNotice + description;
         DomainId = ToolsetCatalog.GetDomainId(name);
         Impact = ToolsetCatalog.GetImpact(name).ToString();
-        using var document = JsonDocument.Parse(inputSchemaJson);
+        var schema = JsonNode.Parse(inputSchemaJson)!;
+        if (schema["properties"] is JsonObject properties)
+            foreach (var property in properties)
+                if (property.Key.EndsWith("Path", StringComparison.Ordinal) && property.Value is JsonObject parameter)
+                    parameter["description"] = ExecutionLocationPolicy.PathNotice +
+                        (parameter["description"]?.GetValue<string>() ?? "");
+        using var document = JsonDocument.Parse(schema.ToJsonString());
         InputSchema = document.RootElement.Clone();
     }
 

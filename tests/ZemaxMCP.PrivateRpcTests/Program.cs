@@ -884,6 +884,39 @@ internal static partial class Program
                     throw new InvalidOperationException("tools/list started the Worker; static Host discovery is not independent of ZOS-API.");
             }
 
+            using (var discovery = await client.SendAsync(Create2026Request(endpoint,
+                Build2026Body(9001, "server/discover", null, "client-a", "instance-a"), "server/discover", null)).ConfigureAwait(false))
+            {
+                var discoveryBody = await ReadFirstMcpPayloadAsync(discovery).ConfigureAwait(false);
+                using var json = JsonDocument.Parse(discoveryBody);
+                if (!discovery.IsSuccessStatusCode ||
+                    json.RootElement.GetProperty("result").GetProperty("instructions").GetString() != ExecutionLocationPolicy.Instructions ||
+                    File.Exists(workerLog))
+                    throw new InvalidOperationException("Modern discovery must advertise Worker execution instructions without starting the Worker.");
+            }
+
+            using (var legacyRequest = new HttpRequestMessage(HttpMethod.Post, endpoint)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    jsonrpc = "2.0", id = 9002, method = "initialize",
+                    @params = new { protocolVersion = "2025-11-25", capabilities = new { },
+                        clientInfo = new { name = "legacy-location-reader", version = "1.0" } }
+                }), Encoding.UTF8, "application/json")
+            })
+            {
+                legacyRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
+                legacyRequest.Headers.TryAddWithoutValidation("Accept", "application/json, text/event-stream");
+                legacyRequest.Headers.TryAddWithoutValidation("MCP-Protocol-Version", "2025-11-25");
+                using var legacy = await client.SendAsync(legacyRequest).ConfigureAwait(false);
+                var legacyBody = await ReadFirstMcpPayloadAsync(legacy).ConfigureAwait(false);
+                using var json = JsonDocument.Parse(legacyBody);
+                if (!legacy.IsSuccessStatusCode ||
+                    json.RootElement.GetProperty("result").GetProperty("instructions").GetString() != ExecutionLocationPolicy.Instructions ||
+                    File.Exists(workerLog))
+                    throw new InvalidOperationException("Legacy initialize must carry the same execution-location instructions without starting the Worker.");
+            }
+
             using var blocked = await Send2026ToolCallAsync(client, endpoint, 2, "zemax_set_surface", "client-a", "instance-a").ConfigureAwait(false);
             var blockedBody = await ReadFirstMcpPayloadAsync(blocked).ConfigureAwait(false);
             if (!blockedBody.Contains("does not permit", StringComparison.OrdinalIgnoreCase) ||

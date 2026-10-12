@@ -102,7 +102,8 @@ internal static class ToolCatalog
             throw new ArgumentException("Unknown task. Choose clipping, imaging, straylight, energy, optimize, tolerance or safe-edit.", nameof(task));
         return PlaybookDefinitions.Where(item => string.IsNullOrEmpty(target) || item.Id == target)
             .Select(item => new ToolCatalogTool.TaskPlaybook(
-                item.Id, item.Goal, item.Guidance,
+                item.Id, item.Goal,
+                "First call zemax_execution_context to identify the OpticStudio computer. File paths belong to that computer, not the AI client. " + item.Guidance,
                 item.Steps.Where(permitted).ToArray(),
                 item.Steps.Where(name => !permitted(name)).ToArray()))
             .ToArray();

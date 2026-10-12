@@ -16,7 +16,8 @@ public class ConnectTool
         string? Error,
         bool IsConnected,
         string? CurrentFile,
-        string? Mode
+        string? Mode,
+        WorkerExecutionContext ExecutionContext
     );
 
     [ZemaxTool(Name = "zemax_connect")]
@@ -108,5 +109,6 @@ public class ConnectTool
         Error: error,
         IsConnected: _session.IsConnected,
         CurrentFile: _session.CurrentFilePath,
-        Mode: _session.CurrentMode?.ToString());
+        Mode: _session.CurrentMode?.ToString(),
+        ExecutionContext: WorkerExecutionContext.Create(_session.ZemaxDataDir, _session.CurrentFilePath, _session.CurrentMode?.ToString()));
 }

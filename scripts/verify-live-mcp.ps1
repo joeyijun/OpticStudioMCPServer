@@ -2,7 +2,7 @@
 param(
     [string]$Endpoint = "http://127.0.0.1:8000/mcp",
     [string]$AccessToken = $env:ZEMAX_MCP_TOKEN,
-    [int]$ExpectedFullExpertToolCount = 150,
+    [int]$ExpectedFullExpertToolCount = 152,
     [string]$ClientInstanceId = '',
     [switch]$SkipReadOnlyCalls,
     [switch]$VerifySafety,

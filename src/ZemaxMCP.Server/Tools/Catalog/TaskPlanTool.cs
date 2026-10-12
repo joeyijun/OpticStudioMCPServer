@@ -82,7 +82,10 @@ public sealed class TaskPlanTool
                         "1", StringComparison.Ordinal);
                     var playbook = ToolCatalog.GetPlaybooks(normalized,
                         name => StaticToolManifest.IsAllowed(profile, name, readOnly))[0];
-                    var warnings = new List<string>();
+                    var warnings = new List<string>
+                    {
+                        "Check zemax_execution_context first. All file paths refer to the OpticStudio computer, not the AI client's filesystem."
+                    };
                     var compatible = normalized switch
                     {
                         "straylight" => isNsc,

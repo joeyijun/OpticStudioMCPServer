@@ -61,7 +61,7 @@ public static class ZemaxOperationMetadata
             "zemax_job_list", "zemax_job_status", "zemax_lateral_color", "zemax_list_surface_types", "zemax_longitudinal_aberration", "zemax_multistart_status",
             "zemax_opd_fan", "zemax_operand_help", "zemax_pupil_aberration_fan", "zemax_ray_fan", "zemax_ray_trace", "zemax_ray_trace_diagnostics", "zemax_ray_trace_extended",
             "zemax_relative_illumination", "zemax_rms_spot", "zemax_search_operands", "zemax_seidel_coefficients", "zemax_snapshot_diff", "zemax_snapshot_list",
-            "zemax_spot_diagram", "zemax_status", "zemax_tool_catalog", "zemax_task_plan", "zemax_validate_model", "zemax_explain_result", "zemax_system_summary", "zemax_workflow_baseline", "zemax_workflow_verify", "zemax_compare_analyses", "zemax_preview_surface_edits"
+            "zemax_spot_diagram", "zemax_status", "zemax_tool_catalog", "zemax_task_plan", "zemax_validate_model", "zemax_explain_result", "zemax_system_summary", "zemax_workflow_baseline", "zemax_workflow_verify", "zemax_compare_analyses", "zemax_preview_surface_edits", "zemax_execution_context", "zemax_list_lens_files"
             }),
             new OperationPolicy(ZemaxOperationImpact.Caution, new[] { "NscRayTrace", "OpenFile", "RunTolerancing" }, new[]
             {

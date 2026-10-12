@@ -185,10 +185,12 @@ if ([string]::IsNullOrWhiteSpace($callToolBody) -or
 if ($privateRpcTest -notmatch '2026-07-28' -or $privateRpcTest -notmatch 'io\.modelcontextprotocol/clientInfo' -or
     $privateRpcTest -notmatch 'io\.zemaxmcp/clientInstanceId' -or $privateRpcTest -notmatch 'bad-manifest' -or
     $privateRpcTest -notmatch 'VerifyProgressEventDispatchAsync' -or $privateRpcTest -notmatch 'same-name same-IP' -or
-    $privateRpcTest -notmatch 'Send2026ListToolsAsync' -or $privateRpcTest -match '"initialize"') {
+    $privateRpcTest -notmatch 'Send2026ListToolsAsync' -or
+    $privateRpcTest -notmatch 'Modern discovery must advertise Worker execution instructions' -or
+    $privateRpcTest -notmatch 'Legacy initialize must carry the same execution-location instructions') {
   throw "The E2E suite must cover stateless discovery, manifest mismatch, event dispatch, and distinct same-info client instances."
 }
-if ($schemaTest -notmatch 'StaticToolManifest\.All\.Count != 150' -or $schemaTest -notmatch 'zemax_open_file' -or
+if ($schemaTest -notmatch 'StaticToolManifest\.All\.Count != 152' -or $schemaTest -notmatch 'zemax_open_file' -or
     $schemaTest -notmatch 'zemax_set_fields' -or $schemaTest -notmatch 'zemax_optimize' -or
     $schemaTest -notmatch 'unresolved opaque object contracts') {
   throw "Generated manifest regressions must verify count, policy metadata, required parameters, nested records, defaults, and absence of opaque contracts."
