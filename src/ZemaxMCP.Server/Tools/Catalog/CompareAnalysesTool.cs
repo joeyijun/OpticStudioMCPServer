@@ -10,9 +10,24 @@ public sealed class CompareAnalysesTool
     [Description("Compare two Worker-recorded successful spot-diagram or FFT-MTF analysis IDs from structuredContent.engineering.analysisId. Require the same recorded model/conditions/sampling, and identical MTF field/frequency axes. Apply explicit numerical rules; never invent missing/non-finite metrics, compare different methods, authorize edits or save a lens. Other analyses carry provenance but are not yet supported by this numerical comparator.")]
     public object Execute([Description("Earlier analysis ID in this Worker.")] string baselineAnalysisId,
         [Description("Later analysis ID in this Worker.")] string currentAnalysisId,
-        [Description("1..24 rules: path (/rmsSpotRadius or /fields/0/tangentialMtf/3), goal (decrease/increase/range), optional minimum/maximum and minimumChange. Units come from recorded evidence, not caller declarations.")] List<AnalysisEvidenceStore.Rule> rules)
+        [Description("1..24 rules: path (/rmsSpotRadius or /fields/0/tangentialMtf/3), goal (decrease/increase/range), optional minimum/maximum. For increase/decrease, minimumChange is an inclusive magnitude threshold, and zero change never passes. Units come from recorded evidence, not caller declarations.")] List<AnalysisEvidenceStore.Rule> rules)
     {
         try { return AnalysisEvidenceStore.Compare(baselineAnalysisId, currentAnalysisId, rules); }
-        catch (Exception ex) { return new { success = false, error = ex.Message, criteriaPassed = (bool?)null, scope = "No numerical acceptance was established." }; }
+        catch (Exception ex)
+        {
+            return new
+            {
+                success = false,
+                error = ex.Message,
+                code = ex is AnalysisEvidenceException evidence ? evidence.Code : "invalid_comparison_input",
+                comparisonState = "not_established",
+                criteriaPassed = (bool?)null,
+                saveAuthorized = false,
+                nextSteps = new[] { ex is AnalysisEvidenceException error ? error.NextAction :
+                "Check the declared metric path, complete analysis provenance and finite ordered criteria before retrying.",
+                "Do not infer a passing design, mutate, restore or save automatically." },
+                scope = "No numerical acceptance was established."
+            };
+        }
     }
 }

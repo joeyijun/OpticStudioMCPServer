@@ -175,26 +175,42 @@ for manual follow-up.
 
 ## Guarded editing and numerical evidence
 
-The development build adds three read-only tools (149 tools total):
+The development build adds four read-only engineering tools (150 tools total):
 `zemax_workflow_baseline`, `zemax_workflow_verify`, and
-`zemax_compare_analyses`. The safe-edit playbook recommends this loop:
+`zemax_compare_analyses`, and `zemax_preview_surface_edits`.
+The safe-edit playbook recommends this loop:
 
 1. Confirm the active Sequential lens and intended surface numbers.
 2. Capture `zemax_workflow_baseline(surfaceNumbers=[...])`. Record
    `baseline.id` and review the returned target state.
 3. Run `zemax_spot_diagram` with explicit field, wavelength and rings.
    Record `structuredContent.engineering.analysisId`.
-4. After approval, call `zemax_batch_set_surfaces` with
+4. Use `zemax_preview_surface_edits(baselineId=baseline.id, edits=[...])`
+   to review requested before/after differences without changing the lens.
+   It reuses batch input validation and checks the same fresh baseline, but
+   does not consume it. Stop changes warn about effects on other rows.
+   Preview does not predict native solves or recalculation.
+5. After approval, call `zemax_batch_set_surfaces` with
    `expectedBaselineId=baseline.id`. The baseline check runs on the same
    STA immediately before the snapshot and edit; stale or consumed tokens
    fail without a snapshot or write. Omitting this optional parameter retains
    legacy behavior; other editing tools do not implicitly acquire this guard.
-5. Independently read back the surface and call
+6. Independently read back the surface and call
    `zemax_workflow_verify(baselineId=...)`.
-6. Repeat the analysis with identical settings and compare the two
+7. Repeat the analysis with identical settings and compare the two
    Worker-issued analysis IDs with explicit numeric rules, for example
    `{"path":"/rmsSpotRadius","goal":"decrease"}`.
-7. Review snapshot differences and save only after approval.
+8. Review snapshot differences and save only after approval.
+
+Verification reports `awaiting_edit`, `readback_verified`, or
+`model_changed_after_edit` independently of transport success. Numerical
+comparison reports `selected_criteria_passed`, `selected_criteria_not_met`,
+or `not_established`, returns the applied limits and MTF field/frequency labels,
+and gives machine-readable failure codes with recovery instructions.
+For increase/decrease, zero change never passes; a positive
+`minimumChange` is inclusive and expressed in the recorded metric's units.
+An overflowed difference is rejected, not interpreted as improvement.
+`saveAuthorized=false` explicitly means these tools never grant save permission.
 
 Baseline tokens expire after 15 minutes and are single-use for editing.
 Analysis evidence expires after 60 minutes. Both stores retain at most 128
@@ -208,7 +224,8 @@ Tool responses keep their existing text JSON and additionally expose
 `structuredContent.result` and `structuredContent.engineering`. Background
 Job result objects carry an `engineering` property. Conditions are captured
 on the calculation's STA: actual lens/MTF units, active configuration,
-fields, wavelengths and aperture, plus requested method parameters.
+fields (including normalization and VDX/VDY/VCX/VCY/TAN vignetting factors),
+wavelengths and aperture, plus requested method parameters.
 Unavailable, omitted or unrecorded effective native settings remain explicitly
 unknown; requested sampling is not a claim that every native option was verified.
 

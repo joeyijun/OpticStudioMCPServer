@@ -46,6 +46,7 @@ public sealed class TaskPlanTool
             ["safe-edit"] = new[] { "Summarize active model, units and key optical elements", "Confirm active lens", "Inspect target surface",
                 "Capture baseline.id for approved target rows (15-minute scoped guard)",
                 "Record baseline spot analysisId with explicit field, wavelength and rings", "Check existing snapshots",
+                "Preview requested differences without mutation or snapshot; review native side-effect warnings",
                 "Edit only after approval; pass baseline.id as expectedBaselineId", "Read back changed surface",
                 "Verify independently reread scoped state against recorded post-edit state",
                 "Repeat spot analysis with identical settings and record analysisId",

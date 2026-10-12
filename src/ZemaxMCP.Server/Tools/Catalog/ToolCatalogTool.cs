@@ -90,7 +90,7 @@ internal static class ToolCatalog
         new("safe-edit", "Safely edit and compare an optical lens",
             "Confirm the active sequential lens and selected rows. Capture a fresh workflow baseline and a spot analysis with explicit field/wavelength/rings. After approval, pass baseline.id as expectedBaselineId to the batch edit; the Worker checks the scoped model state atomically before snapshot/write. Read back and verify the edit, repeat the same analysis settings and compare Worker-issued analysis IDs against explicit criteria. Numeric acceptance is not full design validation. Review snapshot diff; save only after approval.",
             new[] { "zemax_system_summary", "zemax_get_system", "zemax_get_surface", "zemax_workflow_baseline",
-                "zemax_spot_diagram", "zemax_snapshot_list", "zemax_batch_set_surfaces",
+                "zemax_spot_diagram", "zemax_snapshot_list", "zemax_preview_surface_edits", "zemax_batch_set_surfaces",
                 "zemax_get_surface", "zemax_workflow_verify", "zemax_spot_diagram",
                 "zemax_compare_analyses", "zemax_snapshot_diff", "zemax_save_file" })
     };

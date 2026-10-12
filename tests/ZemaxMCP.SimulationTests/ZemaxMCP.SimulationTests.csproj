@@ -34,7 +34,9 @@
     <Compile Include="..\..\src\ZemaxMCP.Core\Session\ZosApiDispatcher.cs" Link="Core\ZosApiDispatcher.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Session\EngineeringObservation.cs" Link="Core\EngineeringObservation.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\EngineeringBaselineStore.cs" Link="Server\EngineeringBaselineStore.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\EngineeringEditPreview.cs" Link="Server\EngineeringEditPreview.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\AnalysisEvidenceStore.cs" Link="Server\AnalysisEvidenceStore.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\AnalysisEvidenceException.cs" Link="Server\AnalysisEvidenceException.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Models\GlassEntry.cs" Link="Core\GlassEntry.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Services\GlassCatalog\AgfFileParser.cs" Link="Core\GlassCatalog\AgfFileParser.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Services\GlassCatalog\CatalogExportService.cs" Link="Core\GlassCatalog\CatalogExportService.cs" />

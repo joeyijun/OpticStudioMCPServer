@@ -21,3 +21,9 @@ if ($rpc -notmatch 'structuredContent' -or $rpc -notmatch 'EngineeringObservatio
     throw 'Foreground/background invocation provenance boundary regressed.'
 }
 Write-Output 'Engineering guards: atomic pre-snapshot model check and foreground/background provenance retained.'
+$preview = Get-Content -Raw (Join-Path $root 'src/ZemaxMCP.Server/Tools/Catalog/EngineeringWorkflowTool.cs')
+if ($preview -notmatch 'BatchSetSurfacesTool.ValidateEdits' -or
+    $preview -notmatch 'EngineeringBaselineStore.Validate' -or
+    $preview -match 'system.Save|system.Load|\.Radius\s*=|\.Thickness\s*=') {
+    throw 'Preview must validate the real model and reuse batch validation without writing lens data.'
+}

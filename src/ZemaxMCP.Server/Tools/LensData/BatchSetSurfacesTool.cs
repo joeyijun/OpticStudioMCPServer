@@ -146,7 +146,7 @@ public sealed class BatchSetSurfacesTool
         }
     }
 
-    private static void ValidateEdits(List<SurfaceEdit>? edits)
+    internal static void ValidateEdits(List<SurfaceEdit>? edits)
     {
         if (edits == null || edits.Count == 0)
             throw new ArgumentException("At least one surface edit is required.", nameof(edits));

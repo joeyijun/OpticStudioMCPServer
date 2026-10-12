@@ -9,7 +9,9 @@
     <Compile Include="..\ZemaxMCP.SimulationTests\EngineeringWorkflowAssertions.cs" Link="EngineeringWorkflowAssertions.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Core\Session\EngineeringObservation.cs" Link="Core\EngineeringObservation.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\EngineeringBaselineStore.cs" Link="Server\EngineeringBaselineStore.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\EngineeringEditPreview.cs" Link="Server\EngineeringEditPreview.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\AnalysisEvidenceStore.cs" Link="Server\AnalysisEvidenceStore.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\AnalysisEvidenceException.cs" Link="Server\AnalysisEvidenceException.cs" />
     <PackageReference Include="System.Text.Json" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Compatibility\IsExternalInit.cs" Link="Server\IsExternalInit.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Compatibility\FrameworkCompatibility.cs" Link="Server\FrameworkCompatibility.cs" />

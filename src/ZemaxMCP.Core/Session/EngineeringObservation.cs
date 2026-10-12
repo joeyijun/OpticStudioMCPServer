@@ -25,11 +25,13 @@ public sealed class EngineeringObservation : IDisposable
 
     public sealed record OperationEvidence(string Command, DateTimeOffset CapturedAt, string Status,
         Conditions? Conditions, IReadOnlyDictionary<string, string?>? RequestedParameters, string? Error);
-    public sealed record FieldCondition(int Index, double? X, double? Y, double? Weight, bool Active);
+    public sealed record FieldCondition(int Index, double? X, double? Y, double? Weight, bool Active,
+        double? Vdx = null, double? Vdy = null, double? Vcx = null, double? Vcy = null, double? Tan = null);
     public sealed record WavelengthCondition(int Index, double? Micrometers, double? Weight, bool Primary, bool Active);
     public sealed record Conditions(string ModelIdentity, string? FilePath, string Mode, string LensUnit,
         int Configuration, int ConfigurationCount, string? FieldType, string ApertureType, double? ApertureValue,
         IReadOnlyList<FieldCondition> Fields, IReadOnlyList<WavelengthCondition> Wavelengths,
-        int OmittedFields, int OmittedWavelengths, string Scope, string? MtfFrequencyUnit = null);
+        int OmittedFields, int OmittedWavelengths, string Scope, string? MtfFrequencyUnit = null,
+        string? FieldNormalization = null);
 
 }
