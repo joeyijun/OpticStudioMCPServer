@@ -169,6 +169,12 @@ internal static partial class Program
                doc.RootElement.GetProperty("code").GetString() == "expired" &&
                doc.RootElement.GetProperty("detail").GetInt32() == 12,
             "Failed legacy JSON must retain its fields while receiving a machine-readable code.");
+        var withEvidence = JsonSerializer.Deserialize<CallToolResult>(
+            "{\"isError\":true,\"content\":[{\"type\":\"text\",\"text\":\"{\\\"success\\\":false,\\\"error\\\":\\\"analysis_conditions_conflict\\\"}\"}],\"structuredContent\":{\"result\":{\"success\":false},\"engineering\":{\"operations\":[{\"status\":\"unavailable\"}]}}}")!;
+        var evidenceResult = JsonSerializer.SerializeToElement(ToolOutcome.Normalize(withEvidence));
+        Assert(evidenceResult.GetProperty("structuredContent").GetProperty("engineering")
+            .GetProperty("operations")[0].GetProperty("status").GetString() == "unavailable",
+            "Host error normalization discarded Worker analysis provenance.");
         var success = new CallToolResult
         {
             IsError = false,

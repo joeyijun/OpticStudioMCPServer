@@ -46,11 +46,19 @@ internal static class ToolOutcome
                 if (details["success"] == null) details["success"] = false;
                 if (details["message"] == null)
                     details["message"] = details["error"]?.ToString() ?? "Tool failed.";
-                return FailureJson(details.ToJsonString());
+                return PreserveStructuredEvidence(result, FailureJson(details.ToJsonString()));
             }
         }
         catch (JsonException) { }
-        return Failure(code, text);
+        return PreserveStructuredEvidence(result, Failure(code, text));
+    }
+
+    private static CallToolResult PreserveStructuredEvidence(CallToolResult original, CallToolResult normalized)
+    {
+        // Error classification must not discard the actual analysis conditions
+        // captured by the Worker. isError remains authoritative.
+        normalized.StructuredContent = original.StructuredContent;
+        return normalized;
     }
 
     private static CallToolResult FailureJson(string text) =>
