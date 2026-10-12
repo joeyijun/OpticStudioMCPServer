@@ -777,7 +777,8 @@
             <TextBlock Text="Connection diagnostics" Style="{StaticResource StatusHeading}" VerticalAlignment="Center"/>
             <StackPanel Grid.Column="1" Orientation="Horizontal">
               <Button Content="Logs" Style="{StaticResource SmallButton}" Margin="0,0,7,0" Click="OpenLogs_Click"/>
-              <Button Content="Updates" Style="{StaticResource SmallButton}" Margin="0,0,7,0" Click="Update_Click"/>
+              <Button x:Name="UpdateButton" Content="Updates" Style="{StaticResource SmallButton}" Margin="0,0,7,0" Click="Update_Click"/>
+              <Button x:Name="CancelUpdateButton" Content="Cancel download" Visibility="Collapsed" Style="{StaticResource SmallButton}" Margin="0,0,7,0" Click="CancelUpdate_Click"/>
               <Button x:Name="TestMcpToolsButton" Content="Test MCP tools" Style="{StaticResource SmallButton}" Margin="0,0,7,0" Click="TestMcpTools_Click"
                       ToolTip="Actually call tools/list and read-only zemax_status, and negotiate official Tasks; never starts an optical Job."/>
               <Button Content="Copy diagnostics" Style="{StaticResource SmallButton}" Click="CopyDiagnostics_Click"/>

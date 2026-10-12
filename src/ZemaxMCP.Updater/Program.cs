@@ -30,7 +30,7 @@ internal static class Program
                 throw new FileNotFoundException("The target is not an existing Zemax MCP installation.");
             using var updateLock = new FileStream(Path.Combine(options.Install, ".update.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             WaitForParent(options.ParentPid);
-            StopInstalledProcesses(options.Install);
+            StopInstalledProcesses(options.Install, options.MaintenanceTicket);
             backup = Path.Combine(Path.GetTempPath(), "ZemaxMCP-backup-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(backup);
             CopyDirectory(options.Install, backup, skipRuntimeData: true);
@@ -93,7 +93,9 @@ internal static class Program
         values.TryGetValue("--parent-pid", out var pidText);
         int.TryParse(pidText, out var pid);
         var restart = !values.TryGetValue("--restart", out var restartText) || !bool.TryParse(restartText, out var parsedRestart) || parsedRestart;
-        return new Options(Path.GetFullPath(staging), Path.GetFullPath(install), pid, restart);
+        values.TryGetValue("--maintenance-ticket", out var ticket);
+        if (ticket != null && !Guid.TryParseExact(ticket, "N", out _)) throw new ArgumentException("Invalid maintenance handoff ticket.");
+        return new Options(Path.GetFullPath(staging), Path.GetFullPath(install), pid, restart, ticket ?? Guid.NewGuid().ToString("N"));
     }
 
     private static void ValidateDirectory(string path, string name)
@@ -121,21 +123,49 @@ internal static class Program
         catch (ArgumentException) { }
     }
 
-    private static void StopInstalledProcesses(string install)
+    private static void StopInstalledProcesses(string install, string maintenanceTicket)
     {
         var prefix = Path.GetFullPath(install).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        foreach (var name in new[] { "Start-Zemax-MCP", "ZemaxMCP.ClientProxy", "ZemaxMCP.Host", "ZemaxMCP.Worker", "ZemaxMCP.HttpBridge", "ZemaxMCP.Server" })
-        foreach (var process in Process.GetProcessesByName(name))
-        using (process)
+        var checkedProcesses = new List<Process>();
+        var preparedHosts = new List<int>();
+        var approvedWorkers = new HashSet<int>();
+        try
         {
-            string executable;
-            try { executable = process.MainModule?.FileName ?? string.Empty; }
-            catch { continue; } // Never stop processes whose exact path cannot be verified.
-            if (string.IsNullOrWhiteSpace(executable) || !Path.GetFullPath(executable).StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
-            if (process.HasExited) continue;
-            if (process.MainWindowHandle != IntPtr.Zero) process.CloseMainWindow();
-            if (!process.WaitForExit(1500)) process.Kill();
-            if (!process.WaitForExit(10000)) throw new TimeoutException("An installed process did not exit: " + name);
+            foreach (var name in new[] { "Start-Zemax-MCP", "ZemaxMCP.ClientProxy", "ZemaxMCP.Host", "ZemaxMCP.Worker", "ZemaxMCP.HttpBridge", "ZemaxMCP.Server" })
+            foreach (var process in Process.GetProcessesByName(name))
+            {
+                string executable;
+                try { executable = process.MainModule?.FileName ?? string.Empty; }
+                catch { process.Dispose(); continue; } // Never stop processes whose exact path cannot be verified.
+                if (string.IsNullOrWhiteSpace(executable) || !Path.GetFullPath(executable).StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) { process.Dispose(); continue; }
+                checkedProcesses.Add(process);
+            }
+            // Freeze all checked Hosts before terminating ANY process. A busy/old
+            // Host postpones the entire update with the installation untouched.
+            foreach (var host in checkedProcesses.Where(p => p.ProcessName is "ZemaxMCP.Host" or "ZemaxMCP.HttpBridge"))
+            {
+                if (host.HasExited) continue;
+                preparedHosts.Add(host.Id);
+                var workerPid = HostMaintenanceClient.Prepare(host.Id, maintenanceTicket);
+                if (workerPid > 0) approvedWorkers.Add(workerPid);
+            }
+            foreach (var optical in checkedProcesses.Where(p => p.ProcessName is "ZemaxMCP.Worker" or "ZemaxMCP.Server"))
+                if (!optical.HasExited && !approvedWorkers.Contains(optical.Id))
+                    throw new InvalidOperationException("Update postponed: a Worker cannot be verified idle by its Host. Exit the old service safely before updating.");
+            foreach (var process in checkedProcesses)
+            {
+                if (process.HasExited) continue;
+                if (process.MainWindowHandle != IntPtr.Zero) process.CloseMainWindow();
+                if (!process.WaitForExit(1500)) process.Kill();
+                if (!process.WaitForExit(10000)) throw new TimeoutException("An installed process did not exit: " + process.ProcessName);
+            }
+        }
+        finally
+        {
+            // If preparation failed, thaw any live Hosts already prepared.
+            foreach (var pid in preparedHosts)
+                try { using var process = Process.GetProcessById(pid); if (!process.HasExited) HostMaintenanceClient.Resume(pid, maintenanceTicket); } catch { }
+            foreach (var process in checkedProcesses) process.Dispose();
         }
     }
 
@@ -183,7 +213,8 @@ internal static class Program
 
     private sealed class Options
     {
-        public Options(string staging, string install, int parentPid, bool restart) { Staging = staging; Install = install; ParentPid = parentPid; Restart = restart; }
+        public Options(string staging, string install, int parentPid, bool restart, string maintenanceTicket) { Staging = staging; Install = install; ParentPid = parentPid; Restart = restart; MaintenanceTicket = maintenanceTicket; }
+        public string MaintenanceTicket { get; }
         public string Staging { get; }
         public string Install { get; }
         public int ParentPid { get; }

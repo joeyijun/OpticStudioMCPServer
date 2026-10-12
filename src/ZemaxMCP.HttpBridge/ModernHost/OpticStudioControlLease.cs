@@ -24,6 +24,20 @@ internal sealed class OpticStudioControlLease
     private string? _ownerClientId;
     private DateTimeOffset _lastActivity;
     private string? _activeOperation;
+    private long _currentGeneration, _ownerGeneration;
+    private bool _ownerInvalidated;
+
+    public void ObserveGenerationStarted(long generation)
+    {
+        if (generation <= 0) return;
+        lock (_sync)
+        {
+            _currentGeneration = generation;
+            // Initial lazy startup occurs inside an already acquired foreground lease.
+            if (_ownerClientId != null && _ownerGeneration == 0 && !_ownerInvalidated)
+                _ownerGeneration = generation;
+        }
+    }
 
     public OpticStudioControlLease(TimeSpan? idleTimeout = null)
     {
@@ -67,6 +81,8 @@ internal sealed class OpticStudioControlLease
                     throw new ControlLeaseConflictException();
 
                 _ownerClientId = clientId;
+                _ownerGeneration = _currentGeneration;
+                _ownerInvalidated = false;
                 _activeOperation = operation;
                 _lastActivity = DateTimeOffset.UtcNow;
             }
@@ -124,6 +140,7 @@ internal sealed class OpticStudioControlLease
                 return false;
 
             _ownerClientId = null;
+            _ownerGeneration = 0;
             _lastActivity = DateTimeOffset.UtcNow;
             return true;
         }
@@ -135,6 +152,9 @@ internal sealed class OpticStudioControlLease
         lock (_sync)
         {
             if (!string.Equals(_ownerClientId, clientId, StringComparison.Ordinal)) return false;
+            if (_ownerInvalidated) return false;
+            if (_ownerGeneration == 0) _ownerGeneration = generation;
+            if (_ownerGeneration != generation) return false;
             _jobHolds[jobId] = new JobHold(clientId, generation);
             _lastActivity = DateTimeOffset.UtcNow;
             return true;
@@ -170,8 +190,13 @@ internal sealed class OpticStudioControlLease
             // another authenticated client can take the replacement Worker
             // immediately rather than wait 15 minutes. Never revoke another
             // active foreground call or a newer-generation Job hold.
-            if (invalidated.Length > 0 && _activeOperation == null && _jobHolds.Count == 0)
+            if (_currentGeneration == generation) _currentGeneration = 0;
+            if (_ownerGeneration == generation) _ownerInvalidated = true;
+            if (_ownerInvalidated && _activeOperation == null && _jobHolds.Count == 0)
+            {
                 _ownerClientId = null;
+                _ownerGeneration = 0;
+            }
             _lastActivity = DateTimeOffset.UtcNow;
         }
     }
@@ -206,6 +231,11 @@ internal sealed class OpticStudioControlLease
             if (string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
             {
                 _activeOperation = null;
+                if (_ownerInvalidated && _jobHolds.Count == 0)
+                {
+                    _ownerClientId = null;
+                    _ownerGeneration = 0;
+                }
                 _lastActivity = DateTimeOffset.UtcNow;
             }
         }

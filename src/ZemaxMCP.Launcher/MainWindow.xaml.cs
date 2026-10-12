@@ -24,6 +24,9 @@ public partial class MainWindow : Window
     private Process? _bridge;
     private int _bridgeRestartAttempts;
     private bool _exitRequested;
+    private bool _handoffToUpdater;
+    private readonly string _maintenanceTicket = Guid.NewGuid().ToString("N");
+    private System.Threading.CancellationTokenSource? _updateCancellation;
     private bool _clientSetupPrompted;
     private bool _refreshingStatus;
     private bool _refreshingActivity;
@@ -325,6 +328,11 @@ public partial class MainWindow : Window
     private void StartBridge(bool automaticRestart = false)
     {
         if (LocalBridgeRunning) { Report("The current service is still running. Stop it safely before applying saved changes."); return; }
+        FileStream updateGuard;
+        try { updateGuard = new FileStream(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ".update.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read); }
+        catch (IOException) { Report("Installation is being updated. Wait for the updater to finish before starting the service."); return; }
+        catch (UnauthorizedAccessException ex) { Report("Cannot verify installation access: " + ex.Message); return; }
+        using var startGuard = updateGuard;
         if (Installation == null) { Report("Choose a detected OpticStudio installation first."); return; }
         if (!int.TryParse(Port.Text, out var port) || port < 1 || port > 65535)
         {
@@ -1184,14 +1192,24 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) { Report("Could not open VS Code MCP setup: " + ex.Message); }
     }
-    private void Update_Click(object sender, RoutedEventArgs e)
+    private void CancelUpdate_Click(object sender, RoutedEventArgs e) => _updateCancellation?.Cancel();
+    private async void Update_Click(object sender, RoutedEventArgs e)
     {
+        if (_updateCancellation != null) return;
+        using var cancellation = new System.Threading.CancellationTokenSource(TimeSpan.FromMinutes(10));
+        _updateCancellation = cancellation;
+        UpdateButton.IsEnabled = false;
+        CancelUpdateButton.Visibility = Visibility.Visible;
+        string? staging = null;
+        int? preparedHost = null;
         try
         {
-            using (var client = new WebClient())
+            using (var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(60) })
             {
-                client.Headers.Add("User-Agent", "ZemaxMCP-Launcher");
-                var release = JObject.Parse(client.DownloadString("https://api.github.com/repos/joeyijun/OpticStudioMCPServer/releases/latest"));
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("ZemaxMCP-Launcher");
+                Report("Checking for updates…");
+                var release = JObject.Parse(await UpdateDownloader.ReadMetadataAsync(client,
+                    "https://api.github.com/repos/joeyijun/OpticStudioMCPServer/releases/latest", cancellation.Token));
                 var releaseTag = release["tag_name"]?.ToString() ?? throw new InvalidDataException("The latest GitHub release has no version tag.");
                 var releaseVersion = ParseReleaseVersion(releaseTag);
                 var installedVersion = NormalizeVersion(typeof(MainWindow).Assembly.GetName().Version ?? new Version(0, 0));
@@ -1203,25 +1221,56 @@ public partial class MainWindow : Window
                 var asset = release["assets"]?.FirstOrDefault(x => x["name"]?.ToString().Equals("ZemaxMCP-win-x64.zip", StringComparison.OrdinalIgnoreCase) == true);
                 var manifestAsset = release["assets"]?.FirstOrDefault(x => x["name"]?.ToString().Equals("release-manifest.json", StringComparison.OrdinalIgnoreCase) == true);
                 if (asset == null || manifestAsset == null) { Report("Latest release " + release["tag_name"] + " does not contain a signed Windows update package."); return; }
-                var staging = Path.Combine(Path.GetTempPath(), "ZemaxMCP-update-" + Guid.NewGuid().ToString("N"));
+                staging = Path.Combine(Path.GetTempPath(), "ZemaxMCP-update-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(staging);
                 var zip = Path.Combine(staging, "release.zip");
                 var manifest = Path.Combine(staging, "release-manifest.json");
                 Report("Downloading " + release["tag_name"] + "…");
-                client.DownloadFile(asset["browser_download_url"]!.ToString(), zip);
-                client.DownloadFile(manifestAsset["browser_download_url"]!.ToString(), manifest);
-                UpdateManifestVerifier.Verify(File.ReadAllText(manifest), release["tag_name"]?.ToString() ?? "", "ZemaxMCP-win-x64.zip", zip);
-                ZipFile.ExtractToDirectory(zip, staging);
+                var progress = new Progress<long>(bytes => Report("Downloading " + releaseTag + " · " + (bytes / 1048576.0).ToString("F1") + " MB"));
+                await UpdateDownloader.DownloadFileAsync(client, asset["browser_download_url"]!.ToString(), zip, cancellation.Token, progress);
+                var manifestText = await UpdateDownloader.ReadMetadataAsync(client, manifestAsset["browser_download_url"]!.ToString(), cancellation.Token);
+                cancellation.Token.ThrowIfCancellationRequested();
+                Report("Verifying signed update…");
+                await Task.Run(() =>
+                {
+                    UpdateManifestVerifier.Verify(manifestText, releaseTag, "ZemaxMCP-win-x64.zip", zip);
+                    cancellation.Token.ThrowIfCancellationRequested();
+                    ZipFile.ExtractToDirectory(zip, staging);
+                });
+                cancellation.Token.ThrowIfCancellationRequested();
                 var install = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
                 var updater = Path.Combine(staging, "ZemaxMCP.Updater.exe");
                 if (!File.Exists(updater)) throw new FileNotFoundException("The signed update package does not contain ZemaxMCP.Updater.exe.", updater);
-                var arguments = "--staging \"" + staging + "\" --install \"" + install + "\" --parent-pid " + Process.GetCurrentProcess().Id;
-                Process.Start(new ProcessStartInfo(updater, arguments) { CreateNoWindow = true, UseShellExecute = false });
+                if (LocalBridgeRunning)
+                {
+                    preparedHost = _bridge!.Id;
+                    await Task.Run(() => ZemaxMCP.DesktopShared.HostMaintenanceClient.Prepare(preparedHost.Value, _maintenanceTicket));
+                }
+                cancellation.Token.ThrowIfCancellationRequested();
+                var arguments = "--staging \"" + staging + "\" --install \"" + install + "\" --parent-pid " + Process.GetCurrentProcess().Id + " --maintenance-ticket " + _maintenanceTicket;
+                if (Process.Start(new ProcessStartInfo(updater, arguments) { CreateNoWindow = true, UseShellExecute = false }) == null)
+                    throw new IOException("Windows did not start the updater.");
+                _handoffToUpdater = true;
+                _exitRequested = true;
                 Report("Update downloaded. Restarting with " + release["tag_name"] + "…");
                 System.Windows.Application.Current.Shutdown();
             }
         }
-        catch (Exception ex) { Report("Could not check GitHub releases: " + ex.Message); }
+        catch (OperationCanceledException) { Report("Update download cancelled or its 10-minute deadline expired. Current installation and service are unchanged."); }
+        catch (Exception ex) { Report("Update was not applied: " + ex.Message + " Offline computers can use a downloaded package after safely exiting the service."); }
+        finally
+        {
+            if (!_handoffToUpdater)
+            {
+                if (preparedHost.HasValue)
+                    try { await Task.Run(() => ZemaxMCP.DesktopShared.HostMaintenanceClient.Resume(preparedHost.Value, _maintenanceTicket)); } catch { }
+                if (staging != null)
+                    try { await Task.Run(() => Directory.Delete(staging, true)); } catch { }
+            }
+            _updateCancellation = null;
+            UpdateButton.IsEnabled = true;
+            CancelUpdateButton.Visibility = Visibility.Collapsed;
+        }
     }
     internal static Version ParseReleaseVersion(string tag)
     {
@@ -1340,11 +1389,13 @@ public partial class MainWindow : Window
     }
     protected override void OnClosed(EventArgs e)
     {
+        _updateCancellation?.Cancel();
         _statusTimer.Stop();
         SystemEvents.UserPreferenceChanged -= AppearancePreferenceChanged;
         SystemEvents.SessionSwitch -= AppearanceSessionChanged;
         _activityTimer.Stop();
-        StopBridge();
+        // The transactional updater owns the prepared Host until it terminates it.
+        if (!_handoffToUpdater) StopBridge();
         _trayIcon.Visible = false;
         _trayIcon.ContextMenuStrip?.Dispose();
         _trayIcon.Dispose();

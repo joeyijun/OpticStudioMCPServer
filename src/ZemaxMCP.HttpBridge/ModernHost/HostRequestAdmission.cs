@@ -14,6 +14,17 @@ internal sealed class HostRequestAdmission(int capacity, TimeSpan waitTimeout) :
     private int _queued, _active;
     private long _full, _timeouts;
     private bool _disposed;
+    private bool _frozen;
+    public bool TryFreezeIfIdle()
+    {
+        lock (_sync)
+        {
+            if (_active != 0 || _queued != 0 || _disposed) return false;
+            _frozen = true;
+            return true;
+        }
+    }
+    public void Resume() { lock (_sync) _frozen = false; }
     public int CurrentCount => _execution.CurrentCount;
 
     public async Task<IDisposable> AcquireAsync(CancellationToken cancellationToken)
@@ -22,6 +33,7 @@ internal sealed class HostRequestAdmission(int capacity, TimeSpan waitTimeout) :
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_frozen) throw new RequestAdmissionException("service_maintenance", "The local service is prepared for a safe update. New optical calls are paused.");
             if (_execution.Wait(0)) { _active++; return new Lease(this); }
             if (_queued >= capacity)
             {

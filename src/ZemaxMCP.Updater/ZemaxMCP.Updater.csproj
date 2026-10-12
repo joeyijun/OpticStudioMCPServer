@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\ZemaxMCP.DesktopShared\InstallRuntimeData.cs" Link="Shared\InstallRuntimeData.cs" />
+    <Compile Include="..\ZemaxMCP.DesktopShared\HostMaintenanceClient.cs" Link="Shared\HostMaintenanceClient.cs" />
   </ItemGroup>
 </Project>

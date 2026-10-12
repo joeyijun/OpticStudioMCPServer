@@ -188,6 +188,7 @@ internal sealed class WorkerRpcServer
             ZosApiAssemblyVersion = zosAssembly.GetName().Version?.ToString(),
             ZosApiFileVersion = zosFileVersion,
             Connected = session.IsConnected,
+            Connecting = session.IsConnecting,
             ConnectionMode = session.CurrentMode?.ToString() ?? "not-connected",
             ZosApiAssembly = zosLocation,
             OpticStudioDataDirectory = session.ZemaxDataDir,

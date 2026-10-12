@@ -35,7 +35,15 @@ internal static partial class Program
                 await VerifyHttpsEndToEndAsync();
                 return 0;
             }
+            if (args.Length == 1 && args[0] == "--upgrade-test")
+            {
+                await VerifyUpgradeReliabilityAsync();
+                await VerifyUpdateDownloadsAsync();
+                return 0;
+            }
             VerifyActivityOwnership();
+            await VerifyUpgradeReliabilityAsync();
+            await VerifyUpdateDownloadsAsync();
             await VerifyReliabilityReviewFixesAsync();
             await VerifyQueueHttpBoundariesAsync();
             VerifyJobsDeltaOwnership();
@@ -1178,6 +1186,8 @@ internal static partial class Program
                     throw new InvalidOperationException("Scoped diagnostic endpoint exposed a foreign background Job: " + route);
             }
 
+            try { ZemaxMCP.DesktopShared.HostMaintenanceClient.Prepare(process.Id); throw new Exception("Prepared shutdown during an owned background Job."); }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("background Job", StringComparison.Ordinal)) { }
             using (var foreignStatus = await SendScopedAsync(client, endpoint, 109, "tools/call", "zemax_job_status", writer,
                        new { jobId = "fake-owned-job" }).ConfigureAwait(false))
             {
@@ -1729,6 +1739,7 @@ internal static partial class Program
                         manifestFingerprint = StaticToolManifest.ContractFingerprint,
                         zosApiLoaded = true,
                         connected = true,
+                        connecting = mode == "connecting-status",
                         connectionMode = "fake",
                         zosApiAssembly = "C:\\Fake\\ZOSAPI.dll",
                         opticStudioDataDirectory = "C:\\Fake\\Data",

@@ -62,6 +62,9 @@ try {
  $owner.Width = 960; $owner.Height = 740
  $tabs.SelectedIndex = 3
  Render $owner 'diagnostics-page.png'
+ $owner.FindName('CancelUpdateButton').Visibility='Visible'
+ Render $owner 'diagnostics-update-cancel.png'
+ $owner.FindName('CancelUpdateButton').Visibility='Collapsed'
  $tabs.SelectedIndex = 1
  $tabs.UpdateLayout()
  Render $owner 'tasks-page.png'

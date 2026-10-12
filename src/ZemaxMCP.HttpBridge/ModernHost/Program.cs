@@ -79,6 +79,7 @@ internal static class Program
             var controlLease = new OpticStudioControlLease();
             workerClient.JobStateChanged += controlLease.ObserveJob;
             workerClient.GenerationEnded += controlLease.ReleaseGeneration;
+            workerClient.GenerationStarted += controlLease.ObserveGenerationStarted;
             var jobOwners = new JobOwnerRegistry();
             workerClient.GenerationEnded += jobOwners.ReleaseGeneration;
             builder.Services.AddSingleton(jobOwners);
@@ -587,6 +588,7 @@ internal static class Program
                 });
             });
             app.MapMcp(options.McpPath);
+            await using var maintenance = new HostMaintenanceServer(admission, worker, controlLease);
 
             Log.Information("Official MCP ASP.NET Core Host listening at {Endpoint}; private RPC v{RpcVersion}, manifest {ManifestFingerprint}",
                 options.TransportScheme + "://" + options.Host + ":" + options.Port + options.McpPath,

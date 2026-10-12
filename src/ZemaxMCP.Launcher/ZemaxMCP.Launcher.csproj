@@ -14,10 +14,12 @@
   <ItemGroup>
     <Compile Include="..\ZemaxMCP.DesktopShared\DesktopShortcut.cs" Link="Shared\DesktopShortcut.cs" />
     <Compile Include="..\ZemaxMCP.DesktopShared\BuildIdentity.cs" Link="Shared\BuildIdentity.cs" />
+    <Compile Include="..\ZemaxMCP.DesktopShared\HostMaintenanceClient.cs" Link="Shared\HostMaintenanceClient.cs" />
     <Reference Include="Microsoft.CSharp" />
     <PackageReference Include="Newtonsoft.Json" />
     <Reference Include="System.IO.Compression.FileSystem" />
     <Reference Include="System.Security" />
+    <Reference Include="System.Net.Http" />
     <Resource Include="Assets\ZemaxMCP.ico" />
   </ItemGroup>
 </Project>

@@ -5,6 +5,14 @@ $root = Split-Path $PSScriptRoot -Parent
 $updater = Join-Path $root "src\ZemaxMCP.Updater\bin\$Configuration\net48\ZemaxMCP.Updater.exe"
 $updaterSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Updater\Program.cs")
 if (-not (Test-Path -LiteralPath $updater)) { throw "Updater build output is missing." }
+if ($updaterSource -notmatch 'HostMaintenanceClient.Prepare' -or $updaterSource -notmatch 'approvedWorkers.Contains') {
+  throw 'Updater must obtain Host-owned idle admission before terminating an optical Worker.'
+}
+$launcherSource=Get-Content -Raw (Join-Path $root 'src\ZemaxMCP.Launcher\MainWindow.xaml.cs')
+if ($launcherSource -match 'client.DownloadString|client.DownloadFile\(' -or
+    $launcherSource -notmatch 'async void Update_Click' -or
+    $launcherSource -notmatch 'HostMaintenanceClient.Prepare' -or
+    $launcherSource -notmatch 'if \(!_handoffToUpdater\) StopBridge') { throw 'Async signed download or safe Host handoff regressed.' }
 if ($updaterSource -notmatch 'var cleanupBackup = false' -or
     $updaterSource -notmatch 'cleanupBackup = true' -or
     $updaterSource -notmatch 'cleanupBackup = false' -or
@@ -36,6 +44,13 @@ try {
   Set-Content -LiteralPath (Join-Path $staging "added.txt") -Value "new-state"
   Set-Content -LiteralPath (Join-Path $staging "Install.exe") -Value "package-only-installer"
   Set-Content -LiteralPath (Join-Path $staging "Portable-Install.cmd") -Value "package-only-portable-script"
+  # Installed binaries and persistent data share a directory: upgrades must
+  # preserve these bytes, and must not copy sample data from staging over them.
+  foreach ($data in @('https\server.pfx','task-journals\listener-8000.json')) {
+    foreach ($parent in @($install,$staging)) { [void][IO.Directory]::CreateDirectory((Split-Path (Join-Path $parent $data) -Parent)) }
+    [IO.File]::WriteAllBytes((Join-Path $install $data),[byte[]]@(0,1,2,255,77))
+    [IO.File]::WriteAllBytes((Join-Path $staging $data),[byte[]]@(99,88,77))
+  }
   & $updater --staging $staging --install $install --parent-pid 0 --restart false
   if ($LASTEXITCODE -ne 0 -or (Get-Content -Raw (Join-Path $install "Start-Zemax-MCP.exe")).Trim() -ne "new-launcher" -or
       -not (Test-Path -LiteralPath (Join-Path $install "added.txt")) -or (Test-Path -LiteralPath (Join-Path $install "obsolete.txt")) -or
@@ -48,6 +63,9 @@ try {
     if ((Get-Content -Raw (Join-Path $install $runtimeName)).Trim() -ne "retained-$runtimeName") { throw "Upgrade replaced runtime data: $runtimeName" }
   }
   if (-not (Test-Path (Join-Path $install 'shortcut-icons\retained.ico'))) { throw 'Upgrade removed shortcut icon cache.' }
+  foreach ($data in @('https\server.pfx','task-journals\listener-8000.json')) {
+    if ([Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $install $data))) -ne 'AAEC/00=') { throw "Upgrade replaced or removed persistent bytes: $data" }
+  }
 
   # Allow a short exclusive staging lock to clear: one invocation must succeed.
   Add-Type -TypeDefinition @'
@@ -79,6 +97,9 @@ public static class ZemaxUpgradeTestLock {
   }
   foreach ($runtimeName in $runtimeNames) {
     if ((Get-Content -Raw (Join-Path $install $runtimeName)).Trim() -ne "retained-$runtimeName") { throw "Rollback replaced runtime data: $runtimeName" }
+  }
+  foreach ($data in @('https\server.pfx','task-journals\listener-8000.json')) {
+    if ([Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $install $data))) -ne 'AAEC/00=') { throw "Rollback replaced persistent bytes: $data" }
   }
 }
 finally {

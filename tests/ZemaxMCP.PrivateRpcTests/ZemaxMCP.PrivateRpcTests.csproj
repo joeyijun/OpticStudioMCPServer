@@ -11,6 +11,8 @@
     <Compile Include="..\..\src\ZemaxMCP.Core\Session\IZosSystemSnapshot.cs" Link="Safety\IZosSystemSnapshot.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Launcher\ScopedDeltaCursor.cs" Link="Launcher\ScopedDeltaCursor.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Launcher\HostLaunchPlan.cs" Link="Launcher\HostLaunchPlan.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Launcher\UpdateDownloader.cs" Link="Launcher\UpdateDownloader.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.DesktopShared\HostMaintenanceClient.cs" Link="Launcher\HostMaintenanceClient.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tooling\ZemaxToolAttributes.cs" Link="Worker\ZemaxToolAttributes.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\ToolCatalogTool.cs" Link="Worker\ToolCatalogTool.cs" />
   </ItemGroup>

@@ -14,6 +14,7 @@ public sealed class WorkerStatus
     public string? ZosApiAssemblyVersion { get; set; }
     public string? ZosApiFileVersion { get; set; }
     public bool Connected { get; set; }
+    public bool? Connecting { get; set; }
     public string ConnectionMode { get; set; } = "unknown";
     public string? ZosApiAssembly { get; set; }
     public string? OpticStudioDataDirectory { get; set; }
