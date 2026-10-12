@@ -516,6 +516,7 @@ internal static partial class Program
     private static async Task VerifyBackgroundJobLeaseRetentionAsync()
     {
         var lease = new OpticStudioControlLease(TimeSpan.FromMilliseconds(50));
+        lease.ObserveGenerationStarted(7);
         Task<IDisposable> waitingObservation;
         using (await lease.AcquireAsync("client-a", "zemax_global_search", CancellationToken.None).ConfigureAwait(false))
         {

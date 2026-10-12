@@ -21,6 +21,8 @@ internal static partial class Program
             await connection;
         }
         var lease = new OpticStudioControlLease();
+        using (await lease.AcquireAsync("failed-start", "no-worker", CancellationToken.None)) { }
+        using (await lease.AcquireAsync("next-client", "retry-start", CancellationToken.None)) { }
         lease.ObserveGenerationStarted(1);
         using (await lease.AcquireAsync("a", "foreground", CancellationToken.None)) { }
         lease.ReleaseGeneration(1);
@@ -36,6 +38,23 @@ internal static partial class Program
         lease.ObserveGenerationStarted(3);
         active.Dispose();
         using (await lease.AcquireAsync("c", "after-unwind", CancellationToken.None)) { }
+
+        var queuedLease = new OpticStudioControlLease();
+        queuedLease.ObserveGenerationStarted(1);
+        using (await queuedLease.AcquireAsync("queued-client", "wait-for-recovery", CancellationToken.None))
+        {
+            queuedLease.ReleaseGeneration(1);
+            queuedLease.ObserveGenerationStarted(2);
+            queuedLease.BindInvocation("queued-client", 2);
+            Assert(queuedLease.RetainForJob("queued-client", "new-job", 2), "A request queued during recovery could not retain its NEW generation's Job.");
+        }
+        queuedLease.ReleaseGeneration(1);
+        Assert(queuedLease.HasActiveBackgroundJobs, "Stale generation event cleared a re-bound background Job.");
+        try { using var denied = await queuedLease.AcquireAsync("other", "unsafe-overlap", CancellationToken.None); throw new Exception("Queued recovery lost background ownership."); }
+        catch (ControlLeaseConflictException) { }
+        queuedLease.ReleaseGeneration(2);
+        queuedLease.ObserveGenerationStarted(3);
+        using (await queuedLease.AcquireAsync("other", "handoff", CancellationToken.None)) { }
 
         // A cancelled operation must reject preparation until drain/hard recovery ends.
         var options = CreateOptions(10, 20);

@@ -50,6 +50,9 @@ startup inside a foreground lease. Generation-end invalidates that generation's
 owner even without Job holds. If a foreground call is unwinding, cleanup waits
 for its execution lease release. A delayed older-generation event cannot revoke
 a newer generation's owner or Job hold.
+The final binding occurs just before RPC dispatch, after recovery/startup waits;
+a call queued during recovery can therefore retain a Job in the replacement
+generation without reviving ownership of the dead generation.
 
 ## Responsive update download
 

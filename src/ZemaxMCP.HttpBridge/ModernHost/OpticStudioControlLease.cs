@@ -39,6 +39,20 @@ internal sealed class OpticStudioControlLease
         }
     }
 
+    public void BindInvocation(string clientId, long generation)
+    {
+        lock (_sync)
+        {
+            if (generation <= 0 || generation != _currentGeneration || _activeOperation == null ||
+                !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
+                throw new InvalidOperationException("The optical invocation has no current generation-bound control lease.");
+            // A request may acquire control BEFORE waiting for cancellation
+            // recovery. Bind only after that wait, just before RPC dispatch.
+            _ownerGeneration = generation;
+            _ownerInvalidated = false;
+        }
+    }
+
     public OpticStudioControlLease(TimeSpan? idleTimeout = null)
     {
         _idleTimeout = idleTimeout ?? TimeSpan.FromMinutes(15);
@@ -231,7 +245,7 @@ internal sealed class OpticStudioControlLease
             if (string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
             {
                 _activeOperation = null;
-                if (_ownerInvalidated && _jobHolds.Count == 0)
+                if ((_ownerInvalidated || _ownerGeneration == 0 && _currentGeneration == 0) && _jobHolds.Count == 0)
                 {
                     _ownerClientId = null;
                     _ownerGeneration = 0;

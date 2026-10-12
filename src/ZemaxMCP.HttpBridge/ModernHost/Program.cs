@@ -231,7 +231,8 @@ internal static class Program
                         }
                         using (ownership)
                         {
-                            result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
+                            result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler,
+                                requestedTool.Impact == "ReadOnly" ? null : generation => controlLease.BindInvocation(clientId, generation)).ConfigureAwait(false);
                             if (TryGetStartedJobId(request.Params.Name, result, out var jobId))
                             {
                                 var generation = workerClient.CurrentGeneration;

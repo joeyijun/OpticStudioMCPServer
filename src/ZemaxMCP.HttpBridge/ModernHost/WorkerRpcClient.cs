@@ -175,7 +175,8 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     public async Task<CallToolResult> CallToolAsync(
         CallToolRequestParams request,
         CancellationToken cancellationToken,
-        Func<OperationProgress, CancellationToken, Task>? progressHandler = null)
+        Func<OperationProgress, CancellationToken, Task>? progressHandler = null,
+        Action<long>? invocationStarting = null)
     {
         var operationId = Guid.NewGuid().ToString("N");
         IDisposable execution;
@@ -190,6 +191,8 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
             // generation's recovery barrier before it can write a new command.
             await WaitForCancelledOperationRecoveryAsync(cancellationToken).ConfigureAwait(false);
             await StartAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            invocationStarting?.Invoke(CurrentGeneration);
             var invocation = new ToolInvocationRequest
             {
                 Command = request.Name,
