@@ -9,13 +9,21 @@ internal static class StaticToolManifestAssertions
     [ModuleInitializer]
     internal static void VerifyStaticToolManifestContract()
     {
-        if (StaticToolManifest.All.Count != 146)
-            throw new InvalidOperationException("Static Host tool manifest must contain all 146 Worker commands.");
+        if (StaticToolManifest.All.Count != 149)
+            throw new InvalidOperationException("Static Host tool manifest must contain all 149 Worker commands.");
         if (StaticToolManifest.ContractFingerprint.Length != 64 ||
             StaticToolManifest.ContractFingerprint.Any(character => !Uri.IsHexDigit(character)))
             throw new InvalidOperationException("Static tool contract fingerprint must be a SHA-256 hex digest.");
 
         var openFileEntry = StaticToolManifest.GetRequired("zemax_open_file");
+        foreach (var name in new[] { "zemax_workflow_baseline", "zemax_workflow_verify", "zemax_compare_analyses" })
+            if (StaticToolManifest.GetRequired(name).Impact != "ReadOnly" ||
+                !StaticToolManifest.IsAllowed("basic-viewing", name, readOnly: true))
+                throw new InvalidOperationException("Engineering evidence tools must be explicitly read-only.");
+        var batchSchema = StaticToolManifest.GetRequired("zemax_batch_set_surfaces").InputSchema;
+        if (!batchSchema.GetProperty("properties").TryGetProperty("expectedBaselineId", out _) ||
+            batchSchema.GetProperty("required").EnumerateArray().Any(x => x.GetString() == "expectedBaselineId"))
+            throw new InvalidOperationException("Batch model guard must be discoverable and optional for legacy clients.");
         if (openFileEntry.DomainId != "files" || openFileEntry.Impact != "Caution")
             throw new InvalidOperationException("Static manifest must carry explicit domain and impact metadata.");
         var openFile = openFileEntry.InputSchema;
@@ -37,11 +45,11 @@ internal static class StaticToolManifestAssertions
 
         var expectedProfileCounts = new Dictionary<string, int>(StringComparer.Ordinal)
         {
-            ["basic-viewing"] = 41,
-            ["sequential-design"] = 87,
-            ["nonsequential-stray-light"] = 31,
-            ["optimization-tolerance"] = 73,
-            ["full-expert"] = 146
+            ["basic-viewing"] = 44,
+            ["sequential-design"] = 90,
+            ["nonsequential-stray-light"] = 34,
+            ["optimization-tolerance"] = 76,
+            ["full-expert"] = 149
         };
         foreach (var pair in expectedProfileCounts)
         {

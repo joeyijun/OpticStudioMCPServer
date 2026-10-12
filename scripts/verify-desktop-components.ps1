@@ -12,7 +12,7 @@ foreach ($path in $launcherExe, $installerExe, $proxyExe, $hostDll, $updaterExe)
 }
 
 $launcherXaml = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Launcher\MainWindow.xaml")
-$launcherCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Launcher\MainWindow.xaml.cs")
+$launcherCode = (Get-ChildItem -LiteralPath (Join-Path $root "src\ZemaxMCP.Launcher") -Filter "MainWindow*.cs" | Sort-Object Name | ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName }) -join [Environment]::NewLine
 $proxyCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.ClientProxy\Program.cs")
 $installerCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Installer\MainWindow.xaml.cs")
 $portableInstall = Get-Content -Raw (Join-Path $root "installer\Portable-Install.cmd")

@@ -88,10 +88,11 @@ internal static class ToolCatalog
             "Inspect TDE operands and criterion, run bounded Monte Carlo, and report sample count plus unverified manufacturing assumptions.",
             new[] { "zemax_system_summary", "zemax_tolerance_summary", "zemax_get_tolerances", "zemax_run_tolerancing" }),
         new("safe-edit", "Safely edit and compare an optical lens",
-            "Read the correct active lens and target rows; read existing snapshots. An allowed edit creates a pre-change snapshot. Apply the smallest change, read back the exact rows and compare the snapshot before saving. Preview proposed changes with the user; no automatic commit.",
-            new[] { "zemax_system_summary", "zemax_get_system", "zemax_get_surface", "zemax_snapshot_list",
-                "zemax_batch_set_surfaces", "zemax_get_surface", "zemax_snapshot_list",
-                "zemax_snapshot_diff", "zemax_save_file" })
+            "Confirm the active sequential lens and selected rows. Capture a fresh workflow baseline and a spot analysis with explicit field/wavelength/rings. After approval, pass baseline.id as expectedBaselineId to the batch edit; the Worker checks the scoped model state atomically before snapshot/write. Read back and verify the edit, repeat the same analysis settings and compare Worker-issued analysis IDs against explicit criteria. Numeric acceptance is not full design validation. Review snapshot diff; save only after approval.",
+            new[] { "zemax_system_summary", "zemax_get_system", "zemax_get_surface", "zemax_workflow_baseline",
+                "zemax_spot_diagram", "zemax_snapshot_list", "zemax_batch_set_surfaces",
+                "zemax_get_surface", "zemax_workflow_verify", "zemax_spot_diagram",
+                "zemax_compare_analyses", "zemax_snapshot_diff", "zemax_save_file" })
     };
 
     internal static IReadOnlyList<ToolCatalogTool.TaskPlaybook> GetPlaybooks(string? task, Func<string, bool> permitted)

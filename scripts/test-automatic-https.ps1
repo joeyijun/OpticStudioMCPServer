@@ -1,7 +1,7 @@
 param([string]$Configuration='Release')
 $ErrorActionPreference='Stop'
 $root=Split-Path $PSScriptRoot -Parent
-$source=Get-Content -Raw (Join-Path $root 'src\ZemaxMCP.Launcher\MainWindow.xaml.cs')
+$source = (Get-ChildItem -LiteralPath (Join-Path $root "src\ZemaxMCP.Launcher") -Filter "MainWindow*.cs" | Sort-Object Name | ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName }) -join [Environment]::NewLine
 $trustSource=Get-Content -Raw (Join-Path $root 'src\ZemaxMCP.Launcher\AutomaticHttps.cs')
 if ($source -match 'LauncherDialog.Confirm\(this, "(Allow secure local connections|Trust the OpticStudio computer)' -or
     $source -notmatch 'ConnectRemoteSetup_Click' -or

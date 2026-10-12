@@ -43,9 +43,14 @@ public sealed class TaskPlanTool
                 "Inspect variables", "Locate snapshot", "Run optimization only after approval" },
             ["tolerance"] = new[] { "Summarize active model, units and key optical elements", "Inspect tolerance criterion", "Inspect tolerance operands",
                 "Run bounded tolerancing after approval" },
-            ["safe-edit"] = new[] { "Summarize active model, units and key optical elements", "Read baseline", "Inspect target surface", "Check existing snapshots",
-                "Edit only after approval", "Read back changed surface",
-                "Check snapshot reference", "Review diff", "Save only after approval" }
+            ["safe-edit"] = new[] { "Summarize active model, units and key optical elements", "Confirm active lens", "Inspect target surface",
+                "Capture baseline.id for approved target rows (15-minute scoped guard)",
+                "Record baseline spot analysisId with explicit field, wavelength and rings", "Check existing snapshots",
+                "Edit only after approval; pass baseline.id as expectedBaselineId", "Read back changed surface",
+                "Verify independently reread scoped state against recorded post-edit state",
+                "Repeat spot analysis with identical settings and record analysisId",
+                "Compare Worker-issued analysis IDs against explicit numeric criteria; API success is not design acceptance",
+                "Review snapshot diff", "Save only after approval" }
         };
 
     [ZemaxTool(Name = "zemax_task_plan")]

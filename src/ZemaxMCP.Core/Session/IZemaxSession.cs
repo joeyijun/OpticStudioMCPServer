@@ -6,6 +6,7 @@ public interface IZemaxSession : IDisposable
 {
     bool IsConnected { get; }
     bool IsConnecting { get; }
+    string ModelIdentity { get; }
     ConnectionMode? CurrentMode { get; }
     int? CurrentInstanceId { get; }
     string? CurrentFilePath { get; }
@@ -40,7 +41,8 @@ public interface IZemaxSession : IDisposable
     Task<T> ExecuteAsync<T>(string commandName,
                             IDictionary<string, object?>? parameters,
                             Func<IOpticalSystem, T> operation,
-                            CancellationToken cancellationToken = default);
+                            CancellationToken cancellationToken = default,
+                            Action<IOpticalSystem>? precondition = null);
 
     /// <summary>
     /// Execute an operation with command logging.

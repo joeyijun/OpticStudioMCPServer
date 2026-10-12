@@ -12,7 +12,7 @@ if ($identity.GetField('DisplayName',$identityFlags).GetRawConstantValue() -ne '
     $identity.GetField('AppId',$identityFlags).GetRawConstantValue() -ne 'ZemaxMCP.Desktop') {throw 'Friendly desktop notification identity regressed.'}
 $metadata=[Diagnostics.FileVersionInfo]::GetVersionInfo($assembly.Location)
 if ($metadata.ProductName -ne 'Zemax MCP' -or $metadata.FileDescription -ne 'Zemax MCP') {throw 'Windows notification fallback exposes the executable name.'}
-$mainSource=Get-Content -Raw (Join-Path $root 'src\ZemaxMCP.Launcher\MainWindow.xaml.cs')
+$mainSource = (Get-ChildItem -LiteralPath (Join-Path $root "src\ZemaxMCP.Launcher") -Filter "MainWindow*.cs" | Sort-Object Name | ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName }) -join [Environment]::NewLine
 if ($mainSource -match 'MessageBox.Show' -or $mainSource -notmatch 'ShowBalloonTip\(2500, DesktopIdentity.DisplayName') {throw 'Business confirmation or tray notification branding regressed.'}
 Write-Output 'Desktop identity and file metadata passed without registration or displaying notifications.'
 $idleCheck=$assembly.GetType('ZemaxMCP.Launcher.ConfigurationSafety').GetMethod('IsIdle',$identityFlags)

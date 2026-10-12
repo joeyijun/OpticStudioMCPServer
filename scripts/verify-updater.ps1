@@ -2,13 +2,14 @@ param([string]$Configuration = "Release")
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
+& (Join-Path $PSScriptRoot 'test-update-package-service.ps1') -Configuration $Configuration
 $updater = Join-Path $root "src\ZemaxMCP.Updater\bin\$Configuration\net48\ZemaxMCP.Updater.exe"
 $updaterSource = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Updater\Program.cs")
 if (-not (Test-Path -LiteralPath $updater)) { throw "Updater build output is missing." }
 if ($updaterSource -notmatch 'HostMaintenanceClient.Prepare' -or $updaterSource -notmatch 'approvedWorkers.Contains') {
   throw 'Updater must obtain Host-owned idle admission before terminating an optical Worker.'
 }
-$launcherSource=Get-Content -Raw (Join-Path $root 'src\ZemaxMCP.Launcher\MainWindow.xaml.cs')
+$launcherSource = (Get-ChildItem -LiteralPath (Join-Path $root "src\ZemaxMCP.Launcher") -Filter "MainWindow*.cs" | Sort-Object Name | ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName }) -join [Environment]::NewLine
 if ($launcherSource -match 'client.DownloadString|client.DownloadFile\(' -or
     $launcherSource -notmatch 'async void Update_Click' -or
     $launcherSource -notmatch 'HostMaintenanceClient.Prepare' -or

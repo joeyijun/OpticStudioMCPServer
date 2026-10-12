@@ -67,6 +67,8 @@ internal static class ToolOutcome
             error.Contains("does not exist", StringComparison.OrdinalIgnoreCase) ||
             error.Trim().Equals("null", StringComparison.OrdinalIgnoreCase)) return NotFound;
         if (error.Contains("currently leased", StringComparison.OrdinalIgnoreCase) ||
+            error.Contains("model_conflict", StringComparison.OrdinalIgnoreCase) ||
+            error.Contains("analysis_conditions_conflict", StringComparison.OrdinalIgnoreCase) ||
             error.Contains("background Job is active", StringComparison.OrdinalIgnoreCase) ||
             error.Contains("at capacity", StringComparison.OrdinalIgnoreCase)) return Conflict;
         if (error.Contains("private pipe", StringComparison.OrdinalIgnoreCase) ||

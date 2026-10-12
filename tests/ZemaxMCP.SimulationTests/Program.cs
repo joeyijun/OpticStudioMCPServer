@@ -13,6 +13,7 @@ internal static class Program
     {
         try
         {
+            EngineeringWorkflowAssertions.Run();
             VerifyOperationMetadataAndSnapshotBoundary();
             VerifyScientificNumberTruthfulness();
             VerifyStructuredMtf();
@@ -990,6 +991,33 @@ internal static class Program
         Assert(terminal.Elapsed == terminal.CompletedAt - terminal.StartedAt, "Cancelled elapsed time must end at cancellation.");
         await Task.Delay(70);
         Assert(jobs.Get(terminal.JobId)!.Elapsed == terminal.Elapsed, "Cancelled elapsed time must not grow on later polling.");
+
+        using var resultDispatcher = new ZosApiDispatcher();
+        var recorded = new TaskCompletionSource<McpJobSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
+        jobs.JobChanged += snapshot =>
+        {
+            if (snapshot.ToolName == "simulated-analysis" && snapshot.State == McpJobState.Completed)
+                recorded.TrySetResult(snapshot);
+        };
+        jobs.Enqueue("simulated-analysis", async context =>
+        {
+            var observation = EngineeringObservation.Current ?? throw new Exception("Job provenance scope missing.");
+            await resultDispatcher.InvokeAsync(() =>
+            {
+                observation.Observe(() => throw new InvalidOperationException("native metadata unavailable"),
+                    "SimulatedAnalysis", null);
+                context.SetResult(new { success = true, measuredValue = 3.5 });
+            });
+        }, TimeSpan.FromSeconds(5));
+        var recordedResult = await recorded.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var annotated = System.Text.Json.JsonSerializer.SerializeToElement(recordedResult.Result);
+        Assert(annotated.GetProperty("success").GetBoolean() &&
+            annotated.GetProperty("measuredValue").GetDouble() == 3.5,
+            "Background provenance changed the original result shape.");
+        var engineering = annotated.GetProperty("engineering");
+        Assert(engineering.GetProperty("analysisId").GetString()?.Length == 32 &&
+            engineering.GetProperty("operations")[0].GetProperty("Status").GetString() == "unavailable",
+            "STA-published background result lost explicit unknown-condition provenance.");
     }
 
     private static async Task VerifyJobLimitsAsync()

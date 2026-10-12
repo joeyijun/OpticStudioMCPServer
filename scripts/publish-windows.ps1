@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 $verificationScript = Join-Path $PSScriptRoot "verify-tool-registration.ps1"
 & $verificationScript -RepositoryRoot $root
+& (Join-Path $PSScriptRoot 'verify-engineering-workflow.ps1')
 $publish = Join-Path $root "artifacts\ZemaxMCP"
 
 # Release compatibility is determined by the ZOS-API assemblies used to compile

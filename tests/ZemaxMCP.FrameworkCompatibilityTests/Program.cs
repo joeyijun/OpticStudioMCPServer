@@ -1,6 +1,8 @@
 using System.Text;
 using ZemaxMCP.Server.Compatibility;
 
+EngineeringWorkflowAssertions.Run();
+
 if (!FrameworkCompatibility.IsFinite(0) || !FrameworkCompatibility.IsFinite(double.MaxValue) ||
     FrameworkCompatibility.IsFinite(double.NaN) || FrameworkCompatibility.IsFinite(double.PositiveInfinity) ||
     FrameworkCompatibility.IsFinite(double.NegativeInfinity))

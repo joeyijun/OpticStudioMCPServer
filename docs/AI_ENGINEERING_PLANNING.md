@@ -173,6 +173,52 @@ for manual follow-up.
   `isError: true`; Launcher validates returned Job IDs and terminal states
   before saying cancellation was accepted.
 
+## Guarded editing and numerical evidence
+
+The development build adds three read-only tools (149 tools total):
+`zemax_workflow_baseline`, `zemax_workflow_verify`, and
+`zemax_compare_analyses`. The safe-edit playbook recommends this loop:
+
+1. Confirm the active Sequential lens and intended surface numbers.
+2. Capture `zemax_workflow_baseline(surfaceNumbers=[...])`. Record
+   `baseline.id` and review the returned target state.
+3. Run `zemax_spot_diagram` with explicit field, wavelength and rings.
+   Record `structuredContent.engineering.analysisId`.
+4. After approval, call `zemax_batch_set_surfaces` with
+   `expectedBaselineId=baseline.id`. The baseline check runs on the same
+   STA immediately before the snapshot and edit; stale or consumed tokens
+   fail without a snapshot or write. Omitting this optional parameter retains
+   legacy behavior; other editing tools do not implicitly acquire this guard.
+5. Independently read back the surface and call
+   `zemax_workflow_verify(baselineId=...)`.
+6. Repeat the analysis with identical settings and compare the two
+   Worker-issued analysis IDs with explicit numeric rules, for example
+   `{"path":"/rmsSpotRadius","goal":"decrease"}`.
+7. Review snapshot differences and save only after approval.
+
+Baseline tokens expire after 15 minutes and are single-use for editing.
+Analysis evidence expires after 60 minutes. Both stores retain at most 128
+entries in this Worker; restarting it invalidates their IDs. The model guard
+covers active model identity, configuration, basic LDE rows and recorded
+field/wavelength/aperture conditions. It does **not** certify solves, coatings,
+aspheric parameters, MFE/MCE operands, external files or a complete optical
+fingerprint. NSC editing baselines are not supported.
+
+Tool responses keep their existing text JSON and additionally expose
+`structuredContent.result` and `structuredContent.engineering`. Background
+Job result objects carry an `engineering` property. Conditions are captured
+on the calculation's STA: actual lens/MTF units, active configuration,
+fields, wavelengths and aperture, plus requested method parameters.
+Unavailable, omitted or unrecorded effective native settings remain explicitly
+unknown; requested sampling is not a claim that every native option was verified.
+
+Numerical comparison currently accepts successful spot-diagram RMS radius
+or FFT-MTF tangential/sagittal samples only. It rejects differing conditions,
+sampling or MTF axes, failed analyses, missing metrics and non-finite values.
+`success` means comparison executed; `criteriaPassed` means the selected
+numeric criteria passed. Neither means the full design is accepted, and
+neither triggers save, restore or a new authorization.
+
 ## Acceptance expectations
 
 Windows CI must pass schema/security checks, WPF launcher render/smoke,

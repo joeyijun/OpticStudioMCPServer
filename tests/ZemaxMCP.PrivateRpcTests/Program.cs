@@ -145,6 +145,8 @@ internal static partial class Program
                ToolOutcome.Classify("Result expired") == "expired" &&
                ToolOutcome.Classify("Job not found") == "not_found" &&
                ToolOutcome.Classify("background Job is active") == "conflict" &&
+               ToolOutcome.Classify("model_conflict: stale baseline") == "conflict" &&
+               ToolOutcome.Classify("analysis_conditions_conflict: sampling differs") == "conflict" &&
                ToolOutcome.Classify("RPC transport closed") == "transport_error",
             "Typed tool failure mapping was regressed.");
         var error = ToolOutcome.Failure("conflict", "Background Job is active.");

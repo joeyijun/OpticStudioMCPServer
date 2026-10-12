@@ -6,6 +6,10 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\ZemaxMCP.SimulationTests\EngineeringWorkflowAssertions.cs" Link="EngineeringWorkflowAssertions.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Core\Session\EngineeringObservation.cs" Link="Core\EngineeringObservation.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\EngineeringBaselineStore.cs" Link="Server\EngineeringBaselineStore.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\AnalysisEvidenceStore.cs" Link="Server\AnalysisEvidenceStore.cs" />
     <PackageReference Include="System.Text.Json" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Compatibility\IsExternalInit.cs" Link="Server\IsExternalInit.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Compatibility\FrameworkCompatibility.cs" Link="Server\FrameworkCompatibility.cs" />

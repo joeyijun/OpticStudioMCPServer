@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ZemaxMCP.Core.Session;
 using ZemaxMCP.Server.Tooling;
 using ZemaxMCP.Server.Tools.Base;
+using ZemaxMCP.Server.Tools.Catalog;
 
 namespace ZemaxMCP.Server.Tools.LensData;
 
@@ -45,6 +46,7 @@ public sealed class BatchSetSurfacesTool
     [Description("Atomically modify geometry/material/comment/stop state on multiple sequential LDE surfaces. The request is fully validated before mutation, creates one safety snapshot, verifies readback, and restores every touched surface if any write/readback fails.")]
     public async Task<Result> ExecuteAsync(
         [Description("Surface edits. Surface numbers must be unique; at most 100 edits per call. Omitted properties remain unchanged.")] List<SurfaceEdit> edits,
+        [Description("Optional ID from zemax_workflow_baseline. Reject stale/consumed baseline or undeclared targets atomically BEFORE creating a snapshot or writing. Without this ID the legacy unguarded behavior remains.")] string? expectedBaselineId = null,
         CancellationToken cancellationToken = default)
     {
         var rolledBack = false;
@@ -105,6 +107,8 @@ public sealed class BatchSetSurfacesTool
                                 state.Material, state.SemiDiameter, state.Conic, state.Comment, state.IsStop));
                         }
 
+                        if(expectedBaselineId!=null) EngineeringBaselineStore.RecordApplied(expectedBaselineId,
+                            EngineeringModelReader.Read(system,_session.ModelIdentity),_session.LastSnapshotPath);
                         return new Result(true, null, edits.Count, applied.Count, false, applied);
                     }
                     catch (Exception writeError)
@@ -129,7 +133,8 @@ public sealed class BatchSetSurfacesTool
                         throw;
                     }
                 },
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken, precondition: expectedBaselineId==null ? null : system=>EngineeringBaselineStore.Validate(
+                    expectedBaselineId,edits.Select(e=>e.SurfaceNumber).ToArray(),EngineeringModelReader.Read(system,_session.ModelIdentity))).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
