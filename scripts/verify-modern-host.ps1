@@ -177,9 +177,9 @@ if ($privateRpcTest -notmatch 'VerifyWriteGateCancellationClassificationAsync') 
 $callToolBody = [regex]::Match($rpcClient,
     'public async Task<CallToolResult> CallToolAsync[\s\S]*?(?<body>\{[\s\S]*?)\r?\n    public async Task<WorkerStatus>').Groups['body'].Value
 if ([string]::IsNullOrWhiteSpace($callToolBody) -or
-    $callToolBody.IndexOf('_executionGate.WaitAsync', [StringComparison]::Ordinal) -lt 0 -or
+    $callToolBody.IndexOf('_executionGate.AcquireAsync', [StringComparison]::Ordinal) -lt 0 -or
     $callToolBody.IndexOf('WaitForCancelledOperationRecoveryAsync', [StringComparison]::Ordinal) -lt 0 -or
-    $callToolBody.IndexOf('_executionGate.WaitAsync', [StringComparison]::Ordinal) -gt $callToolBody.IndexOf('WaitForCancelledOperationRecoveryAsync', [StringComparison]::Ordinal)) {
+    $callToolBody.IndexOf('_executionGate.AcquireAsync', [StringComparison]::Ordinal) -gt $callToolBody.IndexOf('WaitForCancelledOperationRecoveryAsync', [StringComparison]::Ordinal)) {
   throw "Tool execution must acquire the Host execution gate before checking cancelled-operation recovery."
 }
 if ($privateRpcTest -notmatch '2026-07-28' -or $privateRpcTest -notmatch 'io\.modelcontextprotocol/clientInfo' -or

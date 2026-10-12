@@ -8,6 +8,7 @@
     <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\ZemaxMCP.DesktopShared\BuildIdentity.cs" Link="Shared\BuildIdentity.cs" />
     <PackageReference Include="ModelContextProtocol" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" />
     <PackageReference Include="ModelContextProtocol.Extensions.Tasks" />

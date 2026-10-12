@@ -84,6 +84,7 @@ internal static class Program
             builder.Services.AddSingleton(jobOwners);
             builder.Services.AddSingleton(controlLease);
             var activity = new McpActivityMonitor();
+            var admission = new HostRequestAdmission(options.MaxPendingRequests, TimeSpan.FromSeconds(options.QueueWaitTimeoutSeconds));
             builder.Services.AddSingleton(activity);
             var jobTaskDelta = new McpJobTaskDeltaMonitor();
             builder.Services.AddSingleton(jobTaskDelta);
@@ -149,6 +150,10 @@ internal static class Program
                             "The selected toolset/read-only policy does not permit " + request.Params.Name + ".");
                     }
 
+                    IDisposable queueLease;
+                    try { queueLease = await admission.AcquireAsync(cancellationToken).ConfigureAwait(false); }
+                    catch (RequestAdmissionException ex) { return ToolOutcome.Failure(ex.Code, ex.Message); }
+                    using var admittedRequest = queueLease;
                     var clientId = ResolveControlIdentity(request);
                     using var call = activity.Begin(clientId, request.Params.Name);
 
@@ -419,7 +424,7 @@ internal static class Program
                 // Use the last contract-validated status from THIS generation;
                 // advertise staleness rather than misrepresenting it as live.
                 var foregroundRpcBusy = worker.HasForegroundTool;
-                var workerBusy = foregroundRpcBusy || controlLease.HasActiveBackgroundJobs;
+                var workerBusy = foregroundRpcBusy || worker.IsRecoveringCancelledOperation || controlLease.HasActiveBackgroundJobs;
                 var statusFresh = false;
                 WorkerStatus? status = null;
                 if (workerBusy)
@@ -469,6 +474,11 @@ internal static class Program
                         permission = httpContext.User.FindFirst("zemax-mcp-permission")?.Value,
                         jobDiagnostics = "authenticated-owner-only",
                         hostVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown",
+                        build = ZemaxMCP.Build.BuildIdentity.Read(typeof(Program).Assembly),
+                        tlsCertificate = CertificateDiagnostics.Read(tlsCertificate),
+                        workerSourceCommit = status?.WorkerSourceCommit,
+                        workerInformationalVersion = status?.WorkerInformationalVersion,
+                        requestQueue = new { capacity = options.MaxPendingRequests, waitTimeoutSeconds = options.QueueWaitTimeoutSeconds, detailsRestricted = true },
                         mcpServerRunning = worker.CurrentGeneration != 0,
                         workerBusy,
                         foregroundRpcBusy,
@@ -508,6 +518,11 @@ internal static class Program
                     statusAgeSeconds,
                     lastKnownStatus = status != null,
                     hostVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown",
+                    build = ZemaxMCP.Build.BuildIdentity.Read(typeof(Program).Assembly),
+                    tlsCertificate = CertificateDiagnostics.Read(tlsCertificate),
+                    workerSourceCommit = status?.WorkerSourceCommit,
+                    workerInformationalVersion = status?.WorkerInformationalVersion,
+                    requestQueue = admission.GetHealth(),
                     workerVersion = status?.WorkerVersion,
                     zosApiAssemblyVersion = status?.ZosApiAssemblyVersion,
                     zosApiFileVersion = status?.ZosApiFileVersion,

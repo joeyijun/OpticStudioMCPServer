@@ -58,13 +58,27 @@ Running tasks without an intermediate numeric estimate show an animated indicato
 
 MCP `serverInfo.version` is reported by the public Host assembly. The Launcher, Host, Worker, and release `VERSION.txt` are built from the same product version. The structured Worker health RPC independently reports the private RPC version, tool-contract fingerprint, loaded ZOS-API assembly path, actual OpticStudio connection mode, license result, Data directory, snapshots, and job state.
 
+Changes to LAN sharing, read-only mode, the toolset, installation, port or token
+are saved for the **next Start**, not applied by killing the running service.
+The displayed/copied connection continues to use the running endpoint and token.
+Stop/Exit checks live activity and postpones shutdown while optical work is active;
+an unreachable service requires an explicit force-stop confirmation.
+
+Host tool admission has its own bounded queue: **32 waiting requests** and a
+**30-second queue deadline**, configured by `--max-pending-requests` and
+`--queue-wait-timeout-seconds`. A full/expired queue returns a structured
+`queue_full`/`queue_timeout` tool error before Worker execution, preserving the
+MCP request ID. Diagnostics remain outside this queue. `/mcp/health` and Copy
+diagnostics include queue counters, Host/Worker source-build identities and the
+active HTTPS certificate's SHA-256 fingerprint, expiry and remaining days.
+
 The Host starts independently of the Worker. `tools/list` is served from the static Host manifest and therefore does **not** require the Worker, ZOS-API, an OpticStudio connection, or a valid OpticStudio licence. The first Worker-backed health request or permitted `tools/call` lazily starts the Worker.
 
 The Host creates the current-user-only named pipe before launching the Worker. During startup it authenticates the connecting process using the launched PID and a random per-launch secret, then requires the same private RPC version and exact static-tool-contract SHA-256 fingerprint. This negotiation occurs before the Worker initializes ZOS-API or performs any OpticStudio COM operation, so a mixed or stale Host/Worker package fails clearly instead of executing against a different tool contract. `--worker-startup-timeout-seconds` controls the connection-and-handshake deadline (default **90**, range **10–600**).
 
-The established recovery boundary remains bounded: each normal private RPC write has a **10-second** deadline; a command that exceeds the **300-second** soft timeout immediately starts its hard-recovery deadline and sends a cancellation request with a separately bounded **5-second** pipe-write deadline. The **360-second** hard-recovery deadline is measured from the soft timeout, not after cancellation delivery. A non-responsive Worker is terminated and its pipe generation is invalidated, so the following MCP request starts a clean Worker. Client cancellation ends the HTTP request immediately but leaves a bounded background drain/recovery owner to cancel or restart the Worker.
+The established recovery boundary remains bounded: each normal private RPC write has a **10-second** deadline; after **300 seconds** of waiting for a response, cancellation is sent with a separately bounded **5-second** write deadline. The **60-second** drain deadline starts immediately at that soft timeout, not after cancellation delivery (default hard response-wait limit: **360 seconds**). Queue wait, Worker startup and request write have their own bounds. A non-responsive Worker is terminated and its pipe generation is invalidated, so the following MCP request starts a clean Worker. Client cancellation ends the HTTP request immediately but leaves a bounded background drain/recovery owner to cancel or restart the Worker.
 
-Browser Origins are configuration-based, never inferred from an incoming `Host` header. Local binding permits only `http://127.0.0.1:*`, `http://localhost:*`, and `http://[::1]:*`. LAN binding requires explicit `--allowed-host` and `--allowed-origin` values. ASP.NET Core Host filtering is enabled with that concrete allowlist, so a spoofed Host header is rejected before it can influence CORS.
+Browser Origins are configuration-based, never inferred from an incoming `Host` header. Local binding permits only loopback origins using the configured transport scheme (HTTPS for Launcher-managed services). LAN binding requires explicit `--allowed-host` and `--allowed-origin` values. ASP.NET Core Host filtering is enabled with that concrete allowlist, so a spoofed Host header is rejected before it can influence CORS.
 
 ### MCP protocol compatibility
 

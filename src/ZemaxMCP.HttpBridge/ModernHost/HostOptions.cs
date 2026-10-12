@@ -19,6 +19,8 @@ internal sealed class HostOptions
     public int WorkerStartupTimeoutSeconds { get; private set; } = 90;
     public int RequestTimeoutSeconds { get; private set; } = 300;
     public int RequestWriteTimeoutSeconds { get; private set; } = 10;
+    public int MaxPendingRequests { get; private set; } = 32;
+    public int QueueWaitTimeoutSeconds { get; private set; } = 30;
     public int HardRecoveryTimeoutSeconds { get; private set; } = 360;
     public int JobRecoveryTimeoutSeconds { get; private set; } = 60;
     public int CancellationWriteTimeoutSeconds { get; private set; } = 5;
@@ -56,6 +58,8 @@ internal sealed class HostOptions
                 case "--worker-startup-timeout-seconds": options.WorkerStartupTimeoutSeconds = ParseRange(value, option, 10, 600); break;
                 case "--request-timeout-seconds": options.RequestTimeoutSeconds = ParseRange(value, option, 10, 3600); break;
                 case "--request-write-timeout-seconds": options.RequestWriteTimeoutSeconds = ParseRange(value, option, 1, 60); break;
+                case "--max-pending-requests": options.MaxPendingRequests = ParseRange(value, option, 1, 1024); break;
+                case "--queue-wait-timeout-seconds": options.QueueWaitTimeoutSeconds = ParseRange(value, option, 1, 300); break;
                 case "--hard-recovery-timeout-seconds": options.HardRecoveryTimeoutSeconds = ParseRange(value, option, 20, 7200); break;
                 case "--job-recovery-timeout-seconds": options.JobRecoveryTimeoutSeconds = ParseRange(value, option, 5, 1800); break;
                 case "--cancellation-write-timeout-seconds": options.CancellationWriteTimeoutSeconds = ParseRange(value, option, 1, 30); break;

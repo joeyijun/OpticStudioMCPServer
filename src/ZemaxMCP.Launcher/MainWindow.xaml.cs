@@ -44,6 +44,12 @@ public partial class MainWindow : Window
     private string _pendingRemoteSetup = "";
     private string _tlsPfxPath = "";
     private string _tlsPfxPassword = "";
+    private string _runningEndpoint = "";
+    private string _runningAccessToken = "";
+    private ZemaxInstallation? _runningInstallation;
+    private bool _checkingStop;
+    private bool LocalBridgeRunning => _bridge != null && !_bridge.HasExited;
+    private string LocalEndpoint => LocalBridgeRunning ? _runningEndpoint : Url;
     private string _fullDiagnostics = "Status has not been checked yet.";
     private readonly Forms.NotifyIcon _trayIcon;
     private readonly DispatcherTimer _statusTimer;
@@ -165,9 +171,7 @@ public partial class MainWindow : Window
         if (!_windowLoaded) return;
         RefreshEndpoint();
         SaveSettings();
-        if (IsRemoteEndpointConfigured) return;
-        StopBridge();
-        if (Installation != null) StartBridge();
+        MarkConfigurationPending();
     }
     private void ChooseZemaxFolder_Click(object sender, RoutedEventArgs e)
     {
@@ -196,11 +200,12 @@ public partial class MainWindow : Window
         ZemaxVersions.SelectedItem = selected;
         Report("Using manually selected OpticStudio folder: " + selected.Root);
     }
-    private void Port_LostFocus(object sender, RoutedEventArgs e) { RefreshEndpoint(); SaveSettings(); }
+    private void Port_LostFocus(object sender, RoutedEventArgs e) { RefreshEndpoint(); SaveSettings(); MarkConfigurationPending(); }
     private async void RemoteSecureSetup_LostFocus(object sender, RoutedEventArgs e)
     {
         var setup = RemoteSecureSetup.Text;
         if (string.IsNullOrWhiteSpace(setup)) return;
+        if (LocalBridgeRunning) { Report("Stop the local service safely before switching to a remote connection."); return; }
         if (!TryApplySecureSetup(setup))
         {
             return;
@@ -217,6 +222,7 @@ public partial class MainWindow : Window
     }
     private async void TrustRemoteSetup_Click(object sender, RoutedEventArgs e)
     {
+        if (LocalBridgeRunning) { Report("Stop the local service safely before switching to a remote connection."); return; }
         if (string.IsNullOrEmpty(_pendingRemoteSetup) || !TryApplySecureSetup(_pendingRemoteSetup, true)) return;
         SaveSettings();
         StopBridge();
@@ -233,14 +239,14 @@ public partial class MainWindow : Window
         if (Installation != null && (_bridge == null || _bridge.HasExited)) StartBridge();
     }
     private string HostName => ShareOnLan.IsChecked == true ? "0.0.0.0" : "127.0.0.1";
-    private void RefreshEndpoint() => Endpoint.Text = Url;
+    private void RefreshEndpoint() => Endpoint.Text = LocalEndpoint;
     private ZemaxInstallation? Installation => ZemaxVersions.SelectedItem as ZemaxInstallation;
     private string Url => "https://" +
         (ShareOnLan.IsChecked == true ? GetLanAddress() : "127.0.0.1") + ":" + Port.Text + "/mcp";
     private bool IsRemoteEndpointConfigured => Uri.TryCreate(_remoteEndpoint, UriKind.Absolute, out var remote) &&
         remote.Scheme == Uri.UriSchemeHttps && !string.IsNullOrWhiteSpace(_remoteAccessToken);
-    private string McpUrl => IsRemoteEndpointConfigured ? _remoteEndpoint.TrimEnd('/') : Url;
-    private string McpToken => IsRemoteEndpointConfigured ? _remoteAccessToken : _localAccessToken;
+    private string McpUrl => IsRemoteEndpointConfigured ? _remoteEndpoint.TrimEnd('/') : LocalEndpoint;
+    private string McpToken => IsRemoteEndpointConfigured ? _remoteAccessToken : LocalBridgeRunning ? _runningAccessToken : _localAccessToken;
     private string SelectedToolsetProfile => (ToolsetProfile.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag?.ToString() ?? "full-expert";
 
     private bool EnsureLocalHttps(bool startingHost = false)
@@ -273,31 +279,26 @@ public partial class MainWindow : Window
         if (!_windowLoaded) return;
         RefreshEndpoint();
         SaveSettings();
-        if (IsRemoteEndpointConfigured) return;
-        StopBridge();
-        if (Installation != null) StartBridge();
+        MarkConfigurationPending();
     }
     private void ReadOnlyMode_Changed(object sender, RoutedEventArgs e)
     {
         if (!_windowLoaded) return;
         SaveSettings();
-        if (IsRemoteEndpointConfigured) return;
-        StopBridge();
-        if (Installation != null) StartBridge();
+        MarkConfigurationPending();
     }
     private void ToolsetProfile_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         if (!_windowLoaded) return;
         SaveSettings();
-        if (IsRemoteEndpointConfigured) return;
-        StopBridge();
-        if (Installation != null) StartBridge();
-        Report("Run configuration changed to " + (ToolsetProfile.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content + ".");
+        MarkConfigurationPending();
+        Report("Run configuration saved for next Start: " + (ToolsetProfile.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content + ".");
     }
     private void OfficialTasks_Changed(object sender, RoutedEventArgs e)
     {
         if (!_windowLoaded) return;
         SaveSettings();
+        MarkConfigurationPending();
         // Never terminate a running optical operation merely to change a preference.
         Report(IsRemoteEndpointConfigured
             ? "Change official Tasks on the OpticStudio computer; this setting does not change the remote service."
@@ -333,6 +334,7 @@ public partial class MainWindow : Window
     }
     private void StartBridge(bool automaticRestart = false)
     {
+        if (LocalBridgeRunning) { Report("The current service is still running. Stop it safely before applying saved changes."); return; }
         if (Installation == null) { Report("Choose a detected OpticStudio installation first."); return; }
         if (!int.TryParse(Port.Text, out var port) || port < 1 || port > 65535)
         {
@@ -350,7 +352,7 @@ public partial class MainWindow : Window
         var server = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ZemaxMCP.Worker.exe");
         if (!File.Exists(bridge) || !File.Exists(server)) { Report("Release package is incomplete: the Host folder and ZemaxMCP.Worker.exe are required."); return; }
         if (!EnsureZosApiBootstrap(Installation)) return;
-        // URL ACL/firewall setup is a user-approved configuration step, not
+        // Firewall setup is a user-approved configuration step, not
         // something an automatic recovery attempt should prompt for again.
         var firewallReady = automaticRestart || ShareOnLan.IsChecked != true || FirewallRule.TryEnsure(port);
         Process? process;
@@ -370,9 +372,14 @@ public partial class MainWindow : Window
         }
         if (process == null) { Report("Windows did not create the MCP bridge process."); return; }
         _bridge = process;
+        _runningEndpoint = Url;
+        _runningAccessToken = _localAccessToken;
+        _runningInstallation = Installation;
+        ServiceSettingsNote.Visibility = Visibility.Collapsed;
+        RefreshEndpoint();
         process.EnableRaisingEvents = true;
         process.Exited += async (_, _) => await Dispatcher.InvokeAsync(() => HandleBridgeExitAsync(process));
-        Report("HTTP MCP started: " + Url + Environment.NewLine + "Logs: " + Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs") +
+        Report("HTTPS MCP started: " + LocalEndpoint + Environment.NewLine + "Logs: " + Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs") +
             (firewallReady ? "" : Environment.NewLine + "Firewall permission was not granted; another PC may not reach this endpoint."));
         ScheduleStatusRefresh();
     }
@@ -392,12 +399,51 @@ public partial class MainWindow : Window
         if (_bridge == null && !_exitRequested && !IsRemoteEndpointConfigured) StartBridge(true);
     }
     private void Stop_Click(object sender, RoutedEventArgs e) => StopService();
-    private void StopService()
+    private async void StopService()
     {
+        if (IsRemoteEndpointConfigured && !LocalBridgeRunning) { Report("Remote service unchanged. Stop it safely on the OpticStudio computer."); return; }
+        if (!await CanStopLocalServiceAsync()) return;
         StopBridge();
-        Report("HTTP MCP stopped.");
+        Report("HTTPS MCP stopped.");
+        RefreshEndpoint();
         SetIndicator(McpStateDot, McpState, "Stopped", System.Windows.Media.Brushes.IndianRed);
         SetIndicator(AiStateDot, AiState, "No client activity while stopped", System.Windows.Media.Brushes.SlateGray);
+    }
+    private void MarkConfigurationPending()
+    {
+        if (!_windowLoaded) return;
+        ServiceSettingsNote.Text = IsRemoteEndpointConfigured
+            ? "Local preferences saved. The remote service is unchanged."
+            : LocalBridgeRunning
+                ? "Changes saved for next Start. Stop safely when tasks finish; the running connection remains unchanged."
+                : "Settings saved. Select Start to apply.";
+        ServiceSettingsNote.Visibility = Visibility.Visible;
+        Report(ServiceSettingsNote.Text);
+    }
+    private async Task<bool> CanStopLocalServiceAsync()
+    {
+        if (!LocalBridgeRunning) return true;
+        if (_checkingStop) return false;
+        var process = _bridge;
+        var endpoint = _runningEndpoint;
+        var token = _runningAccessToken;
+        _checkingStop = true;
+        try
+        {
+            var health = await Task.Run(() => GetHealth(endpoint, token));
+            if (!ConfigurationSafety.IsIdle(health))
+            {
+                Report("Stop postponed: an optical operation is active or idle status cannot be verified. Cancel tasks and wait for completion before stopping.");
+                return false;
+            }
+            return ReferenceEquals(_bridge, process);
+        }
+        catch
+        {
+            return ReferenceEquals(_bridge, process) && LauncherDialog.Confirm(this, "Force stop unavailable service?",
+                "The current service cannot be checked. Force stopping may interrupt an optical operation and lose unsaved work. Prefer waiting for recovery.", "Force stop");
+        }
+        finally { _checkingStop = false; }
     }
     private async void RefreshStatus_Click(object sender, RoutedEventArgs e) => await RefreshStatusAsync();
     private async Task RefreshActivityAsync()
@@ -610,13 +656,14 @@ public partial class MainWindow : Window
     {
         if (_refreshingStatus) return;
         _refreshingStatus = true;
-        var root = Installation?.Root;
+        var currentInstallation = LocalBridgeRunning ? _runningInstallation : Installation;
+        var root = currentInstallation?.Root;
         var endpoint = McpUrl;
         // Capture UI-owned values before switching to the worker thread.  In
         // remote mode McpToken reads the PasswordBox, which must only ever be
         // accessed on this WPF dispatcher thread.
         var accessToken = McpToken;
-        var apiFiles = Installation?.ApiFilesPresent == true;
+        var apiFiles = currentInstallation?.ApiFilesPresent == true;
         var localBridge = _bridge != null && !_bridge.HasExited;
         try
         {
@@ -670,8 +717,16 @@ public partial class MainWindow : Window
             var loadedApi = health["loadedZosApiFiles"] as JObject;
             var reportedData = health["zemaxDataDirectory"]?.ToString();
             var activeCalls = RefreshClientDashboard(health);
-            var pathDetails = FormatZemaxPaths(Installation, reportedRoot, reportedApi, loadedApi, reportedData);
+            var pathDetails = FormatZemaxPaths(currentInstallation, reportedRoot, reportedApi, loadedApi, reportedData);
             _fullDiagnostics = "MCP endpoint: reachable\n" +
+                "Launcher build: " + ZemaxMCP.Build.BuildIdentity.Read(typeof(MainWindow).Assembly).InformationalVersion + "\n" +
+                "Host build: " + (health["build"]?["informationalVersion"]?.ToString() ?? "not reported") +
+                "; Worker build: " + (health["workerInformationalVersion"]?.ToString() ?? "not reported") + "\n" +
+                "HTTPS certificate: " + (health["tlsCertificate"]?["status"]?.ToString() ?? "not reported") +
+                "; expires: " + (health["tlsCertificate"]?["notAfterUtc"]?.ToString() ?? "not reported") +
+                "; days remaining: " + (health["tlsCertificate"]?["daysRemaining"]?.ToString() ?? "unknown") + "\n" +
+                "Server SHA-256: " + (health["tlsCertificate"]?["fingerprintSha256"]?.ToString() ?? "not reported") + "\n" +
+                "Host queue: " + (health["requestQueue"]?.ToString(Newtonsoft.Json.Formatting.None) ?? "not reported") + "\n" +
                 "Bridge: " + (bridgeRunning ? "running" : "not running") +
                 "; MCP server: " + (serverRunning ? "running" : "not running") +
                 "; uptime: " + uptime + "; restarts: " + restartCount + "; hard recoveries: " + hardRecoveryCount + "\n" +
@@ -695,6 +750,10 @@ public partial class MainWindow : Window
                 (string.IsNullOrWhiteSpace(lastServerError) ? "" : "\nLast MCP server error: " + lastServerError) +
                 (localBridge ? "\nLocal launcher bridge process: running" : "");
             var ready = bridgeRunning && serverRunning && apiConnected;
+            if (health["tlsCertificate"]?["renewalRecommended"]?.Value<bool>() == true)
+                ServiceSettingsNote.Text = "HTTPS certificate expires soon. Stop / Start safely on the OpticStudio computer to renew, then copy new setup to AI computers.";
+            if (health["tlsCertificate"]?["renewalRecommended"]?.Value<bool>() == true)
+                ServiceSettingsNote.Visibility = Visibility.Visible;
             ConnectionSummary.Text = (workerBusy
                 ? "OpticStudio busy — " + (lastKnownStatus ? "last verified status shown" : "live license check deferred")
                 : ready ? "Ready" : "Needs attention — check the status cards above") + " · " +
@@ -847,8 +906,9 @@ public partial class MainWindow : Window
         await RefreshStatusAsync();
     }
     private void Exit_Click(object sender, RoutedEventArgs e) => ExitApplication();
-    private void ExitApplication()
+    private async void ExitApplication()
     {
+        if (!await CanStopLocalServiceAsync()) return;
         _exitRequested = true;
         Close();
     }
@@ -883,8 +943,8 @@ public partial class MainWindow : Window
     private void CopyEndpoint_Click(object sender, RoutedEventArgs e) { System.Windows.Clipboard.SetText(McpUrl); Report("MCP address copied: " + McpUrl); }
     private void CopySecureSetup_Click(object sender, RoutedEventArgs e)
     {
-        if (!EnsureLocalHttps()) return;
-        var setup = new JObject { ["endpoint"] = Url, ["accessToken"] = _localAccessToken };
+        if (!LocalBridgeRunning && !EnsureLocalHttps()) return;
+        var setup = new JObject { ["endpoint"] = LocalEndpoint, ["accessToken"] = LocalBridgeRunning ? _runningAccessToken : _localAccessToken };
         {
             try
             {
@@ -902,16 +962,12 @@ public partial class MainWindow : Window
     private void RegenerateToken_Click(object sender, RoutedEventArgs e)
     {
         if (!LauncherDialog.Confirm(this, "Replace access token?",
-            "Existing AI clients will stop connecting until they are configured with the new token.", "Replace token")) return;
+            "The new token applies on next Start. Afterwards copy connection setup and reconfigure AI clients.", "Replace token")) return;
         _localAccessToken = GenerateAccessToken();
         SaveSettings();
-        if (!IsRemoteEndpointConfigured)
-        {
-            StopBridge();
-            if (Installation != null) StartBridge();
-        }
+        MarkConfigurationPending();
         RefreshClientDashboard(null);
-        Report("A new access token was created. Copy secure setup and reconfigure AI clients.");
+        Report("A new access token was saved for next Start. The current connection is unchanged.");
     }
     private bool TryApplySecureSetup(string text, bool trustApproved = false)
     {

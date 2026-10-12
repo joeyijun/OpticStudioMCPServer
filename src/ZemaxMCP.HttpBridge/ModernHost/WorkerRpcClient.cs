@@ -26,7 +26,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         internal WorkerCommandException(string code, string message) : base(message) => Code = code;
     }
     private readonly HostOptions _options;
-    private readonly SemaphoreSlim _executionGate = new(1, 1);
+    private readonly HostRequestAdmission _executionGate;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly SemaphoreSlim _startupGate = new(1, 1);
     private readonly object _connectionGate = new();
@@ -59,6 +59,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     public WorkerRpcClient(HostOptions options)
     {
         _options = options;
+        _executionGate = new HostRequestAdmission(options.MaxPendingRequests, TimeSpan.FromSeconds(options.QueueWaitTimeoutSeconds));
         _eventDispatchPump = Task.Run(() => DispatchEventsAsync(_eventDispatchCancellation.Token));
     }
 
@@ -131,7 +132,10 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         Func<OperationProgress, CancellationToken, Task>? progressHandler = null)
     {
         var operationId = Guid.NewGuid().ToString("N");
-        await _executionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        IDisposable execution;
+        try { execution = await _executionGate.AcquireAsync(cancellationToken).ConfigureAwait(false); }
+        catch (RequestAdmissionException ex) { return ToolOutcome.Failure(ex.Code, ex.Message); }
+        using var executionLease = execution;
         if (progressHandler != null) _progressHandlers[operationId] = progressHandler;
         try
         {
@@ -162,7 +166,6 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         finally
         {
             _progressHandlers.TryRemove(operationId, out _);
-            _executionGate.Release();
         }
     }
 
@@ -205,6 +208,10 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
     }
 
     public bool HasForegroundTool => _executionGate.CurrentCount == 0;
+    public bool IsRecoveringCancelledOperation
+    {
+        get { lock (_recoveryGate) return _cancelledOperationRecovery is { IsCompleted: false }; }
+    }
 
     public async Task<WorkerStatus> GetStatusAsync(CancellationToken cancellationToken)
     {
@@ -233,6 +240,8 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
         workerPid = TryGetWorkerPid(),
         workerStartedAt = _startedAt,
         workerGeneration = CurrentGeneration,
+        recoveringCancelledOperation = IsRecoveringCancelledOperation,
+        requestQueue = _executionGate.GetHealth(),
         transport = "versioned private named-pipe RPC",
         rpcVersion = ZemaxRpcProtocol.Version,
         manifestFingerprint = StaticToolManifest.ContractFingerprint,

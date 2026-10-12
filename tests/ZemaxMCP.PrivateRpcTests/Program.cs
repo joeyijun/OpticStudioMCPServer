@@ -36,6 +36,8 @@ internal static partial class Program
                 return 0;
             }
             VerifyActivityOwnership();
+            await VerifyReliabilityReviewFixesAsync();
+            await VerifyQueueHttpBoundariesAsync();
             VerifyJobsDeltaOwnership();
             VerifyLauncherDeltaCredentialScope();
             VerifyHostLaunchPlan();
@@ -755,6 +757,8 @@ internal static partial class Program
         catch (OperationCanceledException) { }
 
         await Task.Delay(250).ConfigureAwait(false);
+        if (!client.IsRecoveringCancelledOperation)
+            throw new InvalidOperationException("Cancelled COM drain was incorrectly reported as idle.");
         if (queued.IsCompleted)
             throw new InvalidOperationException("A request queued before cancellation bypassed the cancelled-operation recovery barrier.");
         var recovered = await queued.ConfigureAwait(false);

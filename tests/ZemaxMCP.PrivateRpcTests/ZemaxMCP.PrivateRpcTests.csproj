@@ -6,6 +6,9 @@
     <UseAppHost>true</UseAppHost>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\..\src\ZemaxMCP.Core\Session\ZemaxOperationMetadata.cs" Link="Safety\ZemaxOperationMetadata.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Core\Session\ZemaxOperationSafety.cs" Link="Safety\ZemaxOperationSafety.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Core\Session\IZosSystemSnapshot.cs" Link="Safety\IZosSystemSnapshot.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Launcher\ScopedDeltaCursor.cs" Link="Launcher\ScopedDeltaCursor.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Launcher\HostLaunchPlan.cs" Link="Launcher\HostLaunchPlan.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tooling\ZemaxToolAttributes.cs" Link="Worker\ZemaxToolAttributes.cs" />

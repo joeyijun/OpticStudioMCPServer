@@ -183,6 +183,8 @@ internal sealed class WorkerRpcServer
             ManifestFingerprint = StaticToolManifest.ContractFingerprint,
             ZosApiLoaded = true,
             WorkerVersion = workerAssembly.GetName().Version?.ToString() ?? "unknown",
+            WorkerInformationalVersion = ZemaxMCP.Build.BuildIdentity.Read(workerAssembly).InformationalVersion,
+            WorkerSourceCommit = ZemaxMCP.Build.BuildIdentity.Read(workerAssembly).SourceCommit,
             ZosApiAssemblyVersion = zosAssembly.GetName().Version?.ToString(),
             ZosApiFileVersion = zosFileVersion,
             Connected = session.IsConnected,

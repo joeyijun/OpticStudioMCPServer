@@ -63,6 +63,20 @@ try {
         # A CA must never be imported by the clipboard trust flow.
         $rsa=[Security.Cryptography.RSA]::Create()
         try {
+            $soonRequest=[Security.Cryptography.X509Certificates.CertificateRequest]::new('CN=Expiring test',$rsa,[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pkcs1)
+            $soonRequest.CertificateExtensions.Add([Security.Cryptography.X509Certificates.X509BasicConstraintsExtension]::new($false,$false,0,$true))
+            $serverUsage=[Security.Cryptography.OidCollection]::new(); [void]$serverUsage.Add([Security.Cryptography.Oid]::new('1.3.6.1.5.5.7.3.1'))
+            $soonRequest.CertificateExtensions.Add([Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension]::new($serverUsage,$true))
+            $names=[Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder]::new(); $names.AddIpAddress([Net.IPAddress]::Loopback)
+            $soonRequest.CertificateExtensions.Add($names.Build())
+            $soon=$soonRequest.CreateSelfSigned([DateTimeOffset]::UtcNow.AddMinutes(-1),[DateTimeOffset]::UtcNow.AddDays(10))
+            try {
+                $soonPath=Join-Path $directory 'expiring.pfx'
+                [IO.File]::WriteAllBytes($soonPath,$soon.Export([Security.Cryptography.X509Certificates.X509ContentType]::Pfx,'test-password'))
+                $ensureArgs[1]=[string]$soonPath; $ensureArgs[2]='test-password'; $ensureArgs[3]='127.0.0.1'
+                $renewed=$ensure.Invoke($null,$ensureArgs)
+                if ((Property $renewed 'PfxPath') -eq $soonPath -or !(Test-Path -LiteralPath $soonPath)) {throw 'Expiring certificate was not safely replaced.'}
+            } finally {$soon.Dispose()}
             $request=[Security.Cryptography.X509Certificates.CertificateRequest]::new('CN=Unwanted CA',$rsa,[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pkcs1)
             $request.CertificateExtensions.Add([Security.Cryptography.X509Certificates.X509BasicConstraintsExtension]::new($true,$false,0,$true))
             $ca=$request.CreateSelfSigned([DateTimeOffset]::UtcNow.AddMinutes(-1),[DateTimeOffset]::UtcNow.AddDays(1))

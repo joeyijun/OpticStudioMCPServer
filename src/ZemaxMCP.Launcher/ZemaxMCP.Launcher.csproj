@@ -13,6 +13,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\ZemaxMCP.DesktopShared\DesktopShortcut.cs" Link="Shared\DesktopShortcut.cs" />
+    <Compile Include="..\ZemaxMCP.DesktopShared\BuildIdentity.cs" Link="Shared\BuildIdentity.cs" />
     <Reference Include="Microsoft.CSharp" />
     <PackageReference Include="Newtonsoft.Json" />
     <Reference Include="System.IO.Compression.FileSystem" />

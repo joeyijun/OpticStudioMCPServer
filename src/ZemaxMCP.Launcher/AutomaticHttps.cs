@@ -30,7 +30,7 @@ internal static class AutomaticHttps
             {
                 using var pfx = new X509Certificate2(path, password, X509KeyStorageFlags.EphemeralKeySet);
                 using var certificate = ReadPublic(Convert.ToBase64String(pfx.RawData));
-                if (pfx.HasPrivateKey && CoversAddress(certificate, IPAddress.Parse(requiredAddress)))
+                if (pfx.HasPrivateKey && certificate.NotAfter.ToUniversalTime() > DateTime.UtcNow.AddDays(30) && CoversAddress(certificate, IPAddress.Parse(requiredAddress)))
                     return new Setup { PfxPath = path, Password = password,
                         PublicCertificate = Convert.ToBase64String(certificate.RawData), Fingerprint = Fingerprint(certificate) };
             }

@@ -40,7 +40,7 @@ public static class ZemaxOperationMetadata
                 "ApertureThroughput", "SequentialEnergyBudget", "GetCoatingRta", "RayFootprint", "DiagnoseClipping", "CardinalPoints", "ChromaticFocalShift", "DiffractionEncircledEnergy", "FftMtfVsField", "FftPsf",
                 "FieldCurvatureDistortion", "GeometricEncircledEnergy", "GeometricImageAnalysis", "GeometricMTF", "GeometricMtfVsField",
                 "GetAdvancedSystemSettings", "GetAfocalMode", "GetApertureSettings", "GetApodization", "GetAsphericSurface", "GetConfiguration",
-                "GetConfigurationOperands", "GetExtraData", "GetFieldSettings", "GetFirstOrderData", "GetGlobalMatrix", "GetMaterialCatalogSettings",
+                "GetConfigurationOperands", "GetExtraData", "GetFieldSettings", "GetFirstOrderData", "GetGlobalMatrix", "GetMaterialCatalogSettings", "GetVignetting", "GetEnvironment", "GetPolarization", "GetStopSurface",
                 "GetMeritFunction", "GetMtfUnits", "GetNonSequentialSystemSettings", "NscEnergyBudget", "GetNscDetector", "GetNscObjectParameters", "GetNscObjects", "NscSceneSummary",
                 "GetRayAiming", "GetRayAimingSettings", "GetSurface", "GetSurfaceAperture", "GetSurfaceParameter", "GetSurfaceSolves", "GetSystem", "GetSystemFiles",
                 "GetSystemMetadata", "GetTolerances", "ToleranceSummary", "GetUnits", "GetVariables", "GetWavelengthSettings", "HuygensPsf", "LateralColor",
@@ -73,7 +73,7 @@ public static class ZemaxOperationMetadata
                 "ExportAnalysis", "ExportNscDetectorCsv", "AuditNativeZrd", "ForbesMeritFunction", "GlobalSearch", "Hammer", "LoadMeritFunctionFile", "MultistartOptimize", "NewSystem",
                 "OptimizationWizard", "Optimize", "Pop", "QuickFocus", "RemoveOperand", "RemoveSurface", "RestoreSnapshot", "SaveFile", "SaveMeritFunctionFile", "ScaleLens",
                 "SetAfocalMode", "SetAperture", "SetApodization", "SetAsphericSurface", "SetConfigurationOperandValue", "SetCurrentConfiguration",
-                "SetExtraData", "SetFields", "SetMtfUnits", "SetNumberOfConfigurations", "SetNumberOfFields", "SetNumberOfWavelengths", "SetOffAxisConic",
+                "SetExtraData", "SetFields", "SetMtfUnits", "SetNumberOfConfigurations", "SetNumberOfFields", "SetNumberOfWavelengths", "SetOffAxisConic", "SetEnvironment", "SetPolarization", "SetStopSurface", "SetVignetting", "ClearVignetting",
                 "SetRayAiming", "SetSurface", "SetSurfaceAperture", "SetSurfaceParameter", "SetSurfaceSolve", "SetSurfaceType", "SetSystemMetadata",
                 "SetVariableConstraints", "SetWavelengths"
             }, new[]

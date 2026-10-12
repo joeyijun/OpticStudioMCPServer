@@ -5,6 +5,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 $root = Split-Path $PSScriptRoot -Parent
 & (Join-Path $PSScriptRoot 'test-automatic-https.ps1') -Configuration $Configuration
 $assembly = [Reflection.Assembly]::LoadFrom((Join-Path $root "src\ZemaxMCP.Launcher\bin\$Configuration\net48\Start-Zemax-MCP.exe"))
+Add-Type -Path (Join-Path $root "src\ZemaxMCP.Launcher\bin\$Configuration\net48\Newtonsoft.Json.dll")
 $identity=$assembly.GetType('ZemaxMCP.Launcher.DesktopIdentity')
 $identityFlags=[Reflection.BindingFlags]'Static,NonPublic'
 if ($identity.GetField('DisplayName',$identityFlags).GetRawConstantValue() -ne 'Zemax MCP' -or
@@ -14,6 +15,23 @@ if ($metadata.ProductName -ne 'Zemax MCP' -or $metadata.FileDescription -ne 'Zem
 $mainSource=Get-Content -Raw (Join-Path $root 'src\ZemaxMCP.Launcher\MainWindow.xaml.cs')
 if ($mainSource -match 'MessageBox.Show' -or $mainSource -notmatch 'ShowBalloonTip\(2500, DesktopIdentity.DisplayName') {throw 'Business confirmation or tray notification branding regressed.'}
 Write-Output 'Desktop identity and file metadata passed without registration or displaying notifications.'
+$idleCheck=$assembly.GetType('ZemaxMCP.Launcher.ConfigurationSafety').GetMethod('IsIdle',$identityFlags)
+foreach ($case in @(
+ @{Json='{"bridgeRunning":true,"statusFresh":true,"workerBusy":false,"activeRequests":0,"jobs":[],"tasks":[]}';Idle=$true},
+ @{Json='{"bridgeRunning":true,"statusFresh":true,"workerBusy":true}';Idle=$false},
+ @{Json='{"bridgeRunning":true,"statusFresh":false}';Idle=$false},
+ @{Json='{"bridgeRunning":true,"statusFresh":true,"jobs":[{"state":"Running"}]}';Idle=$false},
+ @{Json='{"bridgeRunning":true,"statusFresh":true,"tasks":[{"status":"working"}]}';Idle=$false},
+ @{Json='{"bridgeRunning":true,"statusFresh":true,"requestQueue":{"queued":1}}';Idle=$false}
+)) {
+ $argument=New-Object object[] 1; $argument[0]=[Newtonsoft.Json.Linq.JObject]::Parse($case.Json)
+ if ($idleCheck.Invoke($null,$argument) -ne $case.Idle) {throw 'Safe Stop incorrectly classified active/stale/queued state.'}
+}
+foreach ($handler in @('ShareOnLan_Changed','ReadOnlyMode_Changed','ToolsetProfile_SelectionChanged','ZemaxVersions_SelectionChanged','RegenerateToken_Click')) {
+ $body=[regex]::Match($mainSource,'private void '+$handler+'\([\s\S]*?(?=\r?\n    private )').Value
+ if (!$body -or $body -match 'StopBridge\(|StartBridge\(' -or $body -notmatch 'MarkConfigurationPending') {throw "Configuration handler must defer lifecycle changes: $handler"}
+}
+Write-Output 'Deferred configuration and safe-stop state checks passed without starting or stopping services.'
 Add-Type -Path (Join-Path $root "src\ZemaxMCP.Launcher\bin\$Configuration\net48\Newtonsoft.Json.dll")
 $tasksPreference = $assembly.GetType('ZemaxMCP.Launcher.OfficialTasksSettings')
 $binding = [Reflection.BindingFlags]'Static,NonPublic'

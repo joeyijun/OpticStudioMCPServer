@@ -9,6 +9,8 @@ public sealed class WorkerStatus
     public string ManifestFingerprint { get; set; } = string.Empty;
     public bool ZosApiLoaded { get; set; }
     public string WorkerVersion { get; set; } = string.Empty;
+    public string? WorkerInformationalVersion { get; set; }
+    public string? WorkerSourceCommit { get; set; }
     public string? ZosApiAssemblyVersion { get; set; }
     public string? ZosApiFileVersion { get; set; }
     public bool Connected { get; set; }

@@ -716,6 +716,7 @@
             <TextBlock Text="HTTPS is automatic. Copy setup to connect another computer."
                        Style="{StaticResource HelperText}" Margin="0,5,0,0"/>
             <Button Content="Copy connection setup" Style="{StaticResource ActionButton}" HorizontalAlignment="Stretch" Margin="0,10,0,0" Click="CopySecureSetup_Click"/>
+            <TextBlock x:Name="ServiceSettingsNote" Visibility="Collapsed" Style="{StaticResource HelperText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
           </StackPanel>
         </Grid>
       </Border>

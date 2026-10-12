@@ -60,6 +60,13 @@ internal static partial class Program
                     health.EnsureSuccessStatusCode();
                     var body = await health.Content.ReadAsStringAsync();
                     if (!body.Contains("\"tlsEnabled\":true") || !body.Contains("fake-license")) throw new Exception("HTTPS health contract failed: " + body);
+                    using var details = System.Text.Json.JsonDocument.Parse(body);
+                    var certInfo = details.RootElement.GetProperty("tlsCertificate");
+                    if (certInfo.GetProperty("fingerprintSha256").GetString() != certificate.GetCertHashString(HashAlgorithmName.SHA256) ||
+                        certInfo.GetProperty("status").GetString() != "expires-soon" ||
+                        !certInfo.GetProperty("renewalRecommended").GetBoolean() ||
+                        !details.RootElement.GetProperty("build").GetProperty("informationalVersion").GetString()!.Contains('+'))
+                        throw new Exception("HTTPS expiry/build diagnostics failed.");
                     failure = null;
                     break;
                 }
