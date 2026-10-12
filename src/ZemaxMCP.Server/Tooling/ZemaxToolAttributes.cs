@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using ZemaxMCP.ToolManifest;
+using ZemaxMCP.Server.Services.Jobs;
 
 namespace ZemaxMCP.Server.Tooling;
 
@@ -56,9 +57,27 @@ public sealed class WorkerToolRegistry
             throw new InvalidOperationException("Unknown OpticStudio tool: " + name);
 
         var instance = ActivatorUtilities.CreateInstance(_services, tool.DeclaringType);
-        var values = BindArguments(tool.Method, arguments, cancellationToken);
+        var prepared = BackgroundToolPolicy.PrepareSharedInvocation(name, arguments);
+        var values = BindArguments(tool.Method, prepared.Arguments, cancellationToken);
+        if (prepared.Background)
+        {
+            var jobs = _services.GetRequiredService<McpJobManager>();
+            return BackgroundToolRunner.Start(jobs, name, prepared.TimeoutSeconds, jobCancellation =>
+            {
+                var jobValues = (object?[])values.Clone();
+                var parameters = tool.Method.GetParameters();
+                for (var index = 0; index < parameters.Length; index++)
+                    if (parameters[index].ParameterType == typeof(CancellationToken)) jobValues[index] = jobCancellation;
+                return InvokeBoundAsync(instance, tool.Method, jobValues);
+            });
+        }
+        return await InvokeBoundAsync(instance, tool.Method, values).ConfigureAwait(false);
+    }
+
+    private static async Task<object?> InvokeBoundAsync(object instance, MethodInfo method, object?[] values)
+    {
         object? invocation;
-        try { invocation = tool.Method.Invoke(instance, values); }
+        try { invocation = method.Invoke(instance, values); }
         catch (TargetInvocationException ex) when (ex.InnerException != null)
         {
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();

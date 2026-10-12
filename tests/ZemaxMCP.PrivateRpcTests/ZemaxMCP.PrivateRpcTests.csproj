@@ -17,6 +17,11 @@
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\ToolCatalogTool.cs" Link="Worker\ToolCatalogTool.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\System\ServerLensBrowser.cs" Link="Worker\ServerLensBrowser.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\System\WorkerExecutionContext.cs" Link="Worker\WorkerExecutionContext.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Services\Jobs\McpJobManager.cs" Link="Worker\McpJobManager.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Services\Jobs\BackgroundToolRunner.cs" Link="Worker\BackgroundToolRunner.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Core\Session\EngineeringObservation.cs" Link="Worker\EngineeringObservation.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\AnalysisEvidenceStore.cs" Link="Worker\AnalysisEvidenceStore.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\AnalysisEvidenceException.cs" Link="Worker\AnalysisEvidenceException.cs" />
   </ItemGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />

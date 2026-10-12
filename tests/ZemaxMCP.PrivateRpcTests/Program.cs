@@ -35,6 +35,12 @@ internal static partial class Program
                 await VerifyHttpsEndToEndAsync();
                 return 0;
             }
+            if (args.Length == 1 && args[0] == "--background-test")
+            {
+                await VerifyExpandedBackgroundExecutionAsync();
+                await VerifyMcpHttpToWorkerEndToEndAsync();
+                return 0;
+            }
             if (args.Length == 1 && args[0] == "--upgrade-test")
             {
                 await VerifyUpgradeReliabilityAsync();
@@ -42,6 +48,7 @@ internal static partial class Program
                 return 0;
             }
             VerifyActivityOwnership();
+            await VerifyExpandedBackgroundExecutionAsync();
             await VerifyUpgradeReliabilityAsync();
             await VerifyUpdateDownloadsAsync();
             await VerifyReliabilityReviewFixesAsync();
@@ -1037,6 +1044,7 @@ internal static partial class Program
                     throw new InvalidOperationException("Non-mutating reads must not acquire a persistent writer lease.");
             }
 
+            await VerifyExpandedBackgroundHttpAsync(client, endpoint);
             using var spoofed = new HttpRequestMessage(HttpMethod.Get, endpoint + "/health");
             spoofed.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "private-rpc-e2e-token");
             spoofed.Headers.Host = "attacker.example";
@@ -1443,7 +1451,33 @@ internal static partial class Program
                     throw new InvalidOperationException("Worker Job falsely accepted an unsolicited Task input response.");
             }
 
-            // With a long COM-bound foreground read in progress, tasks/get
+            // An active background Job excludes even its owner's STA reads;
+            // metadata/Job polling remains usable and releases the model on completion.
+            using (var blockedOwnerRead = await SendScopedAsync(client, endpoint, 11730,
+                       "tools/call", "zemax_get_system", otherWriter).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(blockedOwnerRead).ConfigureAwait(false);
+                if (!payload.Contains("\"isError\":true", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Own-client foreground read entered STA during an active Job.");
+            }
+            using (var firstPoll = await SendTaskAsync(client, endpoint, 11731, "tasks/get", null,
+                       otherWriter, taskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(firstPoll).ConfigureAwait(false);
+                if (!payload.Contains("\"working\"", StringComparison.Ordinal) ||
+                    payload.Contains("private-task-final-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Task completed before Worker returned its real result: " + payload);
+            }
+            using (var terminalPoll = await SendTaskAsync(client, endpoint, 11732, "tasks/get", null,
+                       otherWriter, taskId).ConfigureAwait(false))
+            {
+                var payload = await ReadFirstMcpPayloadAsync(terminalPoll).ConfigureAwait(false);
+                if (!payload.Contains("\"completed\"", StringComparison.Ordinal) ||
+                    !payload.Contains("private-task-final-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Worker completion was not reflected before the next STA operation.");
+            }
+
+            // With a subsequent COM-bound foreground read in progress, tasks/get
             // must use the Host's already-authorized Task state rather than
             // queuing job_status behind the busy Worker RPC. This is a real
             // concurrent HTTP smoke test, not just a static code assertion.
@@ -1474,7 +1508,7 @@ internal static partial class Program
                 taskPollTimer.Stop();
                 var payload = await ReadFirstMcpPayloadAsync(nonBlockingPoll).ConfigureAwait(false);
                 if (!nonBlockingPoll.IsSuccessStatusCode ||
-                    !payload.Contains("\"working\"", StringComparison.Ordinal) ||
+                    !payload.Contains("\"completed\"", StringComparison.Ordinal) ||
                     taskPollTimer.Elapsed > TimeSpan.FromSeconds(2))
                     throw new InvalidOperationException(
                         "tasks/get blocked behind a running Worker COM-bound RPC: " +
@@ -1487,13 +1521,13 @@ internal static partial class Program
                     throw new InvalidOperationException("Long read fixture did not complete: " + result);
             }
 
-            using (var working = await SendTaskAsync(client, endpoint, 118, "tasks/get", null,
+            using (var cachedResult = await SendTaskAsync(client, endpoint, 118, "tasks/get", null,
                        otherWriter, taskId).ConfigureAwait(false))
             {
-                var payload = await ReadFirstMcpPayloadAsync(working).ConfigureAwait(false);
-                if (!payload.Contains("\"working\"", StringComparison.Ordinal) ||
-                    payload.Contains("private-task-final-result", StringComparison.Ordinal))
-                    throw new InvalidOperationException("Task completed before Worker returned its real result: " + payload);
+                var payload = await ReadFirstMcpPayloadAsync(cachedResult).ConfigureAwait(false);
+                if (!payload.Contains("\"completed\"", StringComparison.Ordinal) ||
+                    !payload.Contains("private-task-final-result", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Terminal Task lost its retained optical result: " + payload);
             }
             using (var finished = await SendTaskAsync(client, endpoint, 119, "tasks/get", null,
                        otherWriter, taskId).ConfigureAwait(false))
@@ -1755,6 +1789,7 @@ internal static partial class Program
         if (!string.IsNullOrWhiteSpace(workerLog)) File.AppendAllText(workerLog, "started" + Environment.NewLine);
         var nscStarts = 0;
         var completedTaskPolls = 0;
+        var expandedJobPolls = new Dictionary<string, int>();
         while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
         {
             using var message = JsonDocument.Parse(line);
@@ -1798,6 +1833,21 @@ internal static partial class Program
             if (string.Equals(kind, ZemaxRpcProtocol.InvokeTool, StringComparison.Ordinal))
             {
                 var command = root.GetProperty("payload").GetProperty("command").GetString();
+                if (command != null && BackgroundToolPolicy.UsesSharedRunner(command))
+                {
+                    var arguments = root.GetProperty("payload").GetProperty("arguments");
+                    object value;
+                    if (arguments.TryGetProperty("runInBackground", out var flag) && flag.ValueKind == JsonValueKind.True)
+                    {
+                        var id = "fake-expanded-job-" + (expandedJobPolls.Count + 1);
+                        expandedJobPolls[id] = 0;
+                        value = new { success = true, jobId = id, state = "Queued" };
+                    }
+                    else value = new { success = true, metric = 42 };
+                    await SendAsync(writer, ZemaxRpcProtocol.Result, requestId, operationId, new
+                    { content = new[] { new { type = "text", text = JsonSerializer.Serialize(value) } }, isError = false }).ConfigureAwait(false);
+                    continue;
+                }
                 if (string.Equals(command, "zemax_test_hang", StringComparison.Ordinal))
                 {
                     await Task.Delay(Timeout.InfiniteTimeSpan).ConfigureAwait(false);
@@ -1853,7 +1903,12 @@ internal static partial class Program
                         ?? string.Empty;
                     string state;
                     object resultValue;
-                    if (id == "fake-owned-job")
+                    if (expandedJobPolls.ContainsKey(id))
+                    {
+                        state = cancelling ? "Cancelled" : ++expandedJobPolls[id] >= 2 ? "Completed" : "Running";
+                        resultValue = new { success = true, metric = 42 };
+                    }
+                    else if (id == "fake-owned-job")
                     {
                         state = cancelling ? "Cancelled" : "Running";
                         resultValue = "private-job-result";

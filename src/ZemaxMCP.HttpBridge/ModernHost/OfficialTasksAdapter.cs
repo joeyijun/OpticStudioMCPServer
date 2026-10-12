@@ -7,6 +7,7 @@ using ModelContextProtocol.Extensions.Tasks;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using ZemaxMCP.Rpc;
+using ZemaxMCP.ToolManifest;
 
 namespace ZemaxMCP.HttpBridge.ModernHost;
 
@@ -17,11 +18,6 @@ namespace ZemaxMCP.HttpBridge.ModernHost;
 /// </summary>
 internal sealed class OfficialTasksAdapter
 {
-    private static readonly HashSet<string> EligibleTools = new(StringComparer.Ordinal)
-    {
-        "zemax_run_nsc_ray_trace", "zemax_run_tolerancing", "zemax_pop",
-        "zemax_global_search", "zemax_multistart_optimize"
-    };
 
     private readonly WorkerTaskLedger _ledger;
     private readonly WorkerRpcClient _worker;
@@ -81,13 +77,23 @@ internal sealed class OfficialTasksAdapter
     {
         // All old clients, down-level clients and non-eligible tools keep their
         // ordinary tools/call result. Authorization happens inside _execute.
-        var eligible = EligibleTools.Contains(request.Params.Name) && IsTaskNegotiated(request.JsonRpcRequest);
+        var eligible = BackgroundToolPolicy.SupportsTasks(request.Params.Name) && IsTaskNegotiated(request.JsonRpcRequest);
         // A full ledger must not reveal live workload/capacity to a credential
         // that is not permitted to invoke the tool. Run the ordinary Host
         // denial before checking shared Task capacity.
         if (eligible && !_isAuthorized(request))
             return new ResultOrAlternate<CallToolResult>(
                 await _execute(request, cancellationToken).ConfigureAwait(false));
+        // Only Tasks-capable clients get automatic background selection.
+        // Preserve explicit false and the ordinary client's synchronous API.
+        if (eligible && BackgroundToolPolicy.UsesSharedRunner(request.Params.Name) &&
+            (request.Params.Arguments == null || !request.Params.Arguments.ContainsKey("runInBackground")))
+        {
+            request.Params.Arguments = request.Params.Arguments == null
+                ? new Dictionary<string, JsonElement>()
+                : new Dictionary<string, JsonElement>(request.Params.Arguments);
+            request.Params.Arguments["runInBackground"] = JsonSerializer.SerializeToElement(true);
+        }
         using var admission = eligible ? _ledger.TryReserveAdmission() : null;
         if (eligible && admission == null)
             return new ResultOrAlternate<CallToolResult>(new CallToolResult

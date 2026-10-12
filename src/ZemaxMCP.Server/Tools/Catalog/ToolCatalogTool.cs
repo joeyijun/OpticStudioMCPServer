@@ -14,7 +14,7 @@ namespace ZemaxMCP.Server.Tools.Catalog;
 public sealed class ToolCatalogTool
 {
     public sealed record ToolGroup(string Id, string Title, string Purpose, int ToolCount);
-    public sealed record ToolEntry(string Name, string Group, string Risk, string Description, string SafetyGuidance);
+    public sealed record ToolEntry(string Name, string Group, string Risk, string Description, string SafetyGuidance, string BackgroundExecution = "none");
     public sealed record TaskPlaybook(
         string Id, string Goal, string Guidance,
         IReadOnlyList<string> AvailableSteps, IReadOnlyList<string> UnavailableSteps);
@@ -103,7 +103,7 @@ internal static class ToolCatalog
         return PlaybookDefinitions.Where(item => string.IsNullOrEmpty(target) || item.Id == target)
             .Select(item => new ToolCatalogTool.TaskPlaybook(
                 item.Id, item.Goal,
-                "First call zemax_execution_context to identify the OpticStudio computer. File paths belong to that computer, not the AI client. " + item.Guidance,
+                "First call zemax_execution_context to identify the OpticStudio computer. File paths belong to that computer, not the AI client. For supported long analyses/optimization, use runInBackground=true with ordinary clients and poll the Job; Tasks-capable clients can receive a Task automatically. Explicit false keeps synchronous execution. " + item.Guidance,
                 item.Steps.Where(permitted).ToArray(),
                 item.Steps.Where(name => !permitted(name)).ToArray()))
             .ToArray();
@@ -138,7 +138,7 @@ internal static class ToolCatalog
             _ => ReadOnlyRisk
         };
         var group = ToolsetCatalog.GetDomain(tool.Name).Title;
-        return new ToolCatalogTool.ToolEntry(tool.Name, group, risk, tool.Description, GetSafetyGuidance(risk, tool.Name));
+        return new ToolCatalogTool.ToolEntry(tool.Name, group, risk, tool.Description, GetSafetyGuidance(risk, tool.Name), tool.BackgroundExecution);
     }
 
     private static string GetSafetyGuidance(string risk, string name)

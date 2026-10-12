@@ -203,10 +203,10 @@ internal static class Program
                         // renew optical ownership for Launcher diagnostics on either computer.
                         result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler).ConfigureAwait(false);
                     }
-                    else if (scoped && jobOperation)
+                    else if (jobOperation)
                     {
                         var requestedLimit = 50;
-                        if (request.Params.Name == "zemax_job_list" &&
+                        if (scoped && request.Params.Name == "zemax_job_list" &&
                             !JobOwnerRegistry.TryGetRequestedListLimit(request.Params, out requestedLimit))
                             return ToolOutcome.Failure("domain_error",
                                 "Job list limit must be an integer between 1 and 128.");
@@ -215,19 +215,21 @@ internal static class Program
                             ? JobOwnerRegistry.ExpandListRequest(request.Params)
                             : request.Params;
                         result = await workerClient.CallToolAsync(workerRequest, cancellationToken, progressHandler).ConfigureAwait(false);
-                        if (request.Params.Name == "zemax_job_list")
+                        if (scoped && request.Params.Name == "zemax_job_list")
                             result = JobOwnerRegistry.FilterList(result, clientId, workerClient.CurrentGeneration, jobOwners, requestedLimit);
-                        else if (JobOwnerRegistry.TryGetJobId(request.Params, out var authorizedJobId))
+                        else if (scoped && JobOwnerRegistry.TryGetJobId(request.Params, out var authorizedJobId))
                             result = JobOwnerRegistry.ValidateSingleResult(result, authorizedJobId);
                     }
                     else
                     {
                         IDisposable ownership;
+                        var readOnlyBackground = requestedTool.Impact == "ReadOnly" &&
+                            BackgroundToolPolicy.IsBackgroundRequested(request.Params.Name, request.Params.Arguments);
                         try
                         {
-                            ownership = string.Equals(requestedTool.Impact, "ReadOnly", StringComparison.Ordinal)
+                            ownership = string.Equals(requestedTool.Impact, "ReadOnly", StringComparison.Ordinal) && !readOnlyBackground
                                 ? await controlLease.AcquireObservationAsync(clientId, cancellationToken).ConfigureAwait(false)
-                                : await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken).ConfigureAwait(false);
+                                : await controlLease.AcquireAsync(clientId, request.Params.Name, cancellationToken, temporaryOwner: readOnlyBackground).ConfigureAwait(false);
                         }
                         catch (ControlLeaseConflictException ex)
                         {
@@ -236,7 +238,7 @@ internal static class Program
                         using (ownership)
                         {
                             result = await workerClient.CallToolAsync(request.Params, cancellationToken, progressHandler,
-                                requestedTool.Impact == "ReadOnly" ? null : generation => controlLease.BindInvocation(clientId, generation)).ConfigureAwait(false);
+                                requestedTool.Impact == "ReadOnly" && !readOnlyBackground ? null : generation => controlLease.BindInvocation(clientId, generation)).ConfigureAwait(false);
                             if (TryGetStartedJobId(request.Params.Name, result, out var jobId))
                             {
                                 var generation = workerClient.CurrentGeneration;

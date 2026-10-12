@@ -14,7 +14,26 @@ public sealed class ToolManifestEntry
         Description = ExecutionLocationPolicy.ToolNotice + description;
         DomainId = ToolsetCatalog.GetDomainId(name);
         Impact = ToolsetCatalog.GetImpact(name).ToString();
+        BackgroundExecution = BackgroundToolPolicy.UsesSharedRunner(name) ? "shared-runner" :
+            BackgroundToolPolicy.SupportsTasks(name) ? "native-job" : "none";
         var schema = JsonNode.Parse(inputSchemaJson)!;
+        if (BackgroundToolPolicy.UsesSharedRunner(name))
+        {
+            var propertiesForJobs = schema["properties"]!.AsObject();
+            if (propertiesForJobs.ContainsKey("runInBackground") || propertiesForJobs.ContainsKey("backgroundTimeoutSeconds"))
+                throw new InvalidOperationException("Shared background controls collide with native parameters: " + name);
+            propertiesForJobs["runInBackground"] = new JsonObject
+            {
+                ["type"] = "boolean", ["default"] = false,
+                ["description"] = "Queue this potentially long operation as a managed Job. Ordinary clients default to synchronous compatibility; Tasks-capable clients may use background automatically when omitted. Explicit false forces a synchronous result."
+            };
+            propertiesForJobs["backgroundTimeoutSeconds"] = new JsonObject
+            {
+                ["type"] = "integer", ["default"] = 300, ["minimum"] = 1, ["maximum"] = 7200,
+                ["description"] = "Background execution deadline (1-7200 seconds), followed by bounded cancellation drain/hard Worker recovery. Does not change native tool-specific timeout parameters."
+            };
+            Description += " Supports a managed background Job via runInBackground=true; inspect job_status or use negotiated official MCP Tasks.";
+        }
         if (schema["properties"] is JsonObject properties)
             foreach (var property in properties)
                 if (property.Key.EndsWith("Path", StringComparison.Ordinal) && property.Value is JsonObject parameter)
@@ -28,6 +47,7 @@ public sealed class ToolManifestEntry
     public string Description { get; }
     public string DomainId { get; }
     public string Impact { get; }
+    public string BackgroundExecution { get; }
     public JsonElement InputSchema { get; }
 }
 
@@ -72,6 +92,7 @@ public static class StaticToolManifest
             AppendField(canonical, entry.Description);
             AppendField(canonical, entry.DomainId);
             AppendField(canonical, entry.Impact);
+            AppendField(canonical, entry.BackgroundExecution);
             AppendField(canonical, entry.InputSchema.GetRawText());
             canonical.Append('\n');
         }

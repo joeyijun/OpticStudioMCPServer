@@ -26,6 +26,7 @@ internal sealed class OpticStudioControlLease
     private string? _activeOperation;
     private long _currentGeneration, _ownerGeneration;
     private bool _ownerInvalidated;
+    private bool _ownerIsTemporary;
 
     public void ObserveGenerationStarted(long generation)
     {
@@ -59,7 +60,7 @@ internal sealed class OpticStudioControlLease
         if (_idleTimeout <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(idleTimeout));
     }
 
-    public async Task<IDisposable> AcquireAsync(string clientId, string operation, CancellationToken cancellationToken)
+    public async Task<IDisposable> AcquireAsync(string clientId, string operation, CancellationToken cancellationToken, bool temporaryOwner = false)
     {
         if (string.IsNullOrWhiteSpace(clientId)) clientId = "anonymous";
 
@@ -89,11 +90,13 @@ internal sealed class OpticStudioControlLease
                 // A job could have started while this caller waited for the
                 // foreground gate. Check again before granting the edit lease.
                 if (_jobHolds.Count > 0) throw ActiveJobConflict();
-                if (IsExpiredLocked()) _ownerClientId = null;
+                if (IsExpiredLocked()) { _ownerClientId = null; _ownerIsTemporary = false; }
                 if (_ownerClientId != null &&
                     !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
                     throw new ControlLeaseConflictException();
 
+                if (_ownerClientId == null) _ownerIsTemporary = temporaryOwner;
+                else if (!temporaryOwner) _ownerIsTemporary = false;
                 _ownerClientId = clientId;
                 _ownerGeneration = _currentGeneration;
                 _ownerInvalidated = false;
@@ -112,7 +115,7 @@ internal sealed class OpticStudioControlLease
     /// <summary>
     /// Permit read-only inspection by any authorized client without taking or
     /// renewing the persistent mutating-owner lease. Physical operations are
-    /// still serialized behind the same execution gate. Foreign observers are
+    /// still serialized behind the same execution gate. All STA observers are
     /// not admitted while an owner holds an active background optical Job,
     /// since the STA may be blocked or the model may be mid-operation.
     /// </summary>
@@ -124,8 +127,8 @@ internal sealed class OpticStudioControlLease
         {
             cancellationToken.ThrowIfCancellationRequested();
             lock (_sync)
-                if (_jobHolds.Values.Any(job => !string.Equals(job.ClientId, clientId, StringComparison.Ordinal)))
-                    throw new ControlLeaseConflictException();
+                if (_jobHolds.Count > 0)
+                    throw ActiveJobConflict();
             return new ObservationReleaser(this);
         }
         catch
@@ -136,7 +139,7 @@ internal sealed class OpticStudioControlLease
     }
 
     private static ControlLeaseConflictException ActiveJobConflict() =>
-        new("An OpticStudio background Job is active; additional mutations are blocked until it reaches a terminal state. Query or cancel the existing Job first.");
+        new("An OpticStudio background Job is active; foreground optical calls are blocked until it reaches a terminal state. Metadata status checks and Job queries/cancellation remain available.");
 
     private bool IsExpiredLocked() =>
         _ownerClientId != null &&
@@ -185,6 +188,8 @@ internal sealed class OpticStudioControlLease
             {
                 _jobHolds.Remove(job.JobId);
                 _lastActivity = DateTimeOffset.UtcNow;
+                if (_ownerIsTemporary && _activeOperation == null && _jobHolds.Count == 0)
+                { _ownerClientId = null; _ownerGeneration = 0; _ownerIsTemporary = false; }
             }
         }
     }
@@ -245,7 +250,7 @@ internal sealed class OpticStudioControlLease
             if (string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
             {
                 _activeOperation = null;
-                if ((_ownerInvalidated || _ownerGeneration == 0 && _currentGeneration == 0) && _jobHolds.Count == 0)
+                if ((_ownerIsTemporary || _ownerInvalidated || _ownerGeneration == 0 && _currentGeneration == 0) && _jobHolds.Count == 0)
                 {
                     _ownerClientId = null;
                     _ownerGeneration = 0;

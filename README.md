@@ -185,6 +185,12 @@ The P1 development branch contains 152 tools; the signed v1.5.1 release contains
 
 ### Tool navigation, run configurations, and safety
 
+**Background execution:** 23 reviewed tools now support managed Jobs, including
+MTF, PSF, Spot and local optimization. Tasks-capable MCP 2026-07-28 clients can
+receive official Tasks automatically; ordinary clients retain synchronous
+compatibility and can request `runInBackground=true` for a Job. Explicit false
+keeps a synchronous response. See [Background tools and Tasks](docs/BACKGROUND_TOOL_EXECUTION.md).
+
 The launcher can expose a smaller task-focused tool surface without renaming MCP tools. The Host enforces the selected profile for both `tools/list` and direct `tools/call`; the Worker checks it again before ZOS-API execution.
 
 | Launcher configuration | Enabled domains and impacts |

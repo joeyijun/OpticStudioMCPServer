@@ -144,7 +144,8 @@ internal sealed class WorkerRpcServer
                 using var observation = new EngineeringObservation();
                 var result = await _tools.InvokeAsync(invocation.Command, invocation.Arguments, operation.Token).ConfigureAwait(false);
                 var resultJson = JsonSerializer.SerializeToElement(result, _jsonOptions);
-                var engineering = new { analysisId = ZemaxMCP.Toolsets.ToolsetCatalog.GetDomain(invocation.Command).Id=="analysis"
+                var engineering = new { analysisId = (resultJson.ValueKind != JsonValueKind.Object || !resultJson.TryGetProperty("jobId", out _)) &&
+                    ZemaxMCP.Toolsets.ToolsetCatalog.GetDomain(invocation.Command).Id=="analysis"
                     ? ZemaxMCP.Server.Tools.Catalog.AnalysisEvidenceStore.Record(invocation.Command,resultJson.GetRawText(),JsonSerializer.Serialize(new { operations=observation.Operations,truncated=observation.Truncated },_jsonOptions)) : null,
                     operations=observation.Operations,truncated=observation.Truncated };
                 await WriteResultAsync(writer, message.RequestId, message.OperationId, new
