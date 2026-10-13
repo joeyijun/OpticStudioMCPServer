@@ -329,7 +329,7 @@ internal static partial class Program
         };
         if (!JobOwnerRegistry.TryGetRequestedListLimit(defaultList, out var defaultLimit) ||
             defaultLimit != 50 ||
-            JobOwnerRegistry.ExpandListRequest(defaultList).Arguments!["limit"].GetInt32() != 193)
+            JobOwnerRegistry.ExpandListRequest(defaultList).Arguments!["limit"].GetInt32() != WorkerJobHistoryPolicy.MaximumVisibleJobs)
             throw new InvalidOperationException("Scoped Job listing must fetch the whole bounded Worker history.");
         var invalidLimit = new CallToolRequestParams
         {

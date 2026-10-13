@@ -3,6 +3,13 @@ using System.Collections.Generic;
 
 namespace ZemaxMCP.Rpc;
 
+public static class WorkerJobHistoryPolicy
+{
+    public const int TerminalHistoryLimit = 30;
+    public const int PendingJobLimit = 64;
+    public const int MaximumVisibleJobs = TerminalHistoryLimit + PendingJobLimit + 1;
+}
+
 public sealed class WorkerStatus
 {
     public int RpcVersion { get; set; }

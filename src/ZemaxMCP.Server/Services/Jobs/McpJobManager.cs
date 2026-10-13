@@ -12,9 +12,9 @@ public sealed class McpJobManager : IDisposable
 {
     private static readonly AsyncLocal<string?> ParentOperation = new();
 
-    public const int DefaultMaxHistory = 30;
+    public const int DefaultMaxHistory = ZemaxMCP.Rpc.WorkerJobHistoryPolicy.TerminalHistoryLimit;
     public const int DefaultMaxResultHistory = 16;
-    public const int DefaultMaxPending = 64;
+    public const int DefaultMaxPending = ZemaxMCP.Rpc.WorkerJobHistoryPolicy.PendingJobLimit;
 
     private readonly object _gate = new();
     private readonly Queue<JobEntry> _pending = new();

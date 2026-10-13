@@ -209,9 +209,9 @@ internal static class Program
                         if (scoped && request.Params.Name == "zemax_job_list" &&
                             !JobOwnerRegistry.TryGetRequestedListLimit(request.Params, out requestedLimit))
                             return ToolOutcome.Failure("domain_error",
-                                "Job list limit must be an integer between 1 and 128.");
+                                "Job list limit must be an integer between 1 and 95.");
 
-                        var workerRequest = request.Params.Name == "zemax_job_list"
+                        var workerRequest = scoped && request.Params.Name == "zemax_job_list"
                             ? JobOwnerRegistry.ExpandListRequest(request.Params)
                             : request.Params;
                         result = await workerClient.CallToolAsync(workerRequest, cancellationToken, progressHandler).ConfigureAwait(false);

@@ -54,7 +54,7 @@ public class PupilAberrationFanTool
 
     private static RayFanData ParsePupilAberrationTextFile(string filePath)
     {
-        var lines = File.ReadAllLines(filePath);
+        var lines = LocalizedAnalysisText.ReadLines(filePath);
         string units = "";
         string surface = "";
         var fields = new List<RayFanFieldData>();

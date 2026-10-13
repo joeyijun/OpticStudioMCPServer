@@ -54,7 +54,7 @@ public class RelativeIlluminationTool
 
     private static RelativeIlluminationData ParseRelativeIlluminationTextFile(string filePath)
     {
-        var lines = File.ReadAllLines(filePath);
+        var lines = LocalizedAnalysisText.ReadLines(filePath);
         double wavelength = double.NaN;
         string fieldUnits = "";
         var fields = new List<double>();

@@ -9,5 +9,6 @@
     <Compile Include="../../src/ZemaxMCP.Core/Models/SolveData.cs" Link="SolveData.cs" />
     <Compile Include="../../src/ZemaxMCP.Server/Tools/LensData/SurfaceSolveReader.cs" Link="SurfaceSolveReader.cs" />
     <Compile Include="../../src/ZemaxMCP.Server/Tools/Optimization/MeritFunctionCompatibility.cs" Link="MeritFunctionCompatibility.cs" />
+    <Compile Include="../../src/ZemaxMCP.Server/Tools/Analysis/LocalizedAnalysisText.cs" Link="LocalizedAnalysisText.cs" />
   </ItemGroup>
 </Project>

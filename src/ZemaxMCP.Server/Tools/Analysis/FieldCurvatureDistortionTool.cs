@@ -71,7 +71,7 @@ public class FieldCurvatureDistortionTool
 
     private static FieldCurvatureDistortionData ParseTextFile(string filePath)
     {
-        var lines = File.ReadAllLines(filePath);
+        var lines = LocalizedAnalysisText.ReadLines(filePath);
         string distortionType = "", shiftUnits = "", heightUnits = "", distortionUnits = "";
         double maxField = double.NaN, maxDistortion = double.NaN;
         var wavelengthBlocks = new List<FieldCurvatureWavelengthData>();

@@ -47,4 +47,7 @@
     <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Base\SurfaceReadback.cs" Link="Server\SurfaceReadback.cs" />
     <Compile Include="..\..\src\ZemaxMCP.Server\Services\Jobs\McpJobManager.cs" Link="Server\McpJobManager.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/ZemaxMCP.Rpc/ZemaxMCP.Rpc.csproj" />
+  </ItemGroup>
 </Project>

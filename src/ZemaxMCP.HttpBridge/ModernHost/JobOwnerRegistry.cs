@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
+using ZemaxMCP.Rpc;
 
 namespace ZemaxMCP.HttpBridge.ModernHost;
 
@@ -91,7 +92,7 @@ internal sealed class JobOwnerRegistry
         if (request.Arguments == null || !request.Arguments.TryGetValue("limit", out var value))
             return true;
         if (value.ValueKind != JsonValueKind.Number ||
-            !value.TryGetInt32(out limit) || limit is < 1 or > 128)
+            !value.TryGetInt32(out limit) || limit < 1 || limit > WorkerJobHistoryPolicy.MaximumVisibleJobs)
             return false;
         return true;
     }
@@ -101,8 +102,8 @@ internal sealed class JobOwnerRegistry
         var args = original.Arguments == null
             ? new Dictionary<string, JsonElement>(StringComparer.Ordinal)
             : new Dictionary<string, JsonElement>(original.Arguments, StringComparer.Ordinal);
-        // Worker retains up to 128 terminal + 64 queued + 1 running Job.
-        args["limit"] = JsonSerializer.SerializeToElement(193);
+        // Fetch the bounded Worker window before owner filtering. Same policy as Worker.
+        args["limit"] = JsonSerializer.SerializeToElement(WorkerJobHistoryPolicy.MaximumVisibleJobs);
         return new CallToolRequestParams
         {
             Name = original.Name,

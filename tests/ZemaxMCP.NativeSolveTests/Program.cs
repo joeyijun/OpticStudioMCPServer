@@ -4,6 +4,7 @@ using ZOSAPI.Editors.LDE;
 using ZemaxMCP.Server.Tools.LensData;
 using ZemaxMCP.Server.Tools.Optimization;
 using ZOSAPI.Editors.MFE;
+using ZemaxMCP.Server.Tools.Analysis;
 
 static T Native<T>(params (string Name, object? Value)[] values) where T : class
 {
@@ -92,6 +93,15 @@ foreach (int originalCount in new[] { 1, 5 })
     MeritFunctionCompatibility.Clear(editor);
     Check(count == 1 && type == MeritOperandType.BLNK, "clear retains mandatory blank row: " + originalCount);
 }
+
+Check(LocalizedAnalysisText.Normalize("子午光扇，视场号2 = 14.00 (度)") ==
+    "Tangential fan, field number 2 = 14.00 ( Degrees)", "actual Chinese fan heading with request field identity");
+Check(LocalizedAnalysisText.Normalize("波长：0.550000 µm") == "Wavelength: 0.550000 µm", "fullwidth colon numeric wavelength");
+Check(LocalizedAnalysisText.Normalize("波长：μm.") == "Wavelength units are μm.", "units are not invented as numeric wavelength");
+Check(LocalizedAnalysisText.Normalize(" -1.000 \t -0.722502 \t -0.591751 ") ==
+    "-1.000 \t -0.722502 \t -0.591751", "numeric rows unchanged except outer whitespace");
+Check(LocalizedAnalysisText.Normalize("Wavelength: 0.55 µm") == "Wavelength: 0.55 µm", "English reports unchanged");
+Check(LocalizedAnalysisText.Normalize("unrecognized heading") == "unrecognized heading", "unknown locale not guessed");
 
 public class NativeProperties : DispatchProxy
 {
