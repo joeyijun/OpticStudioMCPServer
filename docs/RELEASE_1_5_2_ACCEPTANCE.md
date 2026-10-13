@@ -1,4 +1,4 @@
-# 1.5.2 acceptance (final candidate awaiting deployment)
+# 1.5.2 acceptance
 
 The deployed `41948e4` build was exercised on OpticStudio 2024 R1.03 over
 authenticated HTTPS on 2026-10-13. This is representative workflow acceptance,
@@ -41,7 +41,7 @@ authenticated HTTPS on 2026-10-13. This is representative workflow acceptance,
   local parser verification. All seven full reports and sanitized fixtures now
   pass numeric/metadata assertions; Seidel totals and wavefront summary are
   independently checked against those reported values. The new Seidel mapping
-  still needs the final candidate's actual end-to-end tool call before release.
+  passed the final candidate's actual end-to-end tool call before release.
 - Export supports `SeidelCoefficients` and `PupilAberrationFan` so their original
   text can be collected without an arbitrary remote-file-read API.
 
@@ -53,9 +53,19 @@ does not support TXT export on this installed version.
 
 ## Release gate
 
-Do not publish 1.5.2 until the final candidate is deployed and its Seidel call
-passes live. Job-list and the other localized analysis fixes already passed on
-`d86d949`. The README screenshot is the user-supplied 2026-10-12 dashboard image.
-Keep PR #40 Draft until that acceptance and exact-head hosted CI are green.
+The final `72c48b6` candidate was deployed to both computers on 2026-10-13.
+All 66 representative main-flow checks passed (including Seidel, the other
+localized analyses, Job lists, controlled edits, NSC detector/energy inspection
+and tolerance analysis). Another 28 focused checks passed for background Jobs,
+negotiated official Tasks, actual results, cancellation/drain, STA interleaving
+protection, MFE wizard and single-cycle optimization. The compiled Launcher Job
+result query also succeeded against the deployed endpoint, without HTTP 400.
+The original system was independently verified after restoration.
+
+The README screenshot is the user-supplied 2026-10-12 dashboard image. These
+documentation-only acceptance changes do not alter the validated optical code.
+Merge and publish only after exact-head hosted CI is green; rebuild the signed
+release package from the exact main commit. This does not certify every one of
+the 152 tools or arbitrary inputs/OpticStudio versions.
 Real non-cooperative COM hangs, other OpticStudio versions, arbitrary CAD and
 absolute radiometric energy conservation are outside the completed evidence.
