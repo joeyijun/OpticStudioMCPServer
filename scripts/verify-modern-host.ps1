@@ -220,12 +220,20 @@ if ($jobOwners -notmatch 'MaximumRecords = 256' -or
     $hostSource -notmatch 'jobOwners.ReleaseGeneration' -or
     $hostSource -notmatch 'zemax_multistart_status' -or
     $hostSource -notmatch 'jobDiagnostics = "authenticated-owner-only"' -or
-    $hostSource -notmatch 'taskLedger\?\.ListOwnedMetadata\(scopedOwner, 25\)' -or
+    $hostSource -notmatch 'taskLedger\?\.ListOwnedMetadata\(scopedOwner\)' -or
     $privateRpcTest -notmatch 'VerifyJobOwnershipRegistry' -or
     $privateRpcTest -notmatch 'Foreign writer could cancel another client' -or
     $privateRpcTest -notmatch 'Scoped /health must expose' -or
     $privateRpcTest -notmatch 'Owner-scoped Task diagnostic listing is incorrect') {
   throw "Scoped Jobs must bind owner+generation, deny unowned status/cancel, filter list results, redact health, block legacy global multistart state and be covered by E2E tests."
+}
+$taskHistorySource = Get-Content -Raw (Join-Path $root 'src/ZemaxMCP.HttpBridge/ModernHost/WorkerTaskLedger.cs')
+if ($taskHistorySource -notmatch 'DefaultMaxHistory = 30' -or
+    $taskHistorySource -notmatch 'Where\(entry => IsTerminal\(entry.State\)\)' -or
+    $taskHistorySource -notmatch 'Skip\(DefaultMaxHistory\)' -or
+    $taskHistorySource -notmatch 'Math.Min\(limit, DefaultMaxRecords\)' -or
+    $jobOwners -notmatch 'SerializeToElement\(WorkerJobHistoryPolicy.MaximumVisibleJobs\)') {
+  throw 'Task history must retain newest 30 terminal records without pruning active work; scoped lists remain bounded and use the shared Worker window.'
 }
 # Release-validation contract: modern stateless MCP is the primary live path;
 # legacy initialize is an explicit compatibility probe rather than the default.
