@@ -39,4 +39,5 @@ public sealed class WorkerJobStatus
     public int QueuePosition { get; set; }
     public string? Message { get; set; }
     public double? ElapsedSeconds { get; set; }
+    public DateTimeOffset? UpdatedAt { get; set; }
 }

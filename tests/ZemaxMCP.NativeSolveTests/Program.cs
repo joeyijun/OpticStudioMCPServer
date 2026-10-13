@@ -2,6 +2,8 @@ using System.Reflection;
 using ZOSAPI.Editors;
 using ZOSAPI.Editors.LDE;
 using ZemaxMCP.Server.Tools.LensData;
+using ZemaxMCP.Server.Tools.Optimization;
+using ZOSAPI.Editors.MFE;
 
 static T Native<T>(params (string Name, object? Value)[] values) where T : class
 {
@@ -58,11 +60,46 @@ foreach (var type in new[] { SolveType.Fixed, SolveType.Variable, SolveType.Auto
     Check(SurfaceSolveReader.Read(Native<ISolveData>(("Type", type))).SolveType == type.ToString(),
         "type-only solve " + type);
 
+Check(MeritFunctionCompatibility.OptionalNumber(double.NaN, false, "blank target") == null,
+    "blank/unweighted undefined target is null, never fabricated zero");
+Check(MeritFunctionCompatibility.OptionalNumber(0, true, "target") == 0, "finite zero remains zero");
+try { MeritFunctionCompatibility.OptionalNumber(double.NaN, true, "weighted target"); throw new Exception("accepted NaN"); }
+catch (System.IO.InvalidDataException) { Check(true, "weighted undefined data still fails closed"); }
+foreach (int originalCount in new[] { 1, 5 })
+{
+    int count = originalCount; var type = MeritOperandType.REAY;
+    var row = Native<IMFERow>();
+    ((NativeProperties)(object)row).Handler = (method, args) => method.Name switch
+    {
+        "get_Type" => type,
+        "ChangeType" => SetType(),
+        _ => throw new Exception(method.Name)
+    };
+    object? SetType() { type = MeritOperandType.BLNK; return true; }
+    var editor = Native<IMeritFunctionEditor>();
+    ((NativeProperties)(object)editor).Handler = (method, args) => method.Name switch
+    {
+        "get_NumberOfOperands" => count,
+        "GetOperandAt" => row,
+        "RemoveOperandsAt" => Remove(args!),
+        _ => throw new Exception(method.Name)
+    };
+    int Remove(object?[] args)
+    {
+        if ((int)args[0]! != 2 || (int)args[1]! != originalCount - 1) throw new Exception("must retain first row");
+        count = 1; return originalCount - 1;
+    }
+    MeritFunctionCompatibility.Clear(editor);
+    Check(count == 1 && type == MeritOperandType.BLNK, "clear retains mandatory blank row: " + originalCount);
+}
+
 public class NativeProperties : DispatchProxy
 {
     public Dictionary<string, object?> Values = new();
+    public Func<MethodInfo, object?[]?, object?>? Handler;
     protected override object? Invoke(MethodInfo? method, object?[]? args)
     {
+        if (Handler != null) return Handler(method!, args);
         if (method?.Name.StartsWith("get_") == true &&
             Values.TryGetValue(method.Name.Substring(4), out var value)) return value;
         throw new InvalidOperationException("Unexpected native interface member: " + method?.Name);

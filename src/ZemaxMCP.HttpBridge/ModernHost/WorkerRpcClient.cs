@@ -443,6 +443,7 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
                     _eventJobs[progress.OperationId] = new WorkerJobStatus
                     {
                         JobId = progress.OperationId,
+                        UpdatedAt = DateTimeOffset.UtcNow,
                         ToolName = progress.ToolName,
                         ParentOperationId = progress.ParentOperationId,
                         State = progress.State,
@@ -472,8 +473,9 @@ internal sealed class WorkerRpcClient : IAsyncDisposable
 
     private void TrimEventJobs()
     {
-        if (_eventJobs.Count <= 128) return;
-        foreach (var key in _eventJobs.Keys.Take(_eventJobs.Count - 128))
+        var obsolete = _eventJobs.Values.Where(job => job.State is "Completed" or "Failed" or "Cancelled")
+            .OrderByDescending(job => job.UpdatedAt).Skip(30).Select(job => job.JobId).ToArray();
+        foreach (var key in obsolete)
         {
             _eventJobs.TryRemove(key, out _);
             _eventJobGenerations.TryRemove(key, out _);

@@ -22,6 +22,8 @@ namespace ZemaxMCP.Launcher;
 public partial class MainWindow
 {
     private readonly TaskCenterViewModel _taskCenter = new TaskCenterViewModel();
+    private string? _taskResultKey, _taskResultText, _taskResultEndpoint, _taskResultToken;
+    private bool _taskResultLoading;
 
     private void RefreshTaskCenter(JArray? jobs, JObject? health = null)
     {
@@ -88,7 +90,7 @@ public partial class MainWindow
         if (TasksPageDetail == null || TasksPageCancel == null || TasksPageViewResult == null) return;
         var selected = TasksPageJobs?.SelectedItem as BackgroundJobView;
         TasksPageCancel.IsEnabled = selected?.IsActive == true;
-        TasksPageViewResult.IsEnabled = selected != null;
+        TasksPageViewResult.IsEnabled = selected != null && !_taskResultLoading;
         TasksPageTitle.Text = selected?.ToolName ?? "No task selected";
         TasksPageState.Text = selected?.State ?? "Idle";
         TasksPageMetadata.Text = TaskCenterViewModel.Metadata(selected);
@@ -96,7 +98,9 @@ public partial class MainWindow
         TasksPageProgress.Value = (selected?.ProgressFraction ?? 0) * 100;
         TasksPageProgressHint.Text = selected?.ProgressHint ?? "No numeric progress reported.";
         TasksPageMessage.Text = TaskCenterViewModel.Message(selected);
-        TasksPageDetail.Text = TaskCenterViewModel.Detail(selected);
+        TasksPageDetail.Text = selected?.SelectionKey == _taskResultKey &&
+            McpUrl == _taskResultEndpoint && McpToken == _taskResultToken
+            ? _taskResultText ?? TaskCenterViewModel.Detail(selected) : TaskCenterViewModel.Detail(selected);
     }
 
     private async void TasksPageCancel_Click(object sender, RoutedEventArgs e)
@@ -110,6 +114,7 @@ public partial class MainWindow
         if (TasksPageJobs.SelectedItem is not BackgroundJobView job) return;
         var endpoint = McpUrl;
         var token = McpToken;
+        _taskResultLoading = true;
         TasksPageViewResult.IsEnabled = false;
         TasksPageDetailsSection.IsExpanded = true;
         try
@@ -119,11 +124,17 @@ public partial class MainWindow
                     new JObject { ["taskId"] = job.TaskId }, job.TaskId)
                     ["result"]?.ToString(Newtonsoft.Json.Formatting.Indented) ?? "No Task result returned."
                 : RequestJobTool(endpoint, token, job.JobId, "zemax_job_status"));
-            TasksPageDetail.Text = text.Length <= 24000 ? text :
+            _taskResultText = text.Length <= 24000 ? text :
                 text.Substring(0, 24000) + "\n[Display truncated to 24000 characters; full result stays on the Worker.]";
         }
-        catch (Exception ex) { TasksPageDetail.Text = "Result retrieval unavailable: " + ex.Message; }
-        finally { TasksPageViewResult.IsEnabled = true; }
+        catch (Exception ex) { _taskResultText = "Result retrieval unavailable: " + ex.Message; }
+        finally
+        {
+            _taskResultKey = job.SelectionKey;
+            _taskResultEndpoint = endpoint; _taskResultToken = token;
+            _taskResultLoading = false;
+            TasksPageJobs_Changed(this, null!);
+        }
     }
 
     private static string RequestJobCancellation(string endpoint, string token, string jobId) =>

@@ -16,7 +16,7 @@ internal sealed class McpJobTaskDeltaMonitor
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     internal sealed record JobView(string JobId, string ToolName, string State,
-        double? Fraction, int QueuePosition, string? Message, double? ElapsedSeconds);
+        double? Fraction, int QueuePosition, string? Message, double? ElapsedSeconds, DateTimeOffset? UpdatedAt);
 
     internal sealed record Snapshot(long WorkerGeneration, bool OwnerScoped, bool WorkerBusy, bool StatusAvailable,
         IReadOnlyList<JobView> Jobs, IReadOnlyList<object> Tasks);
@@ -69,11 +69,11 @@ internal sealed class McpJobTaskDeltaMonitor
             .OrderBy(job => job.JobId, StringComparer.Ordinal)
             .Take(256)
             .Select(job => new JobView(job.JobId, job.ToolName, job.State,
-                job.Fraction, job.QueuePosition, job.Message, job.ElapsedSeconds))
+                job.Fraction, job.QueuePosition, job.Message, job.ElapsedSeconds, job.UpdatedAt))
             .ToArray();
         // Shared/local diagnostics never expose someone else's official Task
         // IDs. Only scoped bearer credentials have owner-scoped Task metadata.
-        var tasks = scoped ? ownerTasks.Take(25).ToArray() : Array.Empty<object>();
+        var tasks = scoped ? ownerTasks.ToArray() : Array.Empty<object>();
         // For scoped credentials, global WorkerBusy/StatusAvailable may change
         // solely because another owner is tracing. Do NOT fold those flags into
         // this owner's HMAC cursor. Use only owned Job observations instead.

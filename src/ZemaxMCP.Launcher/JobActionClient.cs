@@ -38,7 +38,7 @@ internal static class JobActionClient
             : base("Job request [" + code + "]: " + message) => OutcomeCode = code;
     }
 
-    internal static string RequestJobTool(string endpoint, string accessToken, string jobId, string toolName)
+    internal static JObject BuildJobRequest(string jobId, string toolName)
     {
         // Always route through ordinary MCP tools/call so scoped ownership and
         // the Worker's generation check remain authoritative. This is not an
@@ -55,6 +55,7 @@ internal static class JobActionClient
                 ["_meta"] = new JObject
                 {
                     ["io.modelcontextprotocol/protocolVersion"] = "2026-07-28",
+                    ["io.modelcontextprotocol/clientCapabilities"] = new JObject(),
                     ["io.modelcontextprotocol/clientInfo"] = new JObject
                     {
                         ["name"] = "zemax-launcher",
@@ -63,6 +64,12 @@ internal static class JobActionClient
                 }
             }
         };
+        return body;
+    }
+
+    internal static string RequestJobTool(string endpoint, string accessToken, string jobId, string toolName)
+    {
+        var body = BuildJobRequest(jobId, toolName);
         var request = (HttpWebRequest)WebRequest.Create(endpoint);
         request.Method = "POST";
         request.ContentType = "application/json";

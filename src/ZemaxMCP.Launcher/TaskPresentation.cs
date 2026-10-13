@@ -10,6 +10,7 @@ namespace ZemaxMCP.Launcher;
 internal sealed class BackgroundJobView
     {
         public string JobId { get; set; } = "";
+        public DateTimeOffset UpdatedAt { get; set; }
         public string TaskId { get; set; } = "";
         public bool IsOfficialTask => TaskId.Length > 0;
         public string State { get; set; } = "";
@@ -65,7 +66,6 @@ internal static class TaskPresentation
     {
         var items = (jobs ?? new JArray()).OfType<JObject>()
             .Where(job => !string.IsNullOrWhiteSpace(job["jobId"]?.ToString()))
-            .Take(25)
             .Select(job =>
             {
                 var id = job["jobId"]!.ToString();
@@ -82,6 +82,8 @@ internal static class TaskPresentation
                 return new BackgroundJobView
                 {
                     JobId = id,
+                    UpdatedAt = DateTimeOffset.TryParse((job["updatedAt"] ?? job["completedAt"] ?? job["queuedAt"])?.ToString(), out var jobTime)
+                        ? jobTime : DateTimeOffset.MinValue,
                     ToolName = tool,
                     Message = job["message"]?.ToString() ?? "No Worker message.",
                     Owner = job["owner"]?.ToString() ??
@@ -105,7 +107,7 @@ internal static class TaskPresentation
 
         if (health?["tasks"] is JArray ownerTasks)
         {
-            foreach (var record in ownerTasks.OfType<JObject>().Take(25))
+            foreach (var record in ownerTasks.OfType<JObject>())
             {
                 var taskId = record["taskId"]?.ToString() ?? "";
                 if (taskId.Length == 0) continue;
@@ -132,6 +134,7 @@ internal static class TaskPresentation
                 items.Add(new BackgroundJobView
                 {
                     TaskId = taskId,
+                    UpdatedAt = completedAt,
                     JobId = linkedJobId,
                     State = state,
                     ToolName = linkedJob?.ToolName ?? "Official MCP Task",
@@ -151,6 +154,9 @@ internal static class TaskPresentation
                 });
             }
         }
-        return items;
+        var recent = items.Where(item => !item.IsActive).OrderByDescending(item => item.UpdatedAt)
+            .Take(30).ToList();
+        // Never drop an unfinished operation just because historical rows filled the page.
+        return items.Where(item => item.IsActive || recent.Contains(item)).ToList();
     }
 }

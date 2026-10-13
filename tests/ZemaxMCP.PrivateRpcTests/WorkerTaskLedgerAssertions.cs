@@ -13,6 +13,23 @@ internal static class WorkerTaskLedgerAssertions
         VerifyDomainFailureAndExpiredResults();
         VerifyBoundedAdmission();
         VerifyJournalRestartRecovery();
+        VerifyRecentHistory();
+    }
+
+    private static void VerifyRecentHistory()
+    {
+        var ledger = new WorkerTaskLedger();
+        Assert(ledger.TryRegister("owner", "old-active", 1, out var active), "active admission");
+        string? oldest = null;
+        for (int i = 0; i < 100; i++)
+        {
+            Assert(ledger.TryRegister("owner", "history-" + i, 1, out var task), "history admission");
+            oldest ??= task!.TaskId;
+            ledger.ObserveJob(1, new WorkerJobStatus { JobId = "history-" + i, State = "Cancelled" });
+        }
+        Assert(ledger.ListOwnedMetadata("owner").Count == 31, "keep 30 terminal plus active records");
+        Assert(!ledger.TryGet("owner", oldest!, out _), "old historical task evicted");
+        Assert(ledger.TryGet("owner", active!.TaskId, out _), "unfinished task not evicted");
     }
 
     private static void VerifyAuthorizationAndCompletion()

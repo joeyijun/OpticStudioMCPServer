@@ -11,7 +11,8 @@ namespace ZemaxMCP.HttpBridge.ModernHost;
 /// </summary>
 internal sealed class WorkerTaskLedger
 {
-    internal const int DefaultMaxRecords = 256;
+    internal const int DefaultMaxRecords = 94; // 30 recent + up to 64 active/admitted
+    internal const int DefaultMaxHistory = 30;
     internal const int DefaultMaxRetainedResults = 16;
 
     private readonly object _gate = new();
@@ -166,6 +167,13 @@ internal sealed class WorkerTaskLedger
     // Journal failures do not turn successful Worker execution into an error.
     private void PersistLocked(bool force = false)
     {
+        foreach (var old in _tasks.Values.Where(entry => IsTerminal(entry.State))
+                     .OrderByDescending(entry => entry.UpdatedAt).ThenByDescending(entry => entry.Sequence)
+                     .Skip(DefaultMaxHistory).ToArray())
+        {
+            _tasks.Remove(old.TaskId);
+            _byJob.Remove((old.Generation, old.JobId));
+        }
         if (_journalPath == null) return;
         if (!force && DateTimeOffset.UtcNow - _lastJournalWrite < TimeSpan.FromSeconds(5)) return;
         try
@@ -262,14 +270,15 @@ internal sealed class WorkerTaskLedger
     /// Bounded, payload-free diagnostic view for the authenticated owner.
     /// Never expose raw Task results or another credential's Task IDs.
     /// </summary>
-    internal IReadOnlyList<object> ListOwnedMetadata(string owner, int limit = 25)
+    internal IReadOnlyList<object> ListOwnedMetadata(string owner, int limit = DefaultMaxRecords)
     {
         if (string.IsNullOrWhiteSpace(owner)) return Array.Empty<object>();
-        limit = Math.Max(1, Math.Min(limit, 25));
+        limit = Math.Max(1, Math.Min(limit, DefaultMaxRecords));
         lock (_gate)
             return _tasks.Values
                 .Where(entry => string.Equals(entry.Owner, owner, StringComparison.Ordinal))
-                .OrderByDescending(entry => entry.Sequence)
+                .OrderBy(entry => IsTerminal(entry.State)).ThenByDescending(entry => entry.UpdatedAt)
+                .ThenByDescending(entry => entry.Sequence)
                 .Take(limit)
                 .Select(entry => (object)new
                 {

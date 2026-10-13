@@ -5,6 +5,15 @@ $assembly=[Reflection.Assembly]::LoadFrom((Join-Path $root "src\ZemaxMCP.Launche
 Add-Type -Path (Join-Path $root "src\ZemaxMCP.Launcher\bin\$Configuration\net48\Newtonsoft.Json.dll")
 $flags=[Reflection.BindingFlags]'Static,NonPublic'
 $parse=$assembly.GetType('ZemaxMCP.Launcher.JobActionClient').GetMethod('ParseJobResponse',$flags)
+$buildRequest=$assembly.GetType('ZemaxMCP.Launcher.JobActionClient').GetMethod('BuildJobRequest',$flags)
+$wire=$buildRequest.Invoke($null,@('job-a','zemax_job_status'))
+$meta=$wire['params']['_meta']
+if($meta['io.modelcontextprotocol/clientCapabilities'] -isnot [Newtonsoft.Json.Linq.JObject] -or
+   $meta['io.modelcontextprotocol/protocolVersion'].ToString() -ne '2026-07-28' -or
+   $meta['io.modelcontextprotocol/clientInfo']['name'].ToString() -ne 'zemax-launcher' -or
+   $wire['params']['arguments']['jobId'].ToString() -ne 'job-a') {
+ throw 'Launcher result query must include complete request-scoped MCP metadata; missing capabilities cause HTTP 400.'
+}
 $arguments=New-Object object[] 4
 $arguments[1]=[bool]$true; $arguments[2]='job-a'; $arguments[3]=[Newtonsoft.Json.Linq.JValue]::new(1)
 $prefix=': heartbeat'+"`n`n"+'data: {"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":2}}'+"`n`n"+

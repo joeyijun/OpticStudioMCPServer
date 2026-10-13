@@ -12,7 +12,7 @@ public sealed class McpJobManager : IDisposable
 {
     private static readonly AsyncLocal<string?> ParentOperation = new();
 
-    public const int DefaultMaxHistory = 128;
+    public const int DefaultMaxHistory = 30;
     public const int DefaultMaxResultHistory = 16;
     public const int DefaultMaxPending = 64;
 

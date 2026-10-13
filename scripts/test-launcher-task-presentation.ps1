@@ -127,3 +127,17 @@ $probe = $source.Substring($source.IndexOf('internal static string TestMcpFuncti
 $probe = $probe.Substring(0,$probe.IndexOf('private static void AddAuthorization'))
 if ($probe -match '"initialize"' -or $probe -notmatch '"server/discover"') { throw 'Modern capability probe regressed to legacy initialize.' }
 Write-Output 'Task presentation: linked same-generation Task/Job deduplication, honest progress, restart isolation, elapsed time and SSE request-ID filtering passed.'
+
+# 100 historical rows plus unfinished work: retain newest 30 after merging,
+# not 25 arbitrary GUIDs from each input. Active operations are never evicted.
+$many=[Newtonsoft.Json.Linq.JArray]::new()
+for($i=0;$i -lt 100;$i++) {
+ $many.Add([Newtonsoft.Json.Linq.JObject]::Parse(('{"jobId":"history-'+$i+'","state":"Completed","updatedAt":"'+[DateTimeOffset]::UtcNow.AddMinutes(-$i).ToString('o')+'"}')))
+}
+$many.Add([Newtonsoft.Json.Linq.JObject]::Parse('{"jobId":"old-active","state":"Running","updatedAt":"2000-01-01T00:00:00Z"}'))
+$arguments[0]=$many; $arguments[1]=[Newtonsoft.Json.Linq.JObject]::new()
+$bounded=$build.Invoke($null,$arguments)
+if($bounded.Count -ne 31 -or @($bounded|Where-Object JobId -eq 'history-99').Count -ne 0 -or
+   @($bounded|Where-Object JobId -eq 'history-29').Count -ne 1 -or
+   @($bounded|Where-Object JobId -eq 'old-active').Count -ne 1) {throw 'Recent-30 retention dropped active work or kept old history.'}
+Write-Output '100-task fixture: newest 30 terminal rows retained; old active task preserved.'

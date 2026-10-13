@@ -414,7 +414,7 @@ internal static class Program
                             });
                 }
                 var tasks = scoped && taskLedger != null
-                    ? taskLedger.ListOwnedMetadata(owner, 25) : Array.Empty<object>();
+                    ? taskLedger.ListOwnedMetadata(owner) : Array.Empty<object>();
                 var delta = jobTaskDelta.GetDelta(owner, scoped, cursor,
                     generation, workerClient.HasForegroundTool ||
                         controlLease.HasActiveBackgroundJobs,
@@ -471,7 +471,7 @@ internal static class Program
                             job.QueuePosition, job.Message, job.ElapsedSeconds
                             // Worker status snapshots do not contain results.
                         }).ToArray();
-                    var ownedTasks = taskLedger?.ListOwnedMetadata(scopedOwner, 25) ?? Array.Empty<object>();
+                    var ownedTasks = taskLedger?.ListOwnedMetadata(scopedOwner) ?? Array.Empty<object>();
                     var ownedActivity = activity.GetForClient(scopedOwner);
                     return Results.Json(new
                     {
@@ -570,7 +570,7 @@ internal static class Program
                         : taskLedger.ListOwnedMetadata(
                             httpContext.User.FindFirst("zemax-mcp-auth-profile")?.Value is { } taskProfile &&
                             taskProfile.StartsWith("scoped:", StringComparison.Ordinal)
-                            ? "token:" + taskProfile : "", 25),
+                            ? "token:" + taskProfile : ""),
                     requestTimeoutSeconds = options.RequestTimeoutSeconds,
                     requestWriteTimeoutSeconds = options.RequestWriteTimeoutSeconds,
                     hardRecoveryTimeoutSeconds = options.HardRecoveryTimeoutSeconds,

@@ -46,7 +46,7 @@ internal sealed class TaskCenterViewModel : INotifyPropertyChanged
              item.JobId.IndexOf(query,StringComparison.OrdinalIgnoreCase)>=0 ||
              item.TaskId.IndexOf(query,StringComparison.OrdinalIgnoreCase)>=0 ||
              item.State.IndexOf(query,StringComparison.OrdinalIgnoreCase)>=0))
-            .OrderByDescending(item=>item.IsActive).ToList();
+            .OrderByDescending(item=>item.IsActive).ThenByDescending(item=>item.UpdatedAt).ToList();
     }
 
     internal static BackgroundJobView? Select(IReadOnlyList<BackgroundJobView> visible,
