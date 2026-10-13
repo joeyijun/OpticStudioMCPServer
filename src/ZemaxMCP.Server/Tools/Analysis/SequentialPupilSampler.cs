@@ -51,9 +51,10 @@ internal static class SequentialPupilSampler
                 out var x, out var y, out var z,
                 out _, out _, out _, out _, out _, out _, out _, out var intensity);
             if (ok && error == 0 &&
-                ((double.IsNaN(intensity) || double.IsInfinity(intensity)) || intensity < 0 ||
-                 (vignette == 0 && ((double.IsNaN(x) || double.IsInfinity(x)) ||
-                                    (double.IsNaN(y) || double.IsInfinity(y))))))
+                (!FrameworkCompatibility.IsFinite(intensity) || intensity < 0 ||
+                 (vignette == 0 && (!FrameworkCompatibility.IsFinite(x) ||
+                                    !FrameworkCompatibility.IsFinite(y) ||
+                                    !FrameworkCompatibility.IsFinite(z)))))
                 throw new InvalidDataException("Batch ray trace returned non-finite clear-ray coordinates or invalid intensity.");
             rays[i] = new RaySample(point, ok, error, vignette,
                 ok && error == 0 ? x : 0,

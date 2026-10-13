@@ -3,18 +3,30 @@ using System.Collections.Generic;
 
 namespace ZemaxMCP.Rpc;
 
+public static class WorkerJobHistoryPolicy
+{
+    public const int TerminalHistoryLimit = 30;
+    public const int PendingJobLimit = 64;
+    public const int MaximumVisibleJobs = TerminalHistoryLimit + PendingJobLimit + 1;
+}
+
 public sealed class WorkerStatus
 {
     public int RpcVersion { get; set; }
     public string ManifestFingerprint { get; set; } = string.Empty;
     public bool ZosApiLoaded { get; set; }
     public string WorkerVersion { get; set; } = string.Empty;
+    public string? WorkerInformationalVersion { get; set; }
+    public string? WorkerSourceCommit { get; set; }
     public string? ZosApiAssemblyVersion { get; set; }
     public string? ZosApiFileVersion { get; set; }
     public bool Connected { get; set; }
+    public bool? Connecting { get; set; }
     public string ConnectionMode { get; set; } = "unknown";
     public string? ZosApiAssembly { get; set; }
     public string? OpticStudioDataDirectory { get; set; }
+    public string? ExecutionComputer { get; set; }
+    public string? CurrentLensFile { get; set; }
     public string? CurrentLicenseStatus { get; set; }
     public string? LastLicenseStatus { get; set; }
     public bool? LicenseValidForApi { get; set; }
@@ -34,4 +46,5 @@ public sealed class WorkerJobStatus
     public int QueuePosition { get; set; }
     public string? Message { get; set; }
     public double? ElapsedSeconds { get; set; }
+    public DateTimeOffset? UpdatedAt { get; set; }
 }

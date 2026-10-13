@@ -100,9 +100,7 @@ public class OptimizationWizardTool
                     cancellationToken.ThrowIfCancellationRequested();
                     if (clearExisting && beforeCount > 0)
                     {
-                        int removed = mfe.RemoveOperandsAt(1, beforeCount);
-                        if (removed != beforeCount)
-                            throw new InvalidOperationException($"Requested removal of {beforeCount} existing MFE operands, but OpticStudio removed {removed}.");
+                        MeritFunctionCompatibility.Clear(mfe);
                     }
 
                     var wizard = mfe.SEQOptimizationWizard2

@@ -2,7 +2,8 @@
 param(
     [string]$Endpoint = "http://127.0.0.1:8000/mcp",
     [string]$AccessToken = $env:ZEMAX_MCP_TOKEN,
-    [int]$ExpectedFullExpertToolCount = 138,
+    [int]$ExpectedFullExpertToolCount = 152,
+    [string]$ClientInstanceId = '',
     [switch]$SkipReadOnlyCalls,
     [switch]$VerifySafety,
     [switch]$VerifyLegacyCompatibility
@@ -14,7 +15,7 @@ $endpointUri = $Endpoint.TrimEnd("/")
 $nextId = 1
 $clientName = "zemax-mcp-release-verifier"
 $clientVersion = "2.0"
-$clientInstanceId = "release-" + [Guid]::NewGuid().ToString("N")
+$clientInstanceId = if ([string]::IsNullOrWhiteSpace($ClientInstanceId)) { "release-" + [Guid]::NewGuid().ToString("N") } else { $ClientInstanceId }
 $modernProtocolVersion = "2026-07-28"
 $legacyProtocolVersion = "2025-11-25"
 

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
+using ZemaxMCP.Rpc;
 
 namespace ZemaxMCP.HttpBridge.ModernHost;
 
@@ -48,6 +49,20 @@ internal sealed class JobOwnerRegistry
                    owner.ClientId == clientId && owner.Generation == generation;
     }
 
+    /// <summary>Only ID and authorization evidence, never optical Job results.
+    /// Fresh jobs may be registered before their first Worker status sample.</summary>
+    internal IReadOnlyList<string> ListOwnedJobIds(string owner, long generation, int limit = 256)
+    {
+        if (string.IsNullOrWhiteSpace(owner) || generation <= 0) return Array.Empty<string>();
+        if (limit is < 1 or > MaximumRecords)
+            throw new ArgumentOutOfRangeException(nameof(limit));
+        lock (_gate)
+            return _owners.Where(pair => pair.Value.ClientId == owner &&
+                    pair.Value.Generation == generation)
+                .OrderByDescending(pair => pair.Value.Sequence)
+                .Take(limit).Select(pair => pair.Key).ToArray();
+    }
+
     internal void ReleaseGeneration(long generation)
     {
         if (generation <= 0) return;
@@ -77,7 +92,7 @@ internal sealed class JobOwnerRegistry
         if (request.Arguments == null || !request.Arguments.TryGetValue("limit", out var value))
             return true;
         if (value.ValueKind != JsonValueKind.Number ||
-            !value.TryGetInt32(out limit) || limit is < 1 or > 128)
+            !value.TryGetInt32(out limit) || limit < 1 || limit > WorkerJobHistoryPolicy.MaximumVisibleJobs)
             return false;
         return true;
     }
@@ -87,8 +102,8 @@ internal sealed class JobOwnerRegistry
         var args = original.Arguments == null
             ? new Dictionary<string, JsonElement>(StringComparer.Ordinal)
             : new Dictionary<string, JsonElement>(original.Arguments, StringComparer.Ordinal);
-        // Worker retains up to 128 terminal + 64 queued + 1 running Job.
-        args["limit"] = JsonSerializer.SerializeToElement(193);
+        // Fetch the bounded Worker window before owner filtering. Same policy as Worker.
+        args["limit"] = JsonSerializer.SerializeToElement(WorkerJobHistoryPolicy.MaximumVisibleJobs);
         return new CallToolRequestParams
         {
             Name = original.Name,
@@ -97,14 +112,8 @@ internal sealed class JobOwnerRegistry
         };
     }
 
-    internal static CallToolResult Denied() => new()
-    {
-        Content = new List<ContentBlock>
-        {
-            new TextContentBlock { Text = "Job not found or not owned by the authenticated client." }
-        },
-        IsError = true
-    };
+    internal static CallToolResult Denied() =>
+        ToolOutcome.Failure("not_found", "Job not found or not owned by the authenticated client.");
 
     internal static CallToolResult ValidateSingleResult(CallToolResult result, string jobId)
     {
@@ -121,6 +130,39 @@ internal sealed class JobOwnerRegistry
             return result;
         }
         catch (JsonException) { return Denied(); }
+    }
+
+    /// <summary>
+    /// Reconcile a terminal Job RPC result when a progress event has not
+    /// arrived yet. The ID must match exactly; nonterminal, malformed and
+    /// error results can never clear an exclusive optical Job lease.
+    /// </summary>
+    internal static bool TryGetTerminalState(CallToolResult result, string expectedJobId, out string state)
+    {
+        state = string.Empty;
+        if (result.IsError == true || result.Content.Count != 1 ||
+            result.Content[0] is not TextContentBlock block)
+            return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(block.Text);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object ||
+                !TryReadJobId(root, out var returnedId) ||
+                !string.Equals(returnedId, expectedJobId, StringComparison.Ordinal) ||
+                !root.TryGetProperty("state", out var status) ||
+                status.ValueKind != JsonValueKind.String)
+                return false;
+            var candidate = status.GetString();
+            if (candidate == null ||
+                !(candidate.Equals("Completed", StringComparison.OrdinalIgnoreCase) ||
+                  candidate.Equals("Cancelled", StringComparison.OrdinalIgnoreCase) ||
+                  candidate.Equals("Failed", StringComparison.OrdinalIgnoreCase)))
+                return false;
+            state = candidate;
+            return true;
+        }
+        catch (JsonException) { return false; }
     }
 
     internal static CallToolResult FilterList(CallToolResult result, string clientId, long generation, JobOwnerRegistry registry, int requestedLimit)

@@ -21,6 +21,7 @@ public class ZemaxSession : IZemaxSession
     private Task? _backgroundConnectTask;
 
     public bool IsConnected => _primarySystem != null;
+    public string ModelIdentity { get; private set; } = Guid.NewGuid().ToString("N");
     public bool IsConnecting => _backgroundConnectTask != null && !_backgroundConnectTask.IsCompleted;
     public ConnectionMode? CurrentMode { get; private set; }
     public int? CurrentInstanceId { get; private set; }
@@ -144,6 +145,7 @@ public class ZemaxSession : IZemaxSession
             }
 
             _primarySystem = application.PrimarySystem;
+            ModelIdentity = Guid.NewGuid().ToString("N");
             ZemaxDataDir = application.ZemaxDataDir;
 
             if (_primarySystem == null)
@@ -226,13 +228,15 @@ public class ZemaxSession : IZemaxSession
         string commandName,
         IDictionary<string, object?>? parameters,
         Func<IOpticalSystem, T> operation,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Action<IOpticalSystem>? precondition = null)
     {
         if (IsConnecting)
         {
             await WaitForBackgroundConnectAsync(cancellationToken);
         }
 
+        var observation = EngineeringObservation.Current;
         return await _dispatcher.InvokeAsync(() =>
         {
             var sw = Stopwatch.StartNew();
@@ -240,6 +244,9 @@ public class ZemaxSession : IZemaxSession
             try
             {
                 EnsureConnected();
+                // Guard, provenance, snapshot and write share one STA callback.
+                precondition?.Invoke(_primarySystem!);
+                observation?.Observe(()=>EngineeringConditionReader.Read(_primarySystem!,ModelIdentity), commandName, parameters);
                 var previousSnapshot = _safety.LastSnapshotPath;
                 _safety.BeforeOperation(new ZosApiSystemSnapshot(_primarySystem!), commandName);
                 var createdSnapshot = _safety.LastSnapshotPath;
@@ -273,6 +280,7 @@ public class ZemaxSession : IZemaxSession
             await WaitForBackgroundConnectAsync(cancellationToken);
         }
 
+        var observation = EngineeringObservation.Current;
         await _dispatcher.InvokeAsync(() =>
         {
             var sw = Stopwatch.StartNew();
@@ -280,6 +288,7 @@ public class ZemaxSession : IZemaxSession
             try
             {
                 EnsureConnected();
+                observation?.Observe(()=>EngineeringConditionReader.Read(_primarySystem!,ModelIdentity), commandName, parameters);
                 var previousSnapshot = _safety.LastSnapshotPath;
                 _safety.BeforeOperation(new ZosApiSystemSnapshot(_primarySystem!), commandName);
                 var createdSnapshot = _safety.LastSnapshotPath;
@@ -311,6 +320,7 @@ public class ZemaxSession : IZemaxSession
                 var success = system.LoadFile(filePath, false);
                 if (success)
                 {
+                    ModelIdentity = Guid.NewGuid().ToString("N");
                     CurrentFilePath = filePath;
                     _logger.LogInformation("Opened file: {FilePath}", filePath);
                 }
@@ -376,6 +386,7 @@ public class ZemaxSession : IZemaxSession
                         throw new IOException("OpticStudio did not load the restored working copy.");
 
                     CurrentFilePath = workingPath;
+                    ModelIdentity = Guid.NewGuid().ToString("N");
                     // Restored working copies are user-editable documents, not
                     // disposable cache entries. Never prune them automatically.
                     _logger.LogInformation("Restored safety snapshot into working copy: {WorkingPath}", workingPath);
@@ -398,6 +409,7 @@ public class ZemaxSession : IZemaxSession
             system =>
             {
                 system.New(false);
+                ModelIdentity = Guid.NewGuid().ToString("N");
                 CurrentFilePath = null;
                 _logger.LogInformation("Created new optical system");
                 return true;

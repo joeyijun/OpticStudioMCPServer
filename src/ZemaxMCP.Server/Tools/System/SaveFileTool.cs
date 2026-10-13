@@ -27,7 +27,7 @@ public class SaveFileTool
     [ZemaxTool(Name = "zemax_save_file")]
     [Description("Save the current lens system to file. The Zemax file result is authoritative; a constraint-sidecar failure is returned as a warning rather than falsely reporting that the lens save failed.")]
     public async Task<SaveFileResult> ExecuteAsync(
-        [Description("File path (optional, uses current file if not specified)")] string? filePath = null,
+        [Description("Destination on the OpticStudio computer, not the AI client. Omit to save the current server-side file. No automatic download.")] string? filePath = null,
         CancellationToken cancellationToken = default)
     {
         try
@@ -42,7 +42,7 @@ public class SaveFileTool
             var saved = await _session.SaveFileAsync(filePath, cancellationToken);
             var savedPath = _session.CurrentFilePath;
             if (!saved || string.IsNullOrWhiteSpace(savedPath) || !File.Exists(savedPath))
-                return new SaveFileResult(false, "OpticStudio did not create the requested lens file.", savedPath);
+                return new SaveFileResult(false, $"OpticStudio did not create the requested lens file on its computer '{Environment.MachineName}'. This is not the AI client's filesystem.", savedPath);
 
             var warnings = new List<string>();
             try

@@ -12,6 +12,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="..\ZemaxMCP.DesktopShared\BuildIdentity.cs" Link="Shared\BuildIdentity.cs" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Serilog.Extensions.Hosting" />

@@ -1,5 +1,7 @@
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
+dotnet run --project (Join-Path $root 'tools\ZemaxMCP.ToolManifestGenerator') -c Release -- --audit-commands (Join-Path $root 'src\ZemaxMCP.Server\Tools')
+if ($LASTEXITCODE -ne 0) { throw 'Syntax-based command safety audit failed.' }
 $toolsRoot = Join-Path $root "src\ZemaxMCP.Server\Tools"
 $metadataPath = Join-Path $root "src\ZemaxMCP.Core\Session\ZemaxOperationMetadata.cs"
 $catalogPath = Join-Path $toolsRoot "Catalog\ToolCatalogTool.cs"

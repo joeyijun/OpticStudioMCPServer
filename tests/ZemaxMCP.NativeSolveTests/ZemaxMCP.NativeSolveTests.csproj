@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="ZOSAPI_Interfaces"><HintPath>$(ZOSAPI_INTERFACES_PATH)</HintPath></Reference>
+    <Compile Include="../../src/ZemaxMCP.Core/Models/SolveData.cs" Link="SolveData.cs" />
+    <Compile Include="../../src/ZemaxMCP.Server/Tools/LensData/SurfaceSolveReader.cs" Link="SurfaceSolveReader.cs" />
+    <Compile Include="../../src/ZemaxMCP.Server/Tools/Optimization/MeritFunctionCompatibility.cs" Link="MeritFunctionCompatibility.cs" />
+    <Compile Include="../../src/ZemaxMCP.Server/Tools/Analysis/LocalizedAnalysisText.cs" Link="LocalizedAnalysisText.cs" />
+  </ItemGroup>
+</Project>

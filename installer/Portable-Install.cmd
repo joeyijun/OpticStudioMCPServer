@@ -13,14 +13,17 @@ if exist "%TARGET%\Start-Zemax-MCP.exe" (
     "%SOURCE%ZemaxMCP.Updater.exe" --staging "%SOURCE_DIR%" --install "%TARGET%" --parent-pid 0 --restart false
     if not errorlevel 1 goto launch_installed
     echo.
-    echo Installed update failed. See %%LOCALAPPDATA%%\ZemaxMCP\update.log.
-    echo Launching the extracted package explicitly in portable mode instead.
-    goto launch_portable
+    echo Installed update was postponed or failed. See %%LOCALAPPDATA%%\ZemaxMCP\update.log.
+    echo Wait for optical tasks to finish, safely Exit the old service, then retry.
+    echo No second portable service will be started over a running installation.
+    pause
+    endlocal
+    exit /b 1
   )
 )
 
 if not exist "%TARGET%" mkdir "%TARGET%"
-robocopy "%SOURCE%" "%TARGET%" /E /XD logs snapshots shortcut-icons /XF Install.exe Portable-Install.cmd release.zip release-manifest.json launcher-settings.json launcher-settings.json.bak clients.json update.log .update.lock >nul
+robocopy "%SOURCE%" "%TARGET%" /E /XD logs snapshots shortcut-icons https task-journals /XF Install.exe Portable-Install.cmd release.zip release-manifest.json launcher-settings.json launcher-settings.json.bak clients.json update.log .update.lock >nul
 set "COPY_RESULT=%ERRORLEVEL%"
 if %COPY_RESULT% LSS 8 goto launch_installed
 

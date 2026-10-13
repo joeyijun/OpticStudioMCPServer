@@ -55,8 +55,9 @@ public class ChromaticFocalShiftTool
 
     private static ChromaticFocalShiftData ParseChromaticFocalShiftTextFile(string filePath)
     {
-        var lines = File.ReadAllLines(filePath);
+        var lines = LocalizedAnalysisText.ReadLines(filePath);
         string wavelengthUnits = "", shiftUnits = "";
+        string? maxRangeUnits = null, dlRangeUnits = null;
         double pupilZone = double.NaN, maxRange = double.NaN, dlRange = double.NaN;
         var wavelengths = new List<double>();
         var shifts = new List<double>();
@@ -80,8 +81,8 @@ public class ChromaticFocalShiftTool
                 continue;
             }
             if (trimmed.StartsWith("Pupil Zone", StringComparison.OrdinalIgnoreCase)) { pupilZone = ParseColonValue(trimmed); continue; }
-            if (trimmed.StartsWith("Maximum Focal Shift", StringComparison.OrdinalIgnoreCase)) { maxRange = ParseColonValue(trimmed); continue; }
-            if (trimmed.StartsWith("Diffraction Limited", StringComparison.OrdinalIgnoreCase)) { dlRange = ParseColonValue(trimmed); continue; }
+            if (trimmed.StartsWith("Maximum Focal Shift", StringComparison.OrdinalIgnoreCase)) { maxRange = ParseColonValue(trimmed); maxRangeUnits = ParseValueUnits(trimmed); continue; }
+            if (trimmed.StartsWith("Diffraction Limited", StringComparison.OrdinalIgnoreCase)) { dlRange = ParseColonValue(trimmed); dlRangeUnits = ParseValueUnits(trimmed); continue; }
 
             if (trimmed.IndexOf("Wavelength", StringComparison.OrdinalIgnoreCase) >= 0 &&
                 trimmed.IndexOf("Shift", StringComparison.OrdinalIgnoreCase) >= 0 &&
@@ -113,11 +114,21 @@ public class ChromaticFocalShiftTool
             ShiftUnits = shiftUnits,
             PupilZone = pupilZone,
             MaximumFocalShiftRange = maxRange,
+            MaximumFocalShiftRangeUnits = maxRangeUnits,
             DiffractionLimitedRange = dlRange,
+            DiffractionLimitedRangeUnits = dlRangeUnits,
             Wavelengths = wavelengths.ToArray(),
             Shifts = shifts.ToArray(),
             DataPoints = wavelengths.Count
         };
+    }
+
+    private static string? ParseValueUnits(string line)
+    {
+        int index = line.LastIndexOf(':');
+        if (index < 0) return null;
+        var parts = line.Substring(index + 1).Trim().Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length > 1 ? string.Join(" ", parts.Skip(1)).TrimEnd('.') : null;
     }
 
     private static double ParseColonValue(string line)

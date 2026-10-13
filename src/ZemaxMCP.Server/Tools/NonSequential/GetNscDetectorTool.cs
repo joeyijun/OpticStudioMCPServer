@@ -42,7 +42,17 @@ public sealed class GetNscDetectorTool
         double? RoiFractionOfLaunchedFlux = null,
         double? TotalDetectorFractionOfLaunchedFlux = null,
         double? MissedRayCount = null,
-        string? NormalizationCaveat = null);
+        string? NormalizationCaveat = null,
+        double? RoiPixelMin = null,
+        double? RoiPixelMax = null,
+        double? RoiPixelMean = null,
+        int? RoiNonzeroPixelCount = null,
+        int? RoiPeakRow = null,
+        int? RoiPeakColumn = null,
+        NscDetectorTilePreview.Plan? NativeTilePlan = null,
+        double[][]? RoiMeanHeatmap = null,
+        string? RoiMeanHeatmapCaveat = null,
+        NscPixelCalibration.Peak? UserCalibratedPeakLocalPosition = null);
 
     [ZemaxTool(Name = "zemax_get_nsc_detector")]
     [Description("Read NSC detector dimensions, total incident flux, ray hits and optionally a bounded ROI flux/irradiance pixel matrix. Pixel values are native OpticStudio data (not automatically power-normalized). Use after tracing and verify source-power units.")]
@@ -55,10 +65,22 @@ public sealed class GetNscDetectorTool
         [Description("ROI height; 0 = remaining detector rows.")] int rowCount = 0,
         [Description("ROI width; 0 = remaining detector columns.")] int columnCount = 0,
         [Description("Optional positive launched source flux from the SAME ray trace in the detector's native flux units; used only to calculate explicitly normalized ratios.")] double? launchedFlux = null,
+        [Description("Return up to 64 tiles per page (each <=4096 native pixels) to reconstruct a large detector with multiple bounded ROI calls.")] bool includeTilePlan = false,
+        [Description("0-based page of the native row-major tile plan.")] int tilePlanPage = 0,
+        [Description("Optional mean-binned heatmap size 2..16, only with includePixels=true. 0 disables heatmap.")] int heatmapBins = 0,
+        [Description("Optional signed native COLUMN→detector LOCAL X axis mapping, -1 or +1, user-calibrated with a physical landmark. 0 means unknown. Must be supplied with calibratedRowYSign.")] int calibratedColumnXSign = 0,
+        [Description("Optional signed native ROW→detector LOCAL Y axis mapping, -1 or +1, user-calibrated with a physical landmark. 0 means unknown. Must be supplied with calibratedColumnXSign.")] int calibratedRowYSign = 0,
         CancellationToken cancellationToken = default)
     {
         if (objectNumber < 1)
             return new Result(false, "objectNumber must be at least 1.", objectNumber, null, null, 0, 0, 0, null);
+        if ((calibratedColumnXSign!=0 || calibratedRowYSign!=0) &&
+            (calibratedColumnXSign is not (-1 or 1) || calibratedRowYSign is not (-1 or 1) || !includePixels))
+            return new Result(false,"Calibrated axis signs must both be -1/+1 and require includePixels=true.",objectNumber,null,null,0,0,0,null);
+        if (tilePlanPage < 0 || heatmapBins != 0 && (heatmapBins < 2 || heatmapBins > 16) ||
+            heatmapBins > 0 && !includePixels)
+            return new Result(false, "tilePlanPage must be nonnegative and heatmapBins is 0 or 2..16 with includePixels=true.",
+                objectNumber, null, null, 0, 0, 0, null);
         if (dataType is not (0 or 1) || startRow < 0 || startColumn < 0 || rowCount < 0 || columnCount < 0 ||
             (launchedFlux.HasValue && (launchedFlux.Value <= 0 || double.IsNaN(launchedFlux.Value) || double.IsInfinity(launchedFlux.Value))))
             return new Result(false, "dataType must be 0/1 and ROI coordinates/sizes cannot be negative.", objectNumber, null, null, 0, 0, 0, null);
@@ -152,13 +174,19 @@ public sealed class GetNscDetectorTool
                         pitchX = 2d * rect.XHalfWidth / nx;
                         pitchY = 2d * rect.YHalfWidth / ny;
                         pixelArea = pitchX * pitchY;
-                        orientation = "native lower-left (-X,-Y); +column is +X, +row is +Y; not screen-image orientation";
+                        orientation = "native row-major index ordering only; row/column to detector local X/Y SIGN and display orientation are NOT independently calibrated";
                     }
                 }
+
+                NscDetectorTilePreview.Plan? tilePlan = null;
+                if (includeTilePlan)
+                    tilePlan = NscDetectorTilePreview.MakePlan(rows, columns, tilePlanPage);
 
                 double[][]? pixelGrid = null;
                 double? roiSum = null, roiIntegral = null, roiDetectorFraction = null,
                     roiLaunchedFraction = null;
+                double? pixelMin = null, pixelMax = null, pixelMean = null;
+                int? nonzeroCount = null, peakRow = null, peakColumn = null;
                 if (includePixels)
                 {
                     var height = rowCount == 0 ? (long)rows - startRow : rowCount;
@@ -185,6 +213,18 @@ public sealed class GetNscDetectorTool
                         }
                     }
                     roiSum = pixelGrid.Sum(line => line.Sum());
+                    if (double.IsNaN(roiSum.Value) || double.IsInfinity(roiSum.Value))
+                        throw new InvalidOperationException("The ROI pixel sum overflows the native detector data range.");
+                    var pixels = pixelGrid.SelectMany(line => line).ToArray();
+                    pixelMin = pixels.Min();
+                    pixelMax = pixels.Max();
+                    pixelMean = roiSum / pixels.Length;
+                    nonzeroCount = pixels.Count(x => x != 0);
+                    var peakIndex = Array.IndexOf(pixels, pixelMax.Value);
+                    peakRow = startRow + peakIndex / (int)width;
+                    peakColumn = startColumn + peakIndex % (int)width;
+                    // Pixel extrema and their position are native quantities,
+                    // not total power or throughput. Use ROI integration below.
                     // Flux-per-area integrates to flux only if a real, uniform
                     // physical pixel area is known; volume dataType=1 is
                     // absorbed flux and is NOT area-weighted.
@@ -198,7 +238,26 @@ public sealed class GetNscDetectorTool
                         roiDetectorFraction = roiIntegral.Value / totalFlux.Value;
                     if (roiIntegral.HasValue && launchedFlux.HasValue)
                         roiLaunchedFraction = roiIntegral.Value / launchedFlux.Value;
+                    if ((roiDetectorFraction.HasValue && (double.IsNaN(roiDetectorFraction.Value) || double.IsInfinity(roiDetectorFraction.Value))) ||
+                        (roiLaunchedFraction.HasValue && (double.IsNaN(roiLaunchedFraction.Value) || double.IsInfinity(roiLaunchedFraction.Value))))
+                        throw new InvalidOperationException("ROI normalization is non-finite; verify source and detector flux scales.");
                 }
+
+                NscPixelCalibration.Peak? calibratedPeak=null;
+                if(calibratedColumnXSign!=0 && peakRow.HasValue && peakColumn.HasValue)
+                {
+                    if(!pitchX.HasValue||!pitchY.HasValue)
+                        throw new ArgumentException("Signed pixel calibration requires a rectangular detector with known physical pitch.");
+                    calibratedPeak=NscPixelCalibration.ConvertPeak(peakRow.Value,peakColumn.Value,
+                        checked((int)rows),checked((int)columns),pitchX.Value,pitchY.Value,
+                        calibratedColumnXSign,calibratedRowYSign);
+                }
+
+                double? detectorLaunchedFraction = launchedFlux.HasValue && totalFlux.HasValue
+                    ? totalFlux.Value / launchedFlux.Value : null;
+                if (detectorLaunchedFraction.HasValue &&
+                    (double.IsNaN(detectorLaunchedFraction.Value) || double.IsInfinity(detectorLaunchedFraction.Value)))
+                    throw new InvalidOperationException("Detector/source normalization is non-finite; verify the launched-flux unit and magnitude.");
 
                 return new Result(
                     true, null, objectNumber, row.TypeName, row.Comment,
@@ -210,11 +269,19 @@ public sealed class GetNscDetectorTool
                     pitchX, pitchY, pixelArea, pitchX.HasValue ? "lens units" : null,
                     orientation, roiSum, roiIntegral, roiDetectorFraction,
                     launchedFlux, roiLaunchedFraction,
-                    launchedFlux.HasValue && totalFlux.HasValue ? totalFlux.Value / launchedFlux.Value : null,
+                    detectorLaunchedFraction,
                     null,
                     "Detector hit counts may include repeated or split ray hits; total rays that missed the detector cannot be inferred from them. " +
                     "ROI pixel summation is incoherent. source normalization requires identical units, sources and trace. " +
-                    "For non-rectangular detectors the exact pixel physical area and ROI flux-integral may be unavailable.");
+                    "For non-rectangular detectors the exact pixel physical area and ROI flux-integral may be unavailable. " +
+                    "DetectorVolume dataType=1 integrates ABSORBED flux: its launched-flux ratio is absorption, not collection throughput. " +
+                    "ROI pixel maxima are not integrated detector power.",
+                    pixelMin, pixelMax, pixelMean, nonzeroCount, peakRow, peakColumn,
+                    tilePlan,
+                    pixelGrid != null && heatmapBins > 0
+                        ? NscDetectorTilePreview.MeanHeatmap(pixelGrid, heatmapBins) : null,
+                    heatmapBins > 0 ? "Native ROI ordering, per-bin arithmetic MEAN of pixel values; not a detector-power integral, RGB visualization, or physical orientation calibration." : null,
+                    calibratedPeak);
             }, cancellationToken);
         }
         catch (OperationCanceledException)

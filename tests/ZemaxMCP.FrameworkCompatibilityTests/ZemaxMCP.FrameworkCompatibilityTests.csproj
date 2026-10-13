@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>FrameworkChecks</AssemblyName>
+    <TargetFramework>net48</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\ZemaxMCP.SimulationTests\EngineeringWorkflowAssertions.cs" Link="EngineeringWorkflowAssertions.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Core\Session\EngineeringObservation.cs" Link="Core\EngineeringObservation.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\EngineeringBaselineStore.cs" Link="Server\EngineeringBaselineStore.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\EngineeringEditPreview.cs" Link="Server\EngineeringEditPreview.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\AnalysisEvidenceStore.cs" Link="Server\AnalysisEvidenceStore.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\AnalysisEvidenceException.cs" Link="Server\AnalysisEvidenceException.cs" />
+    <PackageReference Include="System.Text.Json" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Compatibility\IsExternalInit.cs" Link="Server\IsExternalInit.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Compatibility\FrameworkCompatibility.cs" Link="Server\FrameworkCompatibility.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Core\Models\AnalysisResults.cs" Link="Core\AnalysisResults.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\MtfSeriesReader.cs" Link="Server\MtfSeriesReader.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\SequentialEnergySurfaceRange.cs" Link="Server\SequentialEnergySurfaceRange.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\SpectralWeighting.cs" Link="Server\SpectralWeighting.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\MechanicalFootprintBoundary.cs" Link="Server\MechanicalFootprintBoundary.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\GlobalFootprintProjection.cs" Link="Server\GlobalFootprintProjection.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\GlobalPlanarMechanicalBoundary.cs" Link="Server\GlobalPlanarMechanicalBoundary.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\GlobalRaySegmentBoundary.cs" Link="Server\GlobalRaySegmentBoundary.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\CadMultiSegmentAudit.cs" Link="Server\CadMultiSegmentAudit.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\CadTriangleMeshAudit.cs" Link="Server\CadTriangleMeshAudit.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\CoatingRtaAudit.cs" Link="Server\CoatingRtaAudit.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Analysis\CoatingPerformanceReflection.cs" Link="Server\CoatingPerformanceReflection.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscDetectorTilePreview.cs" Link="Server\NscDetectorTilePreview.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscPixelCalibration.cs" Link="Server\NscPixelCalibration.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscDetectorCsvExport.cs" Link="Server\NscDetectorCsvExport.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\NscSameTraceLedger.cs" Link="Server\NscSameTraceLedger.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\ZrdPathEnergyCore.cs" Link="Server\ZrdPathEnergyCore.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\NonSequential\ConservativeRayEnergyTree.cs" Link="Server\ConservativeRayEnergyTree.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\SystemSummaryComparer.cs" Link="Server\SystemSummaryComparer.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\ModelPreflightChecks.cs" Link="Server\ModelPreflightChecks.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\ModelWorkflowValidator.cs" Link="Server\ModelWorkflowValidator.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Catalog\OpticalResultInterpreter.cs" Link="Server\OpticalResultInterpreter.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Compatibility\ZosApiRuntimeCompatibility.cs" Link="Server\ZosApiRuntimeCompatibility.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Base\DoubleExtensions.cs" Link="Server\DoubleExtensions.cs" />
+    <Compile Include="..\..\src\ZemaxMCP.Server\Tools\Base\SurfaceReadback.cs" Link="Server\SurfaceReadback.cs" />
+  </ItemGroup>
+</Project>

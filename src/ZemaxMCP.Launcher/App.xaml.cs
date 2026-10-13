@@ -9,6 +9,7 @@ namespace ZemaxMCP.Launcher
         private Mutex? _instance;
         protected override void OnStartup(StartupEventArgs e)
         {
+            DesktopIdentity.Initialize();
             _instance = new Mutex(true, "ZemaxMCP.Launcher.SingleInstance", out var created);
             if (!created)
             {

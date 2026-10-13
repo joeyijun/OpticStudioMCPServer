@@ -12,7 +12,7 @@ foreach ($path in $launcherExe, $installerExe, $proxyExe, $hostDll, $updaterExe)
 }
 
 $launcherXaml = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Launcher\MainWindow.xaml")
-$launcherCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Launcher\MainWindow.xaml.cs")
+$launcherCode = (Get-ChildItem -LiteralPath (Join-Path $root "src\ZemaxMCP.Launcher") -Filter "MainWindow*.cs" | Sort-Object Name | ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName }) -join [Environment]::NewLine
 $proxyCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.ClientProxy\Program.cs")
 $installerCode = Get-Content -Raw (Join-Path $root "src\ZemaxMCP.Installer\MainWindow.xaml.cs")
 $portableInstall = Get-Content -Raw (Join-Path $root "installer\Portable-Install.cmd")
@@ -20,7 +20,7 @@ $solution = Get-Content -Raw (Join-Path $root "OpticStudioMCPServer.sln")
 $architectureDoc = Join-Path $root "docs\ARCHITECTURE.md"
 $releaseWorkflow = Get-Content -Raw (Join-Path $root ".github\workflows\release.yml")
 $publishReleaseWorkflow = Get-Content -Raw (Join-Path $root ".github\workflows\publish-release.yml")
-foreach ($marker in 'AiStateDot', 'Content="Browse…"', 'Click="ChooseZemaxFolder_Click"', 'Content="Start"', 'Content="Stop"', 'Copy secure setup', 'x:Name="ToolsetProfile"') {
+foreach ($marker in 'AiStateDot', 'Content="Browse…"', 'Click="ChooseZemaxFolder_Click"', 'Content="Start"', 'Content="Stop"', 'Copy connection setup', 'x:Name="ToolsetProfile"', 'x:Name="ConnectRemoteButton"') {
   if ($launcherXaml -notmatch [regex]::Escape($marker)) { throw "The desktop UI contract is missing: $marker" }
 }
 if ($launcherCode -notmatch '"Host", "ZemaxMCP\.Host\.exe"' -or
@@ -61,7 +61,9 @@ if ($releaseWorkflow -notmatch 'test-launcher-materials\.ps1' -or
 }
 Write-Host "Desktop component, release-gate, client identity, project organization, and self-contained Host packaging verification passed."
 if ($launcherXaml -notmatch 'x:Name="OfficialTasks".*IsChecked="True"' -or
-    $launcherCode -notmatch 'OfficialTasksSettings.HostArgument\(OfficialTasks.IsChecked == true\)' -or
+    $launcherCode -notmatch 'HostLaunchPlan.Build\(' -or
+    $launcherCode -notmatch 'OfficialTasks\.IsChecked\s*==\s*true' -or
+    (Get-Content -Raw (Join-Path $root 'src\ZemaxMCP.Launcher\HostLaunchPlan.cs')) -notmatch '--enable-official-tasks' -or
     $launcherCode -notmatch 'OfficialTasksSettings.IsEnabled\(settings\["enableOfficialTasks"\]\)' -or
     $launcherCode -notmatch '\["enableOfficialTasks"\] = OfficialTasks.IsChecked == true') {
   throw "Launcher must expose default-on official Tasks, preserve explicit settings, and pass the selected value to Host startup."

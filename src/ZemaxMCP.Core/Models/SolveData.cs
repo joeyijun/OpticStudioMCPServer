@@ -18,6 +18,7 @@ public record SolveData
 
     // Ray solve parameters
     public double? Height { get; init; }
+    public double? Angle { get; init; }
     public double? PupilZone { get; init; }
     public int? Wavelength { get; init; }
 
@@ -38,6 +39,7 @@ public record SolveData
     public string? Catalog { get; init; }
     public string? MaterialName { get; init; }
     public double? IndexOffset { get; init; }
+    public double? AbbeOffset { get; init; }
 }
 
 /// <summary>

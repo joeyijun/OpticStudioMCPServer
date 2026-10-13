@@ -147,7 +147,8 @@ if ($hostSource -notmatch 'OpticStudioControlLease' -or $hostSource -notmatch 'R
   throw "Control ownership and Host/Origin boundaries must remain explicit and non-wildcarded."
 }
 if ($hostSource -notmatch '"zemax_disconnect"' -or $hostSource -notmatch 'ReleaseOwnership\(clientId\)' -or
-    $privateRpcTest -notmatch 'immediate handoff') {
+    $privateRpcTest -notmatch 'Authenticated second client could not acquire the lease after disconnect' -or
+    $privateRpcTest -notmatch 'Read-only Host tools/list exposed a HighImpact') {
   throw "A successful zemax_disconnect must release the owning client lease and the MCP E2E suite must verify immediate handoff."
 }
 if ($controlLeaseSource -notmatch '_execution.WaitAsync\(cancellationToken\)' -or
@@ -176,18 +177,20 @@ if ($privateRpcTest -notmatch 'VerifyWriteGateCancellationClassificationAsync') 
 $callToolBody = [regex]::Match($rpcClient,
     'public async Task<CallToolResult> CallToolAsync[\s\S]*?(?<body>\{[\s\S]*?)\r?\n    public async Task<WorkerStatus>').Groups['body'].Value
 if ([string]::IsNullOrWhiteSpace($callToolBody) -or
-    $callToolBody.IndexOf('_executionGate.WaitAsync', [StringComparison]::Ordinal) -lt 0 -or
+    $callToolBody.IndexOf('_executionGate.AcquireAsync', [StringComparison]::Ordinal) -lt 0 -or
     $callToolBody.IndexOf('WaitForCancelledOperationRecoveryAsync', [StringComparison]::Ordinal) -lt 0 -or
-    $callToolBody.IndexOf('_executionGate.WaitAsync', [StringComparison]::Ordinal) -gt $callToolBody.IndexOf('WaitForCancelledOperationRecoveryAsync', [StringComparison]::Ordinal)) {
+    $callToolBody.IndexOf('_executionGate.AcquireAsync', [StringComparison]::Ordinal) -gt $callToolBody.IndexOf('WaitForCancelledOperationRecoveryAsync', [StringComparison]::Ordinal)) {
   throw "Tool execution must acquire the Host execution gate before checking cancelled-operation recovery."
 }
 if ($privateRpcTest -notmatch '2026-07-28' -or $privateRpcTest -notmatch 'io\.modelcontextprotocol/clientInfo' -or
     $privateRpcTest -notmatch 'io\.zemaxmcp/clientInstanceId' -or $privateRpcTest -notmatch 'bad-manifest' -or
     $privateRpcTest -notmatch 'VerifyProgressEventDispatchAsync' -or $privateRpcTest -notmatch 'same-name same-IP' -or
-    $privateRpcTest -notmatch 'Send2026ListToolsAsync' -or $privateRpcTest -match '"initialize"') {
+    $privateRpcTest -notmatch 'Send2026ListToolsAsync' -or
+    $privateRpcTest -notmatch 'Modern discovery must advertise Worker execution instructions' -or
+    $privateRpcTest -notmatch 'Legacy initialize must carry the same execution-location instructions') {
   throw "The E2E suite must cover stateless discovery, manifest mismatch, event dispatch, and distinct same-info client instances."
 }
-if ($schemaTest -notmatch 'StaticToolManifest\.All\.Count != 138' -or $schemaTest -notmatch 'zemax_open_file' -or
+if ($schemaTest -notmatch 'StaticToolManifest\.All\.Count != 152' -or $schemaTest -notmatch 'zemax_open_file' -or
     $schemaTest -notmatch 'zemax_set_fields' -or $schemaTest -notmatch 'zemax_optimize' -or
     $schemaTest -notmatch 'unresolved opaque object contracts') {
   throw "Generated manifest regressions must verify count, policy metadata, required parameters, nested records, defaults, and absence of opaque contracts."
@@ -216,11 +219,21 @@ if ($jobOwners -notmatch 'MaximumRecords = 256' -or
     $hostSource -notmatch 'JobOwnerRegistry.FilterList' -or
     $hostSource -notmatch 'jobOwners.ReleaseGeneration' -or
     $hostSource -notmatch 'zemax_multistart_status' -or
-    $hostSource -notmatch 'jobDiagnostics = "per-client job tools only"' -or
+    $hostSource -notmatch 'jobDiagnostics = "authenticated-owner-only"' -or
+    $hostSource -notmatch 'taskLedger\?\.ListOwnedMetadata\(scopedOwner\)' -or
     $privateRpcTest -notmatch 'VerifyJobOwnershipRegistry' -or
     $privateRpcTest -notmatch 'Foreign writer could cancel another client' -or
-    $privateRpcTest -notmatch 'Scoped /health leaked') {
+    $privateRpcTest -notmatch 'Scoped /health must expose' -or
+    $privateRpcTest -notmatch 'Owner-scoped Task diagnostic listing is incorrect') {
   throw "Scoped Jobs must bind owner+generation, deny unowned status/cancel, filter list results, redact health, block legacy global multistart state and be covered by E2E tests."
+}
+$taskHistorySource = Get-Content -Raw (Join-Path $root 'src/ZemaxMCP.HttpBridge/ModernHost/WorkerTaskLedger.cs')
+if ($taskHistorySource -notmatch 'DefaultMaxHistory = 30' -or
+    $taskHistorySource -notmatch 'Where\(entry => IsTerminal\(entry.State\)\)' -or
+    $taskHistorySource -notmatch 'Skip\(DefaultMaxHistory\)' -or
+    $taskHistorySource -notmatch 'Math.Min\(limit, DefaultMaxRecords\)' -or
+    $jobOwners -notmatch 'SerializeToElement\(WorkerJobHistoryPolicy.MaximumVisibleJobs\)') {
+  throw 'Task history must retain newest 30 terminal records without pruning active work; scoped lists remain bounded and use the shared Worker window.'
 }
 # Release-validation contract: modern stateless MCP is the primary live path;
 # legacy initialize is an explicit compatibility probe rather than the default.

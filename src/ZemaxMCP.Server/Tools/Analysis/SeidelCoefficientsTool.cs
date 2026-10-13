@@ -72,7 +72,7 @@ public class SeidelCoefficientsTool
 
     private static SeidelCoefficientsData ParseSeidelTextFile(string filePath)
     {
-        var lines = File.ReadAllLines(filePath);
+        var lines = LocalizedAnalysisText.ReadLines(filePath);
         double wavelength = double.NaN, petzval = double.NaN, invariant = double.NaN;
         double chiefObj = double.NaN, chiefImg = double.NaN, margObj = double.NaN, margImg = double.NaN;
         var surfaceRows = new List<SeidelSurfaceRow>();

@@ -6,6 +6,8 @@ internal sealed class ControlLeaseConflictException : InvalidOperationException
 {
     public ControlLeaseConflictException()
         : base("OpticStudio control is currently leased to another MCP client. Diagnostic status checks do not require control; wait for the current optical operation or owner to release control.") { }
+
+    public ControlLeaseConflictException(string message) : base(message) { }
 }
 
 /// <summary>
@@ -22,6 +24,35 @@ internal sealed class OpticStudioControlLease
     private string? _ownerClientId;
     private DateTimeOffset _lastActivity;
     private string? _activeOperation;
+    private long _currentGeneration, _ownerGeneration;
+    private bool _ownerInvalidated;
+    private bool _ownerIsTemporary;
+
+    public void ObserveGenerationStarted(long generation)
+    {
+        if (generation <= 0) return;
+        lock (_sync)
+        {
+            _currentGeneration = generation;
+            // Initial lazy startup occurs inside an already acquired foreground lease.
+            if (_ownerClientId != null && _ownerGeneration == 0 && !_ownerInvalidated)
+                _ownerGeneration = generation;
+        }
+    }
+
+    public void BindInvocation(string clientId, long generation)
+    {
+        lock (_sync)
+        {
+            if (generation <= 0 || generation != _currentGeneration || _activeOperation == null ||
+                !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
+                throw new InvalidOperationException("The optical invocation has no current generation-bound control lease.");
+            // A request may acquire control BEFORE waiting for cancellation
+            // recovery. Bind only after that wait, just before RPC dispatch.
+            _ownerGeneration = generation;
+            _ownerInvalidated = false;
+        }
+    }
 
     public OpticStudioControlLease(TimeSpan? idleTimeout = null)
     {
@@ -29,7 +60,7 @@ internal sealed class OpticStudioControlLease
         if (_idleTimeout <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(idleTimeout));
     }
 
-    public async Task<IDisposable> AcquireAsync(string clientId, string operation, CancellationToken cancellationToken)
+    public async Task<IDisposable> AcquireAsync(string clientId, string operation, CancellationToken cancellationToken, bool temporaryOwner = false)
     {
         if (string.IsNullOrWhiteSpace(clientId)) clientId = "anonymous";
 
@@ -38,6 +69,10 @@ internal sealed class OpticStudioControlLease
         // semaphore. A caller may cancel during that wait.
         lock (_sync)
         {
+            // A background COM Job retains the exclusive model lifecycle for
+            // all clients, including its creator. Without this check its
+            // creator could start a second mutation while that Job is running.
+            if (_jobHolds.Count > 0) throw ActiveJobConflict();
             if (!IsExpiredLocked() &&
                 _ownerClientId != null &&
                 !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
@@ -52,12 +87,19 @@ internal sealed class OpticStudioControlLease
             cancellationToken.ThrowIfCancellationRequested();
             lock (_sync)
             {
-                if (IsExpiredLocked()) _ownerClientId = null;
+                // A job could have started while this caller waited for the
+                // foreground gate. Check again before granting the edit lease.
+                if (_jobHolds.Count > 0) throw ActiveJobConflict();
+                if (IsExpiredLocked()) { _ownerClientId = null; _ownerIsTemporary = false; }
                 if (_ownerClientId != null &&
                     !string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
                     throw new ControlLeaseConflictException();
 
+                if (_ownerClientId == null) _ownerIsTemporary = temporaryOwner;
+                else if (!temporaryOwner) _ownerIsTemporary = false;
                 _ownerClientId = clientId;
+                _ownerGeneration = _currentGeneration;
+                _ownerInvalidated = false;
                 _activeOperation = operation;
                 _lastActivity = DateTimeOffset.UtcNow;
             }
@@ -69,6 +111,35 @@ internal sealed class OpticStudioControlLease
             throw;
         }
     }
+
+    /// <summary>
+    /// Permit read-only inspection by any authorized client without taking or
+    /// renewing the persistent mutating-owner lease. Physical operations are
+    /// still serialized behind the same execution gate. All STA observers are
+    /// not admitted while an owner holds an active background optical Job,
+    /// since the STA may be blocked or the model may be mid-operation.
+    /// </summary>
+    public async Task<IDisposable> AcquireObservationAsync(string clientId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(clientId)) clientId = "anonymous";
+        await _execution.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_sync)
+                if (_jobHolds.Count > 0)
+                    throw ActiveJobConflict();
+            return new ObservationReleaser(this);
+        }
+        catch
+        {
+            _execution.Release();
+            throw;
+        }
+    }
+
+    private static ControlLeaseConflictException ActiveJobConflict() =>
+        new("An OpticStudio background Job is active; foreground optical calls are blocked until it reaches a terminal state. Metadata status checks and Job queries/cancellation remain available.");
 
     private bool IsExpiredLocked() =>
         _ownerClientId != null &&
@@ -86,6 +157,7 @@ internal sealed class OpticStudioControlLease
                 return false;
 
             _ownerClientId = null;
+            _ownerGeneration = 0;
             _lastActivity = DateTimeOffset.UtcNow;
             return true;
         }
@@ -97,6 +169,9 @@ internal sealed class OpticStudioControlLease
         lock (_sync)
         {
             if (!string.Equals(_ownerClientId, clientId, StringComparison.Ordinal)) return false;
+            if (_ownerInvalidated) return false;
+            if (_ownerGeneration == 0) _ownerGeneration = generation;
+            if (_ownerGeneration != generation) return false;
             _jobHolds[jobId] = new JobHold(clientId, generation);
             _lastActivity = DateTimeOffset.UtcNow;
             return true;
@@ -113,6 +188,8 @@ internal sealed class OpticStudioControlLease
             {
                 _jobHolds.Remove(job.JobId);
                 _lastActivity = DateTimeOffset.UtcNow;
+                if (_ownerIsTemporary && _activeOperation == null && _jobHolds.Count == 0)
+                { _ownerClientId = null; _ownerGeneration = 0; _ownerIsTemporary = false; }
             }
         }
     }
@@ -132,8 +209,13 @@ internal sealed class OpticStudioControlLease
             // another authenticated client can take the replacement Worker
             // immediately rather than wait 15 minutes. Never revoke another
             // active foreground call or a newer-generation Job hold.
-            if (invalidated.Length > 0 && _activeOperation == null && _jobHolds.Count == 0)
+            if (_currentGeneration == generation) _currentGeneration = 0;
+            if (_ownerGeneration == generation) _ownerInvalidated = true;
+            if (_ownerInvalidated && _activeOperation == null && _jobHolds.Count == 0)
+            {
                 _ownerClientId = null;
+                _ownerGeneration = 0;
+            }
             _lastActivity = DateTimeOffset.UtcNow;
         }
     }
@@ -142,6 +224,11 @@ internal sealed class OpticStudioControlLease
         string.Equals(state, "Completed", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(state, "Cancelled", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(state, "Failed", StringComparison.OrdinalIgnoreCase);
+
+    public bool HasActiveBackgroundJobs
+    {
+        get { lock (_sync) return _jobHolds.Count != 0; }
+    }
 
     public object GetHealth()
     {
@@ -163,6 +250,11 @@ internal sealed class OpticStudioControlLease
             if (string.Equals(_ownerClientId, clientId, StringComparison.Ordinal))
             {
                 _activeOperation = null;
+                if ((_ownerIsTemporary || _ownerInvalidated || _ownerGeneration == 0 && _currentGeneration == 0) && _jobHolds.Count == 0)
+                {
+                    _ownerClientId = null;
+                    _ownerGeneration = 0;
+                }
                 _lastActivity = DateTimeOffset.UtcNow;
             }
         }
@@ -170,6 +262,13 @@ internal sealed class OpticStudioControlLease
     }
 
     private sealed record JobHold(string ClientId, long Generation);
+
+    private sealed class ObservationReleaser : IDisposable
+    {
+        private OpticStudioControlLease? _lease;
+        public ObservationReleaser(OpticStudioControlLease lease) => _lease = lease;
+        public void Dispose() => Interlocked.Exchange(ref _lease, null)?._execution.Release();
+    }
 
     private sealed class Releaser : IDisposable
     {

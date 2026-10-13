@@ -2,7 +2,7 @@
 
 **A GUI-first Windows MCP server for Zemax OpticStudio.** It detects installed OpticStudio versions, runs an HTTP MCP service locally or on a trusted LAN, and configures **Codex**, **Claude Desktop**, **Cursor**, **Google Antigravity**, **Kimi Code**, **WorkBuddy**, and **VS Code / GitHub Copilot**.
 
-![Zemax MCP launcher dashboard](docs/images/launcher-dashboard.png)
+![Zemax MCP overview — MCP service, OpticStudio and AI client setup](docs/images/launcher-dashboard.png)
 
 ## Windows quick start
 
@@ -26,15 +26,25 @@ flowchart LR
   B --> E["Launcher status\nMCP · ZOS-API · live AI activity"]
 ```
 
-For a single computer, the AI client uses the local MCP address. For two computers, enable **Share with a trusted LAN computer** on the OpticStudio computer and choose **Copy secure setup**. On the AI computer, paste the complete bundle into the launcher's **Secure setup** field. The launcher extracts the endpoint and token, protects the token with Windows user-scope encryption, and configures supported AI clients. Deploy the same package on both computers to see the latest remote activity display.
+For a single computer, the AI client uses the local MCP address. For two computers, enable **Share with a trusted LAN computer** on the OpticStudio computer and choose **Copy connection setup**. On the AI computer, paste the complete bundle into the launcher's **Secure setup** field. The launcher extracts the endpoint and token, protects the token with Windows user-scope encryption, and configures supported AI clients. Deploy the same package on both computers to see the latest remote activity display.
 
 ## Highlights
 
+The Tasks page keeps all unfinished operations and the most recent **30** terminal
+operations, merging each official Task with its underlying Worker Job. Large
+result payloads have a separate recent-16 retention window; important results
+should be exported. See [Task history and results](docs/TASK_HISTORY.md).
+
+For remote AI use, file paths always belong to the **OpticStudio computer**, not
+the AI client's local filesystem. Start with `zemax_execution_context`; use
+`zemax_list_lens_files` for restricted server-side lens browsing. Local files
+are not uploaded automatically. See [Remote execution and file paths](docs/REMOTE_EXECUTION_CONTEXT.md).
+
 - **Refined Windows interface** — focused **Overview**, **Tasks**, **Settings**, and **Diagnostics** pages, icon-led status cards, slim rounded scrollbars, client-status setup dialogs, matching installer, and a rounded Start / Stop / Exit tray menu. **Test connection** combines connection/authentication checks with a read-only MCP tool test. The window uses **Mica** by default, without a material selector. Native Mica requires Windows 11 22H2 or later with transparency effects enabled; Remote Desktop, high contrast, and unsupported systems use a solid fallback.
-- **Upgrade-safe installation** — GUI and portable upgrades preserve connection settings, credentials, LAN sharing preferences and runtime data. The installer waits for old application processes, retries transient file locks, prevents overlapping updates, and uses versioned shortcut icon paths to avoid stale icon caches.
-- **Graphical install and update** — `Install.exe`, existing portable installs, and in-app updates converge on the same Updater replacement/rollback path for upgrades. Fresh installs copy only runtime payloads; package-only installer/update metadata is not left in the installed tree. Portable fallback is explicit when replacement cannot complete.
+- **Upgrade-safe installation** — GUI and portable upgrades preserve connection settings, credentials, LAN sharing preferences, HTTPS keys and Task journals. A current-user-only maintenance handshake freezes new optical admission before replacement; active calls, queued requests, background Jobs or cancellation drain postpone updates. Older services must be safely exited before upgrading. The installer retries transient file locks, prevents overlapping updates, and uses versioned shortcut icon paths to avoid stale icon caches.
+- **Graphical install and update** — `Install.exe`, existing portable installs, and in-app updates converge on the same Updater replacement/rollback path for upgrades. In-app downloads and verification run asynchronously with progress, cancellation and a bounded deadline. Fresh installs copy only runtime payloads; package-only installer/update metadata is not left in the installed tree. A failed existing-install update does not start a competing portable service; portable fallback is reserved for initial-copy failures.
 - **Official .NET 10 MCP Host** — `ZemaxMCP.Host` uses stable `ModelContextProtocol.AspNetCore` 2.1 for Streamable HTTP, protocol negotiation, request IDs, SSE, cancellation, progress, and compatibility. The application does not maintain a hand-written MCP HTTP/JSON-RPC dispatcher.
-- **Static Host tool contract** — a build-time Roslyn generator produces the 138 tool names, descriptions, JSON schemas, domains, and impact levels. `tools/list` is answered by the Host without starting OpticStudio or the Worker.
+- **Static Host tool contract** — a build-time Roslyn generator produces the 152 tool names, descriptions, JSON schemas, domains, and impact levels. `tools/list` is answered by the Host without starting OpticStudio or the Worker.
 - **Hardened Host / Worker isolation** — MCP ends at the Host. The `net48` Worker accepts only private RPC v3, keeps STA/ZOS-API state, and never exposes a network transport. The Host verifies Worker PID, per-launch secret, RPC version, and the static manifest SHA-256 fingerprint before ZOS-API initialization or any OpticStudio COM operation.
 - **Transport-independent control lease** — modern MCP requests can be stateless while OpticStudio remains deliberately single-owner, single-STA, and serialized. Per-instance identity prevents supported same-machine clients from collapsing into one owner.
 - **Authenticated LAN use** — every launcher-managed request uses a random Bearer token. LAN listening is refused without a token, and token rotation is one click.
@@ -58,13 +68,27 @@ Running tasks without an intermediate numeric estimate show an animated indicato
 
 MCP `serverInfo.version` is reported by the public Host assembly. The Launcher, Host, Worker, and release `VERSION.txt` are built from the same product version. The structured Worker health RPC independently reports the private RPC version, tool-contract fingerprint, loaded ZOS-API assembly path, actual OpticStudio connection mode, license result, Data directory, snapshots, and job state.
 
+Changes to LAN sharing, read-only mode, the toolset, installation, port or token
+are saved for the **next Start**, not applied by killing the running service.
+The displayed/copied connection continues to use the running endpoint and token.
+Stop/Exit checks live activity and postpones shutdown while optical work is active;
+an unreachable service requires an explicit force-stop confirmation.
+
+Host tool admission has its own bounded queue: **32 waiting requests** and a
+**30-second queue deadline**, configured by `--max-pending-requests` and
+`--queue-wait-timeout-seconds`. A full/expired queue returns a structured
+`queue_full`/`queue_timeout` tool error before Worker execution, preserving the
+MCP request ID. Diagnostics remain outside this queue. `/mcp/health` and Copy
+diagnostics include queue counters, Host/Worker source-build identities and the
+active HTTPS certificate's SHA-256 fingerprint, expiry and remaining days.
+
 The Host starts independently of the Worker. `tools/list` is served from the static Host manifest and therefore does **not** require the Worker, ZOS-API, an OpticStudio connection, or a valid OpticStudio licence. The first Worker-backed health request or permitted `tools/call` lazily starts the Worker.
 
 The Host creates the current-user-only named pipe before launching the Worker. During startup it authenticates the connecting process using the launched PID and a random per-launch secret, then requires the same private RPC version and exact static-tool-contract SHA-256 fingerprint. This negotiation occurs before the Worker initializes ZOS-API or performs any OpticStudio COM operation, so a mixed or stale Host/Worker package fails clearly instead of executing against a different tool contract. `--worker-startup-timeout-seconds` controls the connection-and-handshake deadline (default **90**, range **10–600**).
 
-The established recovery boundary remains bounded: each normal private RPC write has a **10-second** deadline; a command that exceeds the **300-second** soft timeout immediately starts its hard-recovery deadline and sends a cancellation request with a separately bounded **5-second** pipe-write deadline. The **360-second** hard-recovery deadline is measured from the soft timeout, not after cancellation delivery. A non-responsive Worker is terminated and its pipe generation is invalidated, so the following MCP request starts a clean Worker. Client cancellation ends the HTTP request immediately but leaves a bounded background drain/recovery owner to cancel or restart the Worker.
+The established recovery boundary remains bounded: each normal private RPC write has a **10-second** deadline; after **300 seconds** of waiting for a response, cancellation is sent with a separately bounded **5-second** write deadline. The **60-second** drain deadline starts immediately at that soft timeout, not after cancellation delivery (default hard response-wait limit: **360 seconds**). Queue wait, Worker startup and request write have their own bounds. A non-responsive Worker is terminated and its pipe generation is invalidated, so the following MCP request starts a clean Worker. Client cancellation ends the HTTP request immediately but leaves a bounded background drain/recovery owner to cancel or restart the Worker.
 
-Browser Origins are configuration-based, never inferred from an incoming `Host` header. Local binding permits only `http://127.0.0.1:*`, `http://localhost:*`, and `http://[::1]:*`. LAN binding requires explicit `--allowed-host` and `--allowed-origin` values. ASP.NET Core Host filtering is enabled with that concrete allowlist, so a spoofed Host header is rejected before it can influence CORS.
+Browser Origins are configuration-based, never inferred from an incoming `Host` header. Local binding permits only loopback origins using the configured transport scheme (HTTPS for Launcher-managed services). LAN binding requires explicit `--allowed-host` and `--allowed-origin` values. ASP.NET Core Host filtering is enabled with that concrete allowlist, so a spoofed Host header is rejected before it can influence CORS.
 
 ### MCP protocol compatibility
 
@@ -94,7 +118,7 @@ See `docs/ZOSAPI_COMPATIBILITY.md` for the current 2021/2023/2024/2026 compatibi
 
 Hosted CI validates the public/static contract, safety metadata, Host/private-RPC boundary, recovery paths, desktop packaging, updater rollback, signed-update tamper rejection, and the cross-version ZOS-API policy guards. It also runs functional safety guards that keep global ZOS-API initialization in Worker startup and prohibit ReadOnly analysis tools from structurally modifying the user's Merit Function Editor.
 
-A licensed OpticStudio installation is still required for release acceptance. `scripts/verify-live-mcp.ps1` verifies the transport/contract/safety boundary, while `scripts/verify-live-functional.ps1` requires explicit `-AllowReplaceCurrentSystem` acknowledgement, copies a supplied ZMX/ZOS fixture to a temporary working file, verifies fixture identity before mutation, and performs real edit/readback plus optional optimization, background-job, NSC, and tolerance acceptance, emitting a JSON report. `docs/RELEASE_VALIDATION.md` records the staged 138-tool review, old-version compile matrix, and exact live release gate. A green hosted workflow is therefore necessary but is not claimed as proof that every ZOS-API operation has been exercised against a real OpticStudio build.
+A licensed OpticStudio installation is still required for release acceptance. `scripts/verify-live-mcp.ps1` verifies the transport/contract/safety boundary, while `scripts/verify-live-functional.ps1` requires explicit `-AllowReplaceCurrentSystem` acknowledgement, copies a supplied ZMX/ZOS fixture to a temporary working file, verifies fixture identity before mutation, and performs real edit/readback plus optional optimization, background-job, NSC, and tolerance acceptance, emitting a JSON report. `docs/RELEASE_VALIDATION.md` records the staged tool review, old-version compile matrix, and exact live release gate. A green hosted workflow is therefore necessary but is not claimed as proof that every ZOS-API operation has been exercised against a real OpticStudio build.
 
 ## Connection modes
 
@@ -115,6 +139,35 @@ The Data folder is resolved from `ZEMAX_DATA_ROOT`, the OpticStudio user registr
 
 For an unusual portable layout, set `ZEMAX_ROOT` to the program directory and optionally `ZEMAX_DATA_ROOT` to the Data directory before starting the launcher.
 
+## Automatic HTTPS
+
+The launcher uses HTTPS automatically. There is no transport switch, setup
+wizard or certificate configuration panel. On first Start it prepares a
+server-only certificate for loopback and the detected LAN IP, restricts
+private-key file access, and protects the saved password with Windows DPAPI.
+Windows handles certificate installation for the current user; the Launcher
+does not add a duplicate local confirmation dialog. Valid existing certificates
+and settings are reused across restarts and upgrades. No OpenSSL, Internet
+connection or manually prepared PFX is required.
+
+Use **Copy connection setup** and paste it on the AI computer. It includes only the leaf
+**public** certificate and its SHA-256 fingerprint, never its private key or
+PFX password. Select **Connect** to apply the setup; only import setup obtained
+from your trusted OpticStudio computer. The public fingerprint remains available
+in connection setup and diagnostics for comparison. Windows retains
+its native certificate-installation warning; it is not suppressed. TLS hostname and expiry validation remain
+enabled. Group policy can prevent certificate trust; the launcher reports the
+failure rather than bypassing validation. A client with its own CA store may
+still need client-specific trust configuration.
+
+Launcher-managed endpoints are HTTPS-only; there is no plaintext fallback.
+When upgrading from HTTP, update both computers and copy fresh connection
+setup, then reconfigure the AI clients. A missing, expired or address-mismatched
+certificate is replaced automatically at Start. Confirm the new certificate
+fingerprint on the AI computers; old trust is not silently removed. Existing
+valid custom certificates in saved settings remain usable without a visible
+advanced configuration panel.
+
 ## AI client configuration
 
 Use **Configure clients** in the launcher. Existing unrelated MCP entries are preserved and a backup is kept when an existing configuration is replaced. Supported HTTP clients receive both the endpoint and its Bearer header; Claude's packaged proxy receives the token without putting it in the server URL. If a token is rotated, reconfigure each client so its saved credential matches. A green dot in the configuration menu means the local client configuration matches; the separate AI activity card turns green only while a tool call is in progress.
@@ -133,19 +186,25 @@ Clients capable of setting custom MCP request metadata may send `io.zemaxmcp/cli
 
 ## MCP capabilities
 
-The current development branch contains 138 named tools; the signed v1.5.0 release contained 135. a narrower run configuration exposes only its permitted subset. AI clients discover the exact version-matched schemas through MCP `tools/list`; `zemax_tool_catalog` reads the same static manifest and returns each tool's domain, impact, description, and safety guidance. Use `zemax_tool_catalog` with `task=clipping|imaging|straylight|energy|optimize|tolerance|safe-edit` for an ordered, profile-aware shortlist. The new `zemax_energy_budget` and `zemax_ray_footprint` provide bounded, read-only sequential ray-based diagnostics; NSC detector ROI pixels and a detector-specific launched-flux ratio are available separately. These are *not* absolute spectral radiometry without a sourced power denominator. See [Engineering optical analysis](docs/ENGINEERING_OPTICS.md) for limits, examples and interpretation. Use the installed package's `tools/list` as the authoritative source rather than treating this README as a complete API reference.
+The P1 development branch contains 152 tools; the signed v1.5.1 release contains 138. A narrower run configuration exposes only its permitted subset. AI clients discover the exact version-matched schemas through MCP `tools/list`; `zemax_tool_catalog` reads the same static manifest and returns each tool's domain, impact, description, and safety guidance. Use `zemax_tool_catalog` with `task=clipping|imaging|straylight|energy|optimize|tolerance|safe-edit` for an ordered, profile-aware shortlist. **New in PR #40:** `zemax_task_plan(task="clipping")` inspects the actual connected system mode and gives ordered preflight steps, permissions and approval gates without executing them; read [AI engineering workflows](docs/AI_ENGINEERING_PLANNING.md). The new `zemax_energy_budget` and `zemax_ray_footprint` provide bounded, read-only sequential ray-based diagnostics; NSC detector ROI pixels and a detector-specific launched-flux ratio are available separately. These are *not* absolute spectral radiometry without a sourced power denominator. See [Engineering optical analysis](docs/ENGINEERING_OPTICS.md) for limits, examples and interpretation. Use the installed package's `tools/list` as the authoritative source rather than treating this README as a complete API reference.
 
 ### Tool navigation, run configurations, and safety
+
+**Background execution:** 23 reviewed tools now support managed Jobs, including
+MTF, PSF, Spot and local optimization. Tasks-capable MCP 2026-07-28 clients can
+receive official Tasks automatically; ordinary clients retain synchronous
+compatibility and can request `runInBackground=true` for a Job. Explicit false
+keeps a synchronous response. See [Background tools and Tasks](docs/BACKGROUND_TOOL_EXECUTION.md).
 
 The launcher can expose a smaller task-focused tool surface without renaming MCP tools. The Host enforces the selected profile for both `tools/list` and direct `tools/call`; the Worker checks it again before ZOS-API execution.
 
 | Launcher configuration | Enabled domains and impacts |
 |---|---|
-| **View & analyze** | 36 explicitly selected read-only inspection/analysis tools |
-| **Sequential design** | 81 explicitly selected sequential edit, system, file, snapshot, polarization, and analysis tools |
-| **Non-sequential & stray light** | 25 explicitly selected NSC inspection, tracing, Job monitoring/cancellation, system/file, snapshot, polarization, and diagnostic tools |
-| **Optimization & tolerancing** | 68 explicitly selected optimization, job, tolerance, core sequential, file, snapshot, and verification tools |
-| **Full expert** | All 138 tools and all impacts |
+| **View & analyze** | 46 explicitly selected read-only inspection/analysis tools |
+| **Sequential design** | 93 explicitly selected sequential edit, system, file, snapshot, polarization, and analysis tools |
+| **Non-sequential & stray light** | 37 explicitly selected NSC inspection, tracing, Job monitoring/cancellation, system/file, snapshot, polarization, and diagnostic tools |
+| **Optimization & tolerancing** | 79 explicitly selected optimization, job, tolerance, core sequential, file, snapshot, and verification tools |
+| **Full expert** | All 152 tools and all impacts |
 
 For authenticated multi-client Hosts, [Job ownership and scoped diagnostics](docs/MULTI_CLIENT_AUTH.md#job-ownership-and-diagnostics) prevent cross-token status, result, list, and cancel access; legacy process-global multistart status/stop are not exposed. [Official Tasks integration](docs/TASKS_ADOPTION.md) is experimental and enabled by default. On the OpticStudio computer, use **Run configuration → Enable official Tasks (experimental)** to change it, then Stop / Start when idle. The preference persists across restarts; command-line Hosts can disable it with `--enable-official-tasks false`. Compatible clients must still opt in per request; ordinary clients retain normal tool/Job responses. Fake-Worker tests pass, while licensed official Tasks completion/cancellation/recovery acceptance remains pending.
 

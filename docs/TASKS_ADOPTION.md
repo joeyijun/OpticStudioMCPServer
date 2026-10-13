@@ -1,5 +1,12 @@
 # Official MCP Tasks adoption assessment
 
+Current development coverage is 23 background-capable tools, including MTF,
+PSF, Spot and local/constrained/Hammer optimization. See
+[Background tools and client negotiation](BACKGROUND_TOOL_EXECUTION.md) for
+defaults, compatibility and verification limits. The historical acceptance
+below applies to the previously deployed native-Job tools, not automatically
+to the new shared runner.
+
 Status (1.5.0 / RC7): **experimental, default ON**, as requested. The Launcher exposes **Run configuration → Enable official Tasks (experimental)** and persists the preference. Existing installations without the setting adopt ON; explicitly saved OFF remains OFF. Change it on the OpticStudio computer, then Stop / Start when idle; editing this preference never automatically terminates an optical operation. Command-line Hosts can disable it using `--enable-official-tasks false`. Clients must still opt in per request; other clients retain ordinary `tools/call` plus `zemax_job_status/list/cancel`. Licensed NSC and tolerancing Task completion and cooperative Global Search cancellation passed on OpticStudio 2024 R1.03. Non-cooperative COM hard recovery and a broader licensed version matrix remain outstanding; these are not inferred from cooperative cancellation or fake-Worker tests.
 
 ## Protocol / SDK facts

@@ -109,6 +109,14 @@ internal sealed class WorkerRpcServer
         {
             await WriteErrorAsync(writer, message.RequestId, message.OperationId, "cancelled", "The OpticStudio operation was cancelled.").ConfigureAwait(false);
         }
+        catch (ArgumentException ex)
+        {
+            await WriteErrorAsync(writer, message.RequestId, message.OperationId, "invalid_argument", ex.Message).ConfigureAwait(false);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            await WriteErrorAsync(writer, message.RequestId, message.OperationId, "not_found", ex.Message).ConfigureAwait(false);
+        }
         catch (Exception ex)
         {
             await WriteErrorAsync(writer, message.RequestId, message.OperationId, "worker_error", ex.Message).ConfigureAwait(false);
@@ -120,7 +128,7 @@ internal sealed class WorkerRpcServer
         var invocation = message.Payload.Deserialize<ToolInvocationRequest>(_jsonOptions)
             ?? throw new InvalidOperationException("Tool invocation payload is missing.");
         if (string.IsNullOrWhiteSpace(invocation.Command) || !_tools.Tools.ContainsKey(invocation.Command))
-            throw new InvalidOperationException("Unknown OpticStudio tool: " + invocation.Command);
+            throw new KeyNotFoundException("Unknown OpticStudio tool: " + invocation.Command);
         if (!StaticToolManifest.IsAllowed(invocation.Toolset, invocation.Command, invocation.ReadOnly))
             throw new InvalidOperationException("The selected toolset/read-only policy does not permit " + invocation.Command + ".");
 
@@ -133,11 +141,17 @@ internal sealed class WorkerRpcServer
             try
             {
                 using var parentOperation = McpJobManager.PushParentOperation(message.OperationId);
+                using var observation = new EngineeringObservation();
                 var result = await _tools.InvokeAsync(invocation.Command, invocation.Arguments, operation.Token).ConfigureAwait(false);
                 var resultJson = JsonSerializer.SerializeToElement(result, _jsonOptions);
+                var engineering = new { analysisId = (resultJson.ValueKind != JsonValueKind.Object || !resultJson.TryGetProperty("jobId", out _)) &&
+                    ZemaxMCP.Toolsets.ToolsetCatalog.GetDomain(invocation.Command).Id=="analysis"
+                    ? ZemaxMCP.Server.Tools.Catalog.AnalysisEvidenceStore.Record(invocation.Command,resultJson.GetRawText(),JsonSerializer.Serialize(new { operations=observation.Operations,truncated=observation.Truncated },_jsonOptions)) : null,
+                    operations=observation.Operations,truncated=observation.Truncated };
                 await WriteResultAsync(writer, message.RequestId, message.OperationId, new
                 {
                     content = new[] { new { type = "text", text = resultJson.GetRawText() } },
+                    structuredContent = new { result=resultJson,engineering },
                     isError = IsExplicitToolFailure(resultJson)
                 }).ConfigureAwait(false);
             }
@@ -148,6 +162,12 @@ internal sealed class WorkerRpcServer
 
     internal static bool IsExplicitToolFailure(JsonElement result)
     {
+        // A nullable lookup that did not find a Job or other resource must
+        // never be exposed as a successful MCP call containing JSON null.
+        // Preserve existing, non-null legacy DTO shapes and the success:false
+        // convention without changing the public 138-tool manifest.
+        if (result.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return true;
         return result.ValueKind == JsonValueKind.Object &&
                result.TryGetProperty("success", out var success) &&
                success.ValueKind == JsonValueKind.False;
@@ -169,12 +189,17 @@ internal sealed class WorkerRpcServer
             ManifestFingerprint = StaticToolManifest.ContractFingerprint,
             ZosApiLoaded = true,
             WorkerVersion = workerAssembly.GetName().Version?.ToString() ?? "unknown",
+            WorkerInformationalVersion = ZemaxMCP.Build.BuildIdentity.Read(workerAssembly).InformationalVersion,
+            WorkerSourceCommit = ZemaxMCP.Build.BuildIdentity.Read(workerAssembly).SourceCommit,
             ZosApiAssemblyVersion = zosAssembly.GetName().Version?.ToString(),
             ZosApiFileVersion = zosFileVersion,
             Connected = session.IsConnected,
+            Connecting = session.IsConnecting,
             ConnectionMode = session.CurrentMode?.ToString() ?? "not-connected",
             ZosApiAssembly = zosLocation,
             OpticStudioDataDirectory = session.ZemaxDataDir,
+            ExecutionComputer = Environment.MachineName,
+            CurrentLensFile = session.CurrentFilePath,
             CurrentLicenseStatus = session.CurrentLicenseStatus,
             LastLicenseStatus = session.LastLicenseStatus,
             LicenseValidForApi = session.LicenseValidForApi,
@@ -194,7 +219,8 @@ internal sealed class WorkerRpcServer
         Fraction = job.Progress,
         QueuePosition = job.QueuePosition,
         Message = job.Message,
-        ElapsedSeconds = job.Elapsed?.TotalSeconds
+        ElapsedSeconds = job.Elapsed?.TotalSeconds,
+        UpdatedAt = job.CompletedAt ?? job.StartedAt ?? job.QueuedAt
     };
 
     private void EnqueueProgress(WorkerJobStatus job)

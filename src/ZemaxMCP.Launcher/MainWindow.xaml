@@ -121,6 +121,41 @@
       </Setter>
     </Style>
 
+    <Style x:Key="RoundedDisclosure" TargetType="Expander">
+      <Setter Property="Template"><Setter.Value>
+        <ControlTemplate TargetType="Expander">
+          <Border Background="{StaticResource GlassSurface}" BorderBrush="{StaticResource GlassEdge}" BorderThickness="1" CornerRadius="12">
+            <StackPanel>
+              <ToggleButton Content="{TemplateBinding Header}" HorizontalContentAlignment="Stretch" Padding="14,12"
+                            FocusVisualStyle="{x:Null}"
+                            IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                <ToggleButton.Template><ControlTemplate TargetType="ToggleButton">
+                  <Border x:Name="DisclosureHeader" CornerRadius="11" BorderThickness="1" BorderBrush="Transparent" Padding="{TemplateBinding Padding}">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                      <ContentPresenter VerticalAlignment="Center" RecognizesAccessKey="True"/>
+                      <Path x:Name="Chevron" Grid.Column="1" Data="M 0 0 L 4 4 L 0 8" Stroke="{StaticResource MutedBrush}" StrokeThickness="1.5" Margin="12,0,3,0" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                        <Path.RenderTransform><RotateTransform Angle="0"/></Path.RenderTransform>
+                      </Path>
+                    </Grid>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="DisclosureHeader" Property="Background" Value="{StaticResource ControlSurface}"/></Trigger>
+                    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="DisclosureHeader" Property="BorderBrush" Value="{StaticResource AccentBrush}"/></Trigger>
+                    <Trigger Property="IsChecked" Value="True"><Setter TargetName="Chevron" Property="RenderTransform"><Setter.Value><RotateTransform Angle="90"/></Setter.Value></Setter></Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate></ToggleButton.Template>
+              </ToggleButton>
+              <Border x:Name="DisclosureBody" Visibility="Collapsed" Padding="14,8,14,14"><ContentPresenter/></Border>
+            </StackPanel>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsExpanded" Value="True"><Setter TargetName="DisclosureBody" Property="Visibility" Value="Visible"/></Trigger>
+            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value></Setter>
+    </Style>
+
     <Style x:Key="PasswordInputBox" TargetType="PasswordBox">
       <Setter Property="Height" Value="36"/>
       <Setter Property="Padding" Value="10,5"/>
@@ -386,8 +421,8 @@
                   ToolTip="Stop the local MCP service" Click="Stop_Click"/>
           <Button Content="Refresh" Style="{StaticResource ActionButton}" MinWidth="74" Height="34" Padding="10,5" Margin="0,0,7,0"
                   ToolTip="Refresh live service status" Click="RefreshStatus_Click"/>
-          <Button x:Name="TestConnectionButton" Content="Test connection" Style="{StaticResource ActionButton}" MinWidth="120" Height="34" Padding="9,5" Margin="0,0,9,0"
-                  ToolTip="Check connection, authentication and ZOS-API, then run tools/list and read-only zemax_status. No lens changes." Click="TestConnection_Click"/>
+          <Button x:Name="TestConnectionButton" Content="Check connection" Style="{StaticResource ActionButton}" MinWidth="125" Height="34" Padding="9,5" Margin="0,0,9,0"
+                  ToolTip="Check Host, authentication, Worker, OpticStudio ZOS-API and license status without exercising optical tools." Click="TestConnection_Click"/>
           <Button Content="Exit service" Style="{StaticResource ExitButton}" VerticalAlignment="Center"
                   ToolTip="Stop the MCP service and close the launcher" Click="Exit_Click"/>
         </StackPanel>
@@ -516,11 +551,17 @@
   </ScrollViewer>
     </TabItem>
     <TabItem Header="Tasks">
-      <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <ScrollViewer x:Name="TasksPageScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="28,20,28,24">
           <TextBlock Text="Tasks" FontSize="28" FontWeight="SemiBold" Foreground="{StaticResource HeadingBrush}"/>
           <TextBlock x:Name="TasksPageSummary" Text="Waiting for task status…" Style="{StaticResource HelperText}" Margin="0,6,0,20"/>
-          <Border Style="{StaticResource Card}">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="1.05*"/>
+              <ColumnDefinition Width="16"/>
+              <ColumnDefinition Width="1.25*"/>
+            </Grid.ColumnDefinitions>
+          <Border Grid.Column="2" Style="{StaticResource Card}">
             <StackPanel>
               <TextBlock Text="Selected task" Style="{StaticResource StatusHeading}" Margin="0,0,0,16"/>
               <Grid>
@@ -564,22 +605,34 @@
               </StackPanel>
             </StackPanel>
           </Border>
-          <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+          <Border Grid.Column="0" Style="{StaticResource Card}">
             <StackPanel>
               <Grid Margin="0,0,0,12">
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <TextBlock Text="Recent activity" Style="{StaticResource StatusHeading}" VerticalAlignment="Center"/>
                 <ComboBox x:Name="TasksPageFilter" Grid.Column="1" Width="140" Height="32" SelectedIndex="0" SelectionChanged="TasksPageFilter_Changed" AutomationProperties.Name="Filter Tasks and Jobs by state">
                   <ComboBoxItem Content="All"/><ComboBoxItem Content="Running"/><ComboBoxItem Content="Queued"/><ComboBoxItem Content="Completed"/><ComboBoxItem Content="Failed"/><ComboBoxItem Content="Cancelled"/>
                 </ComboBox>
+                <TextBox x:Name="TasksPageSearch" Grid.Row="1" Grid.ColumnSpan="2"
+                         Style="{StaticResource InputBox}" Height="34" Margin="0,10,0,0" Padding="10,5"
+                         ToolTip="Filter tasks by tool, Job ID, Task ID, or state"
+                         AutomationProperties.Name="Search Tasks and Jobs"
+                         TextChanged="TasksPageSearch_Changed"/>
               </Grid>
               <TextBlock x:Name="TasksPageEmpty" Text="No recent tasks. Start a background operation from your AI client." Style="{StaticResource HelperText}" Margin="0,6,0,10" TextWrapping="Wrap"/>
-              <ListBox x:Name="TasksPageJobs" MaxHeight="220" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="TasksPageJobs_Changed" AutomationProperties.Name="Background Job list">
+              <ListBox x:Name="TasksPageJobs" ItemsSource="{Binding VisibleJobs}" MinHeight="280" MaxHeight="460" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="TasksPageJobs_Changed" AutomationProperties.Name="Background Job list">
+                <ListBox.Template><ControlTemplate TargetType="ListBox">
+                  <Border CornerRadius="12" Background="{TemplateBinding Background}" Padding="0,3">
+                    <ScrollViewer Focusable="False" CanContentScroll="False" PreviewMouseWheel="RecentActivity_MouseWheel" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"><ItemsPresenter/></ScrollViewer>
+                  </Border>
+                </ControlTemplate></ListBox.Template>
                 <ListBox.ItemContainerStyle>
                   <Style TargetType="ListBoxItem">
+                    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
                     <Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,3"/>
                     <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem">
-                      <Border x:Name="Row" CornerRadius="9" Padding="12,10" Background="Transparent"><ContentPresenter/></Border>
+                      <Border x:Name="Row" CornerRadius="11" Padding="12,10" Background="Transparent" BorderThickness="1" BorderBrush="Transparent"><ContentPresenter/></Border>
                       <ControlTemplate.Triggers>
                         <Trigger Property="IsSelected" Value="True"><Setter TargetName="Row" Property="Background" Value="#E5EFFC"/></Trigger>
                         <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Row" Property="BorderBrush" Value="#CBD9EB"/><Setter TargetName="Row" Property="BorderThickness" Value="1"/></Trigger>
@@ -591,17 +644,18 @@
                 <ListBox.ItemTemplate><DataTemplate>
                   <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <StackPanel><TextBlock Text="{Binding ToolName}" FontWeight="SemiBold" Foreground="{StaticResource HeadingBrush}" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding ActivitySubtitle}" FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,4,12,0" TextTrimming="CharacterEllipsis"/></StackPanel>
-                    <TextBlock Grid.Column="1" Text="{Binding State}" Foreground="{StaticResource BodyBrush}" VerticalAlignment="Center"/>
+                    <Border Grid.Column="1" Background="{StaticResource ControlSurface}" CornerRadius="10" Padding="9,3" VerticalAlignment="Center"><TextBlock Text="{Binding State}" FontSize="11" Foreground="{StaticResource BodyBrush}"/></Border>
                   </Grid>
                 </DataTemplate></ListBox.ItemTemplate>
               </ListBox>
             </StackPanel>
           </Border>
-          <Expander x:Name="TasksPageDetailsSection" Header="Details and result" Margin="4,18,4,0" Foreground="{StaticResource BodyBrush}">
-            <TextBox x:Name="TasksPageDetail" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MaxHeight="240" MinHeight="90" Background="#BFFFFFFF" BorderBrush="#DCE3ED" FontFamily="Consolas" FontSize="12" Padding="12" Margin="0,10,0,0" Text="Select a task to inspect its details."/>
+          </Grid>
+          <Expander x:Name="TasksPageDetailsSection" Style="{StaticResource RoundedDisclosure}" Header="Details and result" Margin="0,18,0,0" Foreground="{StaticResource BodyBrush}">
+            <TextBox x:Name="TasksPageDetail" Style="{StaticResource InputBox}" Height="Auto" VerticalContentAlignment="Top" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MaxHeight="240" MinHeight="90" Background="#BFFFFFFF" BorderBrush="#DCE3ED" FontFamily="Consolas" FontSize="12" Padding="12" Text="Select a task to inspect its details."/>
           </Expander>
-          <Expander Header="Find a task by ID" Margin="4,14,4,0" Foreground="{StaticResource BodyBrush}">
-            <StackPanel Margin="0,10,0,0">
+          <Expander Style="{StaticResource RoundedDisclosure}" Header="Find a task by ID" Margin="0,12,0,0" Foreground="{StaticResource BodyBrush}">
+            <StackPanel>
               <TextBlock Text="Use the MCP Task ID supplied by your AI client, not a Worker Job ID." Style="{StaticResource HelperText}" TextWrapping="Wrap" Margin="0,0,0,8"/>
               <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <TextBox x:Name="TasksPageTaskId" Style="{StaticResource InputBox}" AutomationProperties.Name="MCP Task ID"/>
@@ -659,7 +713,10 @@
                        LostFocus="Port_LostFocus"/>
               <Button Grid.Column="2" Content="New token" Style="{StaticResource SmallButton}" HorizontalAlignment="Right" Click="RegenerateToken_Click"/>
             </Grid>
-            <Button Content="Copy secure setup" Style="{StaticResource ActionButton}" HorizontalAlignment="Stretch" Margin="0,10,0,0" Click="CopySecureSetup_Click"/>
+            <TextBlock Text="HTTPS is automatic. Copy setup to connect another computer."
+                       Style="{StaticResource HelperText}" Margin="0,5,0,0"/>
+            <Button Content="Copy connection setup" Style="{StaticResource ActionButton}" HorizontalAlignment="Stretch" Margin="0,10,0,0" Click="CopySecureSetup_Click"/>
+            <TextBlock x:Name="ServiceSettingsNote" Visibility="Collapsed" Style="{StaticResource HelperText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
           </StackPanel>
         </Grid>
       </Border>
@@ -676,7 +733,7 @@
                        ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
               <Button Grid.Column="1" Content="Copy" Style="{StaticResource ActionButton}" MinWidth="70" Margin="9,0,0,0" Click="CopyEndpoint_Click"/>
             </Grid>
-            <TextBlock Text="Use Copy secure setup to connect another computer." Style="{StaticResource HelperText}" Margin="0,10,0,0"/>
+            <TextBlock Text="Use Copy connection setup to connect another computer." Style="{StaticResource HelperText}" Margin="0,10,0,0"/>
           </StackPanel>
         </Border>
         <Border Grid.Column="2" Style="{StaticResource Card}">
@@ -694,11 +751,13 @@
               <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
               <TextBox x:Name="RemoteSecureSetup" Style="{StaticResource InputBox}"
                        ToolTip="Paste the complete secure setup JSON copied from the OpticStudio computer. It is stored securely after validation."
-                       LostFocus="RemoteSecureSetup_LostFocus"/>
-              <Button Grid.Column="1" Content="Use local" Style="{StaticResource SmallButton}" Margin="9,2,0,2"
-                      ToolTip="Use this computer's local MCP service again" Click="ClearRemoteSetup_Click"/>
+                       AutomationProperties.Name="Remote connection setup"/>
+              <Button x:Name="ConnectRemoteButton" Grid.Column="1" Content="Connect" Style="{StaticResource PrimaryButton}" Margin="9,2,0,2"
+                      ToolTip="Apply this setup and connect to the OpticStudio computer" Click="ConnectRemoteSetup_Click"/>
             </Grid>
-            <TextBlock Text="Paste secure setup from the OpticStudio computer." Style="{StaticResource HelperText}" Margin="1,8,0,0"/>
+            <TextBlock Text="Paste connection setup, then select Connect. Windows may ask you to trust the server certificate on first use." Style="{StaticResource HelperText}" TextWrapping="Wrap" Margin="1,8,0,0"/>
+            <Button x:Name="SwitchToLocalButton" Content="Switch to this computer instead" Style="{StaticResource SmallButton}" HorizontalAlignment="Left" Margin="0,14,0,0"
+                    ToolTip="Disconnect from the remote computer and use a local OpticStudio installation" Click="ClearRemoteSetup_Click"/>
           </StackPanel>
         </Border>
       </Grid>
@@ -718,7 +777,10 @@
             <TextBlock Text="Connection diagnostics" Style="{StaticResource StatusHeading}" VerticalAlignment="Center"/>
             <StackPanel Grid.Column="1" Orientation="Horizontal">
               <Button Content="Logs" Style="{StaticResource SmallButton}" Margin="0,0,7,0" Click="OpenLogs_Click"/>
-              <Button Content="Updates" Style="{StaticResource SmallButton}" Margin="0,0,7,0" Click="Update_Click"/>
+              <Button x:Name="UpdateButton" Content="Updates" Style="{StaticResource SmallButton}" Margin="0,0,7,0" Click="Update_Click"/>
+              <Button x:Name="CancelUpdateButton" Content="Cancel download" Visibility="Collapsed" Style="{StaticResource SmallButton}" Margin="0,0,7,0" Click="CancelUpdate_Click"/>
+              <Button x:Name="TestMcpToolsButton" Content="Test MCP tools" Style="{StaticResource SmallButton}" Margin="0,0,7,0" Click="TestMcpTools_Click"
+                      ToolTip="Actually call tools/list and read-only zemax_status, and negotiate official Tasks; never starts an optical Job."/>
               <Button Content="Copy diagnostics" Style="{StaticResource SmallButton}" Click="CopyDiagnostics_Click"/>
             </StackPanel>
           </Grid>

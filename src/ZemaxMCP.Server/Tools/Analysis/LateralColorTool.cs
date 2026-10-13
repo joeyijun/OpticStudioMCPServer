@@ -55,7 +55,7 @@ public class LateralColorTool
 
     private static LateralColorData ParseLateralColorTextFile(string filePath)
     {
-        var lines = File.ReadAllLines(filePath);
+        var lines = LocalizedAnalysisText.ReadLines(filePath);
         string units = "";
         double maxField = double.NaN, shortWave = double.NaN, longWave = double.NaN;
         var relFields = new List<double>();

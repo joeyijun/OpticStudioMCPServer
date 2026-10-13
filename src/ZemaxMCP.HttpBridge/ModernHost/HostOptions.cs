@@ -9,12 +9,18 @@ internal sealed class HostOptions
     public string Host { get; private set; } = "127.0.0.1";
     public int Port { get; private set; } = 8000;
     public string McpPath { get; private set; } = "/mcp";
+    public string TlsPfxPath { get; private set; } = "";
+    public string TlsPasswordEnvironmentVariable { get; private set; } = "ZEMAX_MCP_TLS_PFX_PASSWORD";
+    public bool TlsEnabled => !string.IsNullOrEmpty(TlsPfxPath);
+    public string TransportScheme => TlsEnabled ? "https" : "http";
     public string LogDirectory { get; private set; } = Path.Combine(AppContext.BaseDirectory, "logs");
     public string AccessToken { get; private set; } = Environment.GetEnvironmentVariable("ZEMAX_MCP_TOKEN") ?? string.Empty;
     public string ClientCredentialsFile { get; private set; } = Environment.GetEnvironmentVariable("ZEMAX_MCP_CLIENTS_FILE") ?? string.Empty;
     public int WorkerStartupTimeoutSeconds { get; private set; } = 90;
     public int RequestTimeoutSeconds { get; private set; } = 300;
     public int RequestWriteTimeoutSeconds { get; private set; } = 10;
+    public int MaxPendingRequests { get; private set; } = 32;
+    public int QueueWaitTimeoutSeconds { get; private set; } = 30;
     public int HardRecoveryTimeoutSeconds { get; private set; } = 360;
     public int JobRecoveryTimeoutSeconds { get; private set; } = 60;
     public int CancellationWriteTimeoutSeconds { get; private set; } = 5;
@@ -46,10 +52,14 @@ internal sealed class HostOptions
                 case "--host": options.Host = value; break;
                 case "--port": options.Port = ParseRange(value, option, 1, 65535); break;
                 case "--path": options.McpPath = NormalizePath(value); break;
+                case "--tls-pfx": options.TlsPfxPath = value; break;
+                case "--tls-password-env": options.TlsPasswordEnvironmentVariable = value; break;
                 case "--log-dir": options.LogDirectory = value; break;
                 case "--worker-startup-timeout-seconds": options.WorkerStartupTimeoutSeconds = ParseRange(value, option, 10, 600); break;
                 case "--request-timeout-seconds": options.RequestTimeoutSeconds = ParseRange(value, option, 10, 3600); break;
                 case "--request-write-timeout-seconds": options.RequestWriteTimeoutSeconds = ParseRange(value, option, 1, 60); break;
+                case "--max-pending-requests": options.MaxPendingRequests = ParseRange(value, option, 1, 1024); break;
+                case "--queue-wait-timeout-seconds": options.QueueWaitTimeoutSeconds = ParseRange(value, option, 1, 300); break;
                 case "--hard-recovery-timeout-seconds": options.HardRecoveryTimeoutSeconds = ParseRange(value, option, 20, 7200); break;
                 case "--job-recovery-timeout-seconds": options.JobRecoveryTimeoutSeconds = ParseRange(value, option, 5, 1800); break;
                 case "--cancellation-write-timeout-seconds": options.CancellationWriteTimeoutSeconds = ParseRange(value, option, 1, 30); break;
@@ -70,6 +80,19 @@ internal sealed class HostOptions
         }
 
         if (string.IsNullOrWhiteSpace(options.WorkerPath)) throw new ArgumentException("--worker cannot be empty.");
+        if (!System.Text.RegularExpressions.Regex.IsMatch(options.TlsPasswordEnvironmentVariable,
+                @"^[A-Za-z_][A-Za-z0-9_]*$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+            throw new ArgumentException("--tls-password-env must be an environment variable name.");
+        if (!options.TlsEnabled && args.Any(x => x.Equals("--tls-password-env", StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException("--tls-password-env requires --tls-pfx.");
+        if (options.TlsEnabled)
+        {
+            options.TlsPfxPath = Path.GetFullPath(options.TlsPfxPath);
+            if (!File.Exists(options.TlsPfxPath))
+                throw new ArgumentException("TLS PFX certificate file was not found.");
+            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(options.TlsPasswordEnvironmentVariable)))
+                throw new ArgumentException("TLS PFX password environment variable is missing or empty.");
+        }
         if (string.IsNullOrWhiteSpace(options.Host)) throw new ArgumentException("--host cannot be empty.");
         if (options.ClientCredentialsFile.Length != 0 && string.IsNullOrWhiteSpace(options.ClientCredentialsFile))
             throw new ArgumentException("ZEMAX_MCP_CLIENTS_FILE cannot be whitespace.");
@@ -105,9 +128,9 @@ internal sealed class HostOptions
         }
         if (options._allowedOrigins.Count == 0 && IsLoopback(options.Host))
         {
-            options._allowedOrigins.Add(OriginRule.AnyPort("http", "127.0.0.1"));
-            options._allowedOrigins.Add(OriginRule.AnyPort("http", "localhost"));
-            options._allowedOrigins.Add(OriginRule.AnyPort("http", "::1"));
+            options._allowedOrigins.Add(OriginRule.AnyPort(options.TransportScheme, "127.0.0.1"));
+            options._allowedOrigins.Add(OriginRule.AnyPort(options.TransportScheme, "localhost"));
+            options._allowedOrigins.Add(OriginRule.AnyPort(options.TransportScheme, "::1"));
         }
         return options;
     }

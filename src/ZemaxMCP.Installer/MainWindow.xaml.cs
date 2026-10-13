@@ -100,7 +100,7 @@ public partial class MainWindow : Window
         }
         if (process.ExitCode != 0)
             throw new InvalidOperationException(
-                "The update could not be applied or rolled back cleanly. Check %LOCALAPPDATA%\\ZemaxMCP\\update.log; any preserved recovery backup path is recorded there.");
+                "Update postponed or failed. Wait for optical tasks to finish and safely Exit the old service, then retry. Check %LOCALAPPDATA%\\ZemaxMCP\\update.log for the exact reason and any recovery backup.");
     }
     private static void StopExistingProcesses()
     {
@@ -114,8 +114,7 @@ public partial class MainWindow : Window
                     try { executable = process.MainModule?.FileName ?? string.Empty; }
                     catch { continue; }
                     if (!executable.StartsWith(InstallDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) continue;
-                    process.Kill();
-                    if (!process.WaitForExit(5000)) throw new InvalidOperationException($"Could not stop {name}. Please click Exit from its tray icon, then retry.");
+                    if (!process.HasExited) throw new InvalidOperationException($"A partial installation is still running ({name}). Exit the old service safely before repairing this installation.");
                 }
                 finally { process.Dispose(); }
             }

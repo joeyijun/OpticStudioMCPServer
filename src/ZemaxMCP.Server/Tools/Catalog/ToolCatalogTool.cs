@@ -14,7 +14,7 @@ namespace ZemaxMCP.Server.Tools.Catalog;
 public sealed class ToolCatalogTool
 {
     public sealed record ToolGroup(string Id, string Title, string Purpose, int ToolCount);
-    public sealed record ToolEntry(string Name, string Group, string Risk, string Description, string SafetyGuidance);
+    public sealed record ToolEntry(string Name, string Group, string Risk, string Description, string SafetyGuidance, string BackgroundExecution = "none");
     public sealed record TaskPlaybook(
         string Id, string Goal, string Guidance,
         IReadOnlyList<string> AvailableSteps, IReadOnlyList<string> UnavailableSteps);
@@ -27,7 +27,7 @@ public sealed class ToolCatalogTool
         IReadOnlyList<TaskPlaybook> Playbooks);
 
     [ZemaxTool(Name = "zemax_tool_catalog")]
-    [Description("Find a small, ordered tool playbook for common optical jobs. Set task to clipping, imaging, straylight, energy, optimize, tolerance or safe-edit; omit it for the full catalog. Playbooks are planning hints, not automatic execution or safety authorization.")]
+    [Description("Find a small, ordered tool playbook for common optical jobs. Set task to clipping, imaging, straylight, energy, optimize, tolerance or safe-edit; omit it for the full catalog. Playbooks are planning hints, not automatic execution or safety authorization. Call zemax_task_plan(task) to validate the actual connected model, physical preconditions and required confirmations.")]
     public CatalogResult Execute(
         [Description("When true, return only high-impact operations that deserve an explicit confirmation.")] bool highImpactOnly = false,
         [Description("Optional task playbook: clipping, imaging, straylight, energy, optimize, tolerance or safe-edit. Empty returns the full catalog.")] string? task = null)
@@ -48,7 +48,7 @@ public sealed class ToolCatalogTool
         var highImpact = entries.Count(entry => entry.Risk == ToolCatalog.HighImpactRisk);
 
         return new CatalogResult(
-            "Inspect the current system first, edit only the required data, run an analysis to verify the change, then save or export deliberately. For high-impact tools, confirm the target system and intended change before running.",
+            "Use zemax_task_plan(task) to check the connected model and required confirmations. Inspect the current system first, edit only the required data, independently verify any change, then save or export deliberately. Tool availability does not override per-token authorization.",
             entries.Length,
             highImpact,
             groups,
@@ -65,32 +65,34 @@ internal static class ToolCatalog
     {
         new("clipping", "Locate blocked rays and pupil losses",
             "Read the lens first. Compare vignetting codes, aperture clear fraction and field/wavelength; do not interpret failed rays as blocked rays.",
-            new[] { "zemax_get_system", "zemax_get_surface", "zemax_get_surface_aperture",
-                "zemax_ray_trace_diagnostics", "zemax_ray_footprint", "zemax_aperture_throughput" }),
+            new[] { "zemax_system_summary", "zemax_get_system", "zemax_get_surface", "zemax_get_surface_aperture",
+                "zemax_diagnose_clipping", "zemax_ray_trace_diagnostics",
+                "zemax_ray_footprint", "zemax_aperture_throughput" }),
         new("imaging", "Diagnose image formation",
             "Select a field and wavelength, then compare RMS spot, PSF and MTF before changing a lens.",
-            new[] { "zemax_get_system", "zemax_get_field_settings", "zemax_rms_spot", "zemax_fft_psf", "zemax_fft_mtf" }),
+            new[] { "zemax_system_summary", "zemax_get_system", "zemax_get_field_settings", "zemax_rms_spot", "zemax_fft_psf", "zemax_fft_mtf" }),
         new("straylight", "Inspect NSC geometry and trace",
             "Check source, detector and object IDs before ray tracing. Detector totals do not by themselves prove source-to-detector efficiency.",
-            new[] { "zemax_get_nonsequential_system_settings", "zemax_nsc_scene_summary",
+            new[] { "zemax_system_summary", "zemax_get_nonsequential_system_settings", "zemax_nsc_scene_summary",
                 "zemax_get_nsc_objects", "zemax_run_nsc_ray_trace",
                 "zemax_get_nsc_detector", "zemax_nsc_energy_budget" }),
         new("energy", "Build a traceable optical energy budget",
             "Use aperture fraction for sequential geometric clipping. For NSC, read detector flux and provide a measured/defined launched-flux denominator; detect overlapping detectors and wavelength-mixing.",
-            new[] { "zemax_get_wavelength_settings", "zemax_get_field_settings", "zemax_energy_budget",
+            new[] { "zemax_system_summary", "zemax_get_wavelength_settings", "zemax_get_field_settings", "zemax_energy_budget",
                 "zemax_aperture_throughput", "zemax_ray_footprint", "zemax_nsc_scene_summary",
                 "zemax_get_nsc_detector", "zemax_nsc_energy_budget" }),
         new("optimize", "Safely improve performance",
             "Record the starting merit and system snapshot, inspect variables, optimize, and independently compare results before saving.",
-            new[] { "zemax_get_system", "zemax_get_merit_function", "zemax_get_variables", "zemax_snapshot_list", "zemax_optimize" }),
+            new[] { "zemax_system_summary", "zemax_get_system", "zemax_get_merit_function", "zemax_get_variables", "zemax_snapshot_list", "zemax_optimize" }),
         new("tolerance", "Assess manufacturing sensitivity",
             "Inspect TDE operands and criterion, run bounded Monte Carlo, and report sample count plus unverified manufacturing assumptions.",
-            new[] { "zemax_tolerance_summary", "zemax_get_tolerances", "zemax_run_tolerancing" }),
+            new[] { "zemax_system_summary", "zemax_tolerance_summary", "zemax_get_tolerances", "zemax_run_tolerancing" }),
         new("safe-edit", "Safely edit and compare an optical lens",
-            "Read the correct active lens and target rows; read existing snapshots. An allowed edit creates a pre-change snapshot. Apply the smallest change, read back the exact rows and compare the snapshot before saving. Preview proposed changes with the user; no automatic commit.",
-            new[] { "zemax_get_system", "zemax_get_surface", "zemax_snapshot_list",
-                "zemax_batch_set_surfaces", "zemax_get_surface", "zemax_snapshot_list",
-                "zemax_snapshot_diff", "zemax_save_file" })
+            "Confirm the active sequential lens and selected rows. Capture a fresh workflow baseline and a spot analysis with explicit field/wavelength/rings. After approval, pass baseline.id as expectedBaselineId to the batch edit; the Worker checks the scoped model state atomically before snapshot/write. Read back and verify the edit, repeat the same analysis settings and compare Worker-issued analysis IDs against explicit criteria. Numeric acceptance is not full design validation. Review snapshot diff; save only after approval.",
+            new[] { "zemax_system_summary", "zemax_get_system", "zemax_get_surface", "zemax_workflow_baseline",
+                "zemax_spot_diagram", "zemax_snapshot_list", "zemax_preview_surface_edits", "zemax_batch_set_surfaces",
+                "zemax_get_surface", "zemax_workflow_verify", "zemax_spot_diagram",
+                "zemax_compare_analyses", "zemax_snapshot_diff", "zemax_save_file" })
     };
 
     internal static IReadOnlyList<ToolCatalogTool.TaskPlaybook> GetPlaybooks(string? task, Func<string, bool> permitted)
@@ -100,7 +102,8 @@ internal static class ToolCatalog
             throw new ArgumentException("Unknown task. Choose clipping, imaging, straylight, energy, optimize, tolerance or safe-edit.", nameof(task));
         return PlaybookDefinitions.Where(item => string.IsNullOrEmpty(target) || item.Id == target)
             .Select(item => new ToolCatalogTool.TaskPlaybook(
-                item.Id, item.Goal, item.Guidance,
+                item.Id, item.Goal,
+                "First call zemax_execution_context to identify the OpticStudio computer. File paths belong to that computer, not the AI client. For supported long analyses/optimization, use runInBackground=true with ordinary clients and poll the Job; Tasks-capable clients can receive a Task automatically. Explicit false keeps synchronous execution. " + item.Guidance,
                 item.Steps.Where(permitted).ToArray(),
                 item.Steps.Where(name => !permitted(name)).ToArray()))
             .ToArray();
@@ -135,7 +138,7 @@ internal static class ToolCatalog
             _ => ReadOnlyRisk
         };
         var group = ToolsetCatalog.GetDomain(tool.Name).Title;
-        return new ToolCatalogTool.ToolEntry(tool.Name, group, risk, tool.Description, GetSafetyGuidance(risk, tool.Name));
+        return new ToolCatalogTool.ToolEntry(tool.Name, group, risk, tool.Description, GetSafetyGuidance(risk, tool.Name), tool.BackgroundExecution);
     }
 
     private static string GetSafetyGuidance(string risk, string name)

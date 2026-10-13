@@ -30,11 +30,12 @@ public class GetMeritFunctionTool
         int Row,
         string Type,
         string? RowTypeName,
-        double Target,
-        double Weight,
+        double? Target,
+        double? Weight,
         double? Value,
         double? Contribution,
-        IReadOnlyList<MeritCell> Cells);
+        IReadOnlyList<MeritCell> Cells,
+        string? NumericDataNote = null);
 
     public record GetMeritFunctionResult(
         bool Success,
@@ -45,7 +46,7 @@ public class GetMeritFunctionTool
         IReadOnlyList<MeritOperandInfo> Operands);
 
     [ZemaxTool(Name = "zemax_get_merit_function")]
-    [Description("Read the current Merit Function Editor with typed active parameter cells. Non-finite weighted operand data is reported as an error instead of being converted to zero. Set includeValues=false to avoid recalculating operand values.")]
+    [Description("Read the current Merit Function Editor with typed active parameter cells. Undefined numeric data on blank/unweighted rows is returned as null with a note; invalid weighted objective data is an error, never zero. Set includeValues=false to avoid recalculating operand values.")]
     public async Task<GetMeritFunctionResult> ExecuteAsync(
         [Description("Calculate the Merit Function and include operand Value/Contribution fields")]
         bool includeValues = true,
@@ -107,14 +108,16 @@ public class GetMeritFunctionTool
 
                     double target = row.Target;
                     double weight = row.Weight;
-                    ValidateFinite(target, $"target at MFE row {rowNumber}");
-                    ValidateFinite(weight, $"weight at MFE row {rowNumber}");
+                    bool blank = row.Type == MeritOperandType.BLNK;
+                    var reportedWeight = MeritFunctionCompatibility.OptionalNumber(weight, !blank, $"weight at MFE row {rowNumber}");
+                    bool weighted = !blank && weight > 0;
+                    var reportedTarget = MeritFunctionCompatibility.OptionalNumber(target, weighted, $"target at MFE row {rowNumber}");
                     if (weight < 0)
                         throw new InvalidDataException($"MFE row {rowNumber} ({row.Type}) has negative weight {weight}.");
 
                     double? value = null;
                     double? contribution = null;
-                    if (includeValues && weight > 0)
+                    if (includeValues && weighted)
                     {
                         var rowValue = row.Value;
                         ValidateFinite(rowValue, $"value at weighted MFE row {rowNumber}");
@@ -132,18 +135,20 @@ public class GetMeritFunctionTool
                             ?? throw new InvalidOperationException($"MFE row {rowNumber} did not expose cell {column}.");
                         if (!cell.IsActive)
                             continue;
-                        cells.Add(ReadCell(rowNumber, column, cell));
+                        cells.Add(ReadCell(rowNumber, column, cell, weighted));
                     }
 
                     operands.Add(new MeritOperandInfo(
                         rowNumber,
                         row.Type.ToString(),
                         row.RowTypeName,
-                        target,
-                        weight,
+                        reportedTarget,
+                        reportedWeight,
                         value,
                         contribution,
-                        cells));
+                        cells,
+                        reportedTarget == null || reportedWeight == null || cells.Any(cell => cell.DataType == "Double" && cell.DoubleValue == null)
+                            ? "Undefined numeric data on a blank or unweighted row is reported as null, not zero." : null));
                 }
 
                 _logger.LogInformation("Read MFE rows {Start}-{End}; {Returned}/{Total} operands returned.", start, end, operands.Count, numberOfOperands);
@@ -161,7 +166,7 @@ public class GetMeritFunctionTool
         }
     }
 
-    private static MeritCell ReadCell(int rowNumber, int column, IEditorCell cell)
+    private static MeritCell ReadCell(int rowNumber, int column, IEditorCell cell, bool weighted)
     {
         switch (cell.DataType)
         {
@@ -169,8 +174,8 @@ public class GetMeritFunctionTool
                 return new MeritCell(column, cell.DataType.ToString(), cell.IntegerValue, null, null);
             case CellDataType.Double:
                 var value = cell.DoubleValue;
-                ValidateFinite(value, $"MFE row {rowNumber} cell {column}");
-                return new MeritCell(column, cell.DataType.ToString(), null, value, null);
+                return new MeritCell(column, cell.DataType.ToString(), null,
+                    MeritFunctionCompatibility.OptionalNumber(value, weighted, $"MFE row {rowNumber} cell {column}"), null);
             case CellDataType.String:
                 return new MeritCell(column, cell.DataType.ToString(), null, null, cell.Value);
             default:

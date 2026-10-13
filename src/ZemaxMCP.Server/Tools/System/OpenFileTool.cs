@@ -29,7 +29,7 @@ public class OpenFileTool
     [ZemaxTool(Name = "zemax_open_file")]
     [Description("Open a Zemax lens file (.zmx or .zos) and load any matching optimization-constraint sidecar.")]
     public async Task<OpenFileResult> ExecuteAsync(
-        [Description("Full path to the lens file")] string filePath,
+        [Description("Absolute lens path on the OpticStudio computer. Not a path on the AI client; no automatic upload.")] string filePath,
         CancellationToken cancellationToken = default)
     {
         try
@@ -42,7 +42,7 @@ public class OpenFileTool
             {
                 return new OpenFileResult(
                     Success: false,
-                    Error: $"File not found: {filePath}",
+                    Error: $"Lens file not found on the OpticStudio computer '{Environment.MachineName}': {filePath}. This is not the AI client's filesystem. Use zemax_execution_context / zemax_list_lens_files, or explicitly transfer a client-local file first.",
                     FilePath: null,
                     NumberOfSurfaces: 0,
                     Title: null,

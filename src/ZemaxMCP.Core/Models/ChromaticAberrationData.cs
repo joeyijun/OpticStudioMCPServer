@@ -32,7 +32,9 @@ public record ChromaticFocalShiftData
     public string ShiftUnits { get; init; } = "";
     public double PupilZone { get; init; }
     public double MaximumFocalShiftRange { get; init; }
+    public string? MaximumFocalShiftRangeUnits { get; init; }
     public double DiffractionLimitedRange { get; init; }
+    public string? DiffractionLimitedRangeUnits { get; init; }
     public double[]? Wavelengths { get; init; }
     public double[]? Shifts { get; init; }
     public int DataPoints { get; init; }

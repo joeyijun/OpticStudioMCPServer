@@ -11,13 +11,15 @@ internal static class Program
 {
     public static int Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "--self-test-commands") { CommandMetadataAudit.SelfTest(); return 0; }
         if (args.Length != 2)
         {
             Console.Error.WriteLine("Usage: ZemaxMCP.ToolManifestGenerator <tools-source-root> <output-file>");
             return 2;
         }
 
-        var toolsRoot = Path.GetFullPath(args[0]);
+        var auditOnly = args[0] == "--audit-commands";
+        var toolsRoot = Path.GetFullPath(auditOnly ? args[1] : args[0]);
         var outputFile = Path.GetFullPath(args[1]);
         if (!Directory.Exists(toolsRoot))
         {
@@ -31,6 +33,8 @@ internal static class Program
             .ToArray();
 
         var context = new SchemaContext(documents);
+        foreach (var document in documents) CommandMetadataAudit.Validate(document.Root, document.Path);
+        if (auditOnly) { Console.WriteLine("Syntax-based execution command safety audit passed."); return 0; }
         var tools = new List<GeneratedTool>();
         foreach (var document in documents)
         {

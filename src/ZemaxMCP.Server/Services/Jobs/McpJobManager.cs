@@ -12,9 +12,9 @@ public sealed class McpJobManager : IDisposable
 {
     private static readonly AsyncLocal<string?> ParentOperation = new();
 
-    public const int DefaultMaxHistory = 128;
+    public const int DefaultMaxHistory = ZemaxMCP.Rpc.WorkerJobHistoryPolicy.TerminalHistoryLimit;
     public const int DefaultMaxResultHistory = 16;
-    public const int DefaultMaxPending = 64;
+    public const int DefaultMaxPending = ZemaxMCP.Rpc.WorkerJobHistoryPolicy.PendingJobLimit;
 
     private readonly object _gate = new();
     private readonly Queue<JobEntry> _pending = new();
@@ -225,10 +225,11 @@ public sealed class McpJobManager : IDisposable
 
     private async Task<bool> ExecuteWithRecoveryAsync(JobEntry entry, CancellationToken cancellationToken)
     {
+        using var observation = new ZemaxMCP.Core.Session.EngineeringObservation();
         var context = new McpJobContext(
             cancellationToken,
             (progress, message) => PublishProgress(entry, progress, message),
-            result => PublishResult(entry, result));
+            result => PublishResult(entry, result, observation));
 
         var operationTask = entry.Operation(context);
         if (!cancellationToken.CanBeCanceled)
@@ -322,8 +323,20 @@ public sealed class McpJobManager : IDisposable
         Publish(snapshot);
     }
 
-    private void PublishResult(JobEntry entry, object? result)
+    private void PublishResult(JobEntry entry, object? result, ZemaxMCP.Core.Session.EngineeringObservation observation)
     {
+        if(result!=null && observation.Operations.Count>0)
+        {
+            var jsonOptions=new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web);
+            var json=System.Text.Json.JsonSerializer.SerializeToElement(result,jsonOptions);
+            if(json.ValueKind==System.Text.Json.JsonValueKind.Object)
+            {
+                var annotated=json.EnumerateObject().ToDictionary(p=>p.Name,p=>(object?)p.Value.Clone());
+                annotated["engineering"] = new { analysisId=ZemaxMCP.Server.Tools.Catalog.AnalysisEvidenceStore.Record(entry.ToolName,json.GetRawText(),
+                    System.Text.Json.JsonSerializer.Serialize(new { operations=observation.Operations,truncated=observation.Truncated },jsonOptions)),operations=observation.Operations,truncated=observation.Truncated };
+                result=annotated;
+            }
+        }
         McpJobSnapshot snapshot;
         lock (_gate)
         {

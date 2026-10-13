@@ -24,7 +24,7 @@ public class ExportAnalysisTool
         "Run an explicitly supported OpticStudio analysis and export requested BMP and/or TXT results. " +
         "Supported types: StandardSpot, MatrixSpot, FftMtf, GeometricMtf, FftPsf, HuygensPsf, " +
         "GeometricImageAnalysis, RayFan, OpdFan, WavefrontMap, SeidelDiagram, FieldCurvature, " +
-        "LongitudinalAberration, LateralColor, FocalShiftDiagram, Draw2D, Draw3D, FftMtfVsField, " +
+        "LongitudinalAberration, LateralColor, FocalShiftDiagram, SeidelCoefficients, PupilAberrationFan, Draw2D, Draw3D, FftMtfVsField, " +
         "FftThroughFocusMtf, RelativeIllumination, Interferogram. Aliases such as spot, mtf, psf, ima and layout are accepted. " +
         "The tool does not silently fall back from BMP to TXT. Every requested output must be produced, and existing files are preserved unless overwrite=true.")]
     public async Task<ExportResult> ExecuteAsync(
@@ -218,6 +218,8 @@ public class ExportAnalysisTool
             "opdfan" or "opd" => (AnalysisIDM.OpticalPathFan, "OpdFan"),
             "wavefrontmap" or "wavefront" => (AnalysisIDM.WavefrontMap, "WavefrontMap"),
             "seidel" or "seideldiagram" => (AnalysisIDM.SeidelDiagram, "SeidelDiagram"),
+            "seidelcoefficients" => (AnalysisIDM.SeidelCoefficients, "SeidelCoefficients"),
+            "pupilaberrationfan" => (AnalysisIDM.PupilAberrationFan, "PupilAberrationFan"),
             "fieldcurvature" or "distortion" => (AnalysisIDM.FieldCurvatureAndDistortion, "FieldCurvature"),
             "longitudinalaberration" => (AnalysisIDM.LongitudinalAberration, "LongitudinalAberration"),
             "lateralcolor" => (AnalysisIDM.LateralColor, "LateralColor"),

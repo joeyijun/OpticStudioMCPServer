@@ -13,6 +13,8 @@ internal static class InstallRuntimeData
         name.Equals("clients.json", StringComparison.OrdinalIgnoreCase);
 
     internal static bool IsDirectory(string name) =>
+        name.Equals("https", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("task-journals", StringComparison.OrdinalIgnoreCase) ||
         name.Equals("logs", StringComparison.OrdinalIgnoreCase) ||
         name.Equals("snapshots", StringComparison.OrdinalIgnoreCase) ||
         name.Equals("shortcut-icons", StringComparison.OrdinalIgnoreCase);
