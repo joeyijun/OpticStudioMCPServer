@@ -1,4 +1,4 @@
-# 1.5.2 acceptance (release blocked)
+# 1.5.2 acceptance (final candidate awaiting deployment)
 
 The deployed `41948e4` build was exercised on OpticStudio 2024 R1.03 over
 authenticated HTTPS on 2026-10-13. This is representative workflow acceptance,
@@ -34,9 +34,14 @@ authenticated HTTPS on 2026-10-13. This is representative workflow acceptance,
   full exported reports (field curvature, focal shift, lateral color, relative
   illumination, OPD fan). Fullwidth punctuation, number/unit boundaries and
   duplicated short-wavelength labels are covered; numeric rows are unchanged.
-- Pupil-fan uses the same narrow fan-heading normalizer, but still requires its
-  own native report/live verification. Seidel coefficients still require their
-  actual exported report; no speculative coefficient mapping is implemented.
+- Deployed `d86d949` subsequently passed 65 representative checks, including
+  Job lists and all six localized curve/Fan analyses. Seidel was the only
+  remaining failed tool. The original SeidelCoefficients and PupilAberrationFan
+  reports were exported by the native installed OpticStudio and supplied for
+  local parser verification. All seven full reports and sanitized fixtures now
+  pass numeric/metadata assertions; Seidel totals and wavefront summary are
+  independently checked against those reported values. The new Seidel mapping
+  still needs the final candidate's actual end-to-end tool call before release.
 - Export supports `SeidelCoefficients` and `PupilAberrationFan` so their original
   text can be collected without an arbitrary remote-file-read API.
 
@@ -48,8 +53,9 @@ does not support TXT export on this installed version.
 
 ## Release gate
 
-Do not publish 1.5.2 until the candidate is deployed, Job-list and localized
-analysis fixes pass live, and remaining Seidel/Pupil-fan reports are resolved.
+Do not publish 1.5.2 until the final candidate is deployed and its Seidel call
+passes live. Job-list and the other localized analysis fixes already passed on
+`d86d949`. The README screenshot is the user-supplied 2026-10-12 dashboard image.
 Keep PR #40 Draft until that acceptance and exact-head hosted CI are green.
 Real non-cooperative COM hangs, other OpticStudio versions, arbitrary CAD and
 absolute radiometric energy conservation are outside the completed evidence.

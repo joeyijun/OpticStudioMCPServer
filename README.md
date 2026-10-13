@@ -2,7 +2,7 @@
 
 **A GUI-first Windows MCP server for Zemax OpticStudio.** It detects installed OpticStudio versions, runs an HTTP MCP service locally or on a trusted LAN, and configures **Codex**, **Claude Desktop**, **Cursor**, **Google Antigravity**, **Kimi Code**, **WorkBuddy**, and **VS Code / GitHub Copilot**.
 
-![Zemax MCP launcher dashboard](docs/images/launcher-dashboard.png)
+![Zemax MCP overview — MCP service, OpticStudio and AI client setup](docs/images/launcher-dashboard.png)
 
 ## Windows quick start
 
@@ -26,9 +26,14 @@ flowchart LR
   B --> E["Launcher status\nMCP · ZOS-API · live AI activity"]
 ```
 
-For a single computer, the AI client uses the local MCP address. For two computers, enable **Share with a trusted LAN computer** on the OpticStudio computer and choose **Copy secure setup**. On the AI computer, paste the complete bundle into the launcher's **Secure setup** field. The launcher extracts the endpoint and token, protects the token with Windows user-scope encryption, and configures supported AI clients. Deploy the same package on both computers to see the latest remote activity display.
+For a single computer, the AI client uses the local MCP address. For two computers, enable **Share with a trusted LAN computer** on the OpticStudio computer and choose **Copy connection setup**. On the AI computer, paste the complete bundle into the launcher's **Secure setup** field. The launcher extracts the endpoint and token, protects the token with Windows user-scope encryption, and configures supported AI clients. Deploy the same package on both computers to see the latest remote activity display.
 
 ## Highlights
+
+The Tasks page keeps all unfinished operations and the most recent **30** terminal
+operations, merging each official Task with its underlying Worker Job. Large
+result payloads have a separate recent-16 retention window; important results
+should be exported. See [Task history and results](docs/TASK_HISTORY.md).
 
 For remote AI use, file paths always belong to the **OpticStudio computer**, not
 the AI client's local filesystem. Start with `zemax_execution_context`; use

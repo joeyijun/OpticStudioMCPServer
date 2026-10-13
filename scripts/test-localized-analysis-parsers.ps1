@@ -10,7 +10,9 @@ $cases=@(
  @('FocalShiftDiagram','ChromaticFocalShiftTool','ParseChromaticFocalShiftTextFile'),
  @('LateralColor','LateralColorTool','ParseLateralColorTextFile'),
  @('RelativeIllumination','RelativeIlluminationTool','ParseRelativeIlluminationTextFile'),
- @('OpdFan','OpticalPathFanTool','ParseOpdFanTextFile'))
+ @('OpdFan','OpticalPathFanTool','ParseOpdFanTextFile'),
+ @('PupilAberrationFan','PupilAberrationFanTool','ParsePupilAberrationTextFile'),
+ @('SeidelCoefficients','SeidelCoefficientsTool','ParseSeidelTextFile'))
 foreach($case in $cases){
  $file=Get-ChildItem -LiteralPath $ReportDirectory -Filter ($case[0]+'.txt')|Select-Object -First 1
  if(!$file){$file=Get-ChildItem -LiteralPath $ReportDirectory -Filter ('ZemaxMCP-parser-'+$case[0]+'-*.txt')|Select-Object -Last 1}
@@ -27,6 +29,10 @@ foreach($case in $cases){
   LateralColor {if($result.ShortWavelength -ne 0.48 -or $result.LongWavelength -ne 0.65){throw 'Duplicate localized wavelength labels not recovered'}}
   RelativeIllumination {if($result.Wavelength -ne 0.55 -or $result.RelativeIllumination[0] -ne 1){throw 'Relative illumination mismatch'}}
   OpdFan {if($result.Fields.Count -lt 1 -or $result.Units -ne 'Waves'){throw 'OPD fields/units mismatch'}}
+  PupilAberrationFan {if($result.Fields.Count -lt 1 -or $result.Units -ne 'Percent'){throw 'Pupil fan fields/units mismatch'}}
+  SeidelCoefficients {if($result.Wavelength -ne 0.55 -or $result.PetzvalRadius -ne -128.7874 -or
+   [Math]::Abs($result.Total.S1_SPHA-0.006960) -gt 1e-10 -or
+   [Math]::Abs($result.WavefrontSummary.W040-1.5818) -gt 1e-10){throw 'Seidel coefficient/header/summary mismatch'}}
  }
  Write-Output ('[PASS] Localized report numeric/metadata: '+$case[0])
 }

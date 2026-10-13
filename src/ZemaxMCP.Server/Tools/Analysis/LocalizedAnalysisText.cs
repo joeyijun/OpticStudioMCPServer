@@ -14,6 +14,14 @@ internal static class LocalizedAnalysisText
         var headings = new (string Source, string Target)[]
         {
             ("畸变类型", "Distortion Type"), ("位移单位是", "Shift units are "),
+            ("主光线斜率, 物空间", "Chief Ray Slope, Object"),
+            ("主光线斜率, 像空间", "Chief Ray Slope, Image"),
+            ("边缘光线斜率, 物空间", "Marginal Ray Slope, Object"),
+            ("边缘光线斜率, 像空间", "Marginal Ray Slope, Image"),
+            ("佩兹伐半径", "Petzval radius"), ("光学不变量", "Optical Invariant"),
+            ("赛德尔像差系数（波长）", "Seidel Aberration Coefficients in Waves"),
+            ("赛德尔像差系数", "Seidel Aberration Coefficients"),
+            ("波像差系数概要", "Wavefront Aberration Coefficient Summary"),
             ("高度单位是", "Height units are "), ("畸变单位是", "Distortion units are "),
             ("数据对于波长", "Data for wavelength"), ("畸变焦距", "Distortion focal length"),
             ("最大 视场是", "Maximum Field "), ("最大视场", "Maximum Field"),
@@ -29,9 +37,9 @@ internal static class LocalizedAnalysisText
         foreach (var heading in headings)
             if (line.StartsWith(heading.Source, StringComparison.Ordinal))
             { line = heading.Target + line.Substring(heading.Source.Length); recognized = true; break; }
-        if (line.StartsWith("波长:", StringComparison.Ordinal))
+        if (Regex.IsMatch(line, @"^波长\s*:"))
         {
-            var value = line.Substring(3).Trim();
+            var value = line.Substring(line.IndexOf(':') + 1).Trim();
             line = Regex.IsMatch(value, @"^[+-]?\d") ? "Wavelength: " + value : "Wavelength units are " + value;
             recognized = true;
         }
@@ -39,6 +47,8 @@ internal static class LocalizedAnalysisText
         if (line.StartsWith("Rel. 视场垂轴色差", StringComparison.Ordinal)) { line = "Rel. Field Lateral Color"; recognized = true; }
         if (line.Contains("Y 视场") && line.Contains("Rel. Ill")) { line = line.Replace("Y 视场", "Y Field"); recognized = true; }
         if (Regex.IsMatch(line, @"^光瞳\s+")) { line = Regex.Replace(line, @"^光瞳", "Pupil"); recognized = true; }
+        if (Regex.IsMatch(line, @"^表面\s+(?:SPHA|W040)")) { line = Regex.Replace(line, @"^表面", "Surf"); recognized = true; }
+        if (Regex.IsMatch(line, @"^累计\s+[+-]?\d")) { line = Regex.Replace(line, @"^累计", "TOT"); recognized = true; }
         if (recognized)
         {
             line = line.Replace("毫米", "Millimeters").Replace("百分比", "Percent");
